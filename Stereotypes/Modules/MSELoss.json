@@ -1,0 +1,16 @@
+{
+  "category": "MSELoss",
+  "pythonClassName": "nn.MSELoss",
+  "expr": "",
+  "view": {
+    "color": "#cd5c5c",
+    "width": 160,
+    "height": 60
+  },
+  "params": {
+    "reduction": {
+      "type": "str",
+      "default": "mean"
+    }
+  }
+}

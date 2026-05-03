@@ -1,0 +1,16 @@
+{
+  "category": "ReLU",
+  "pythonClassName": "nn.ReLU",
+  "expr": "",
+  "view": {
+    "color": "#f4a460",
+    "width": 100,
+    "height": 50
+  },
+  "params": {
+    "inplace": {
+      "type": "bool",
+      "default": "False"
+    }
+  }
+}

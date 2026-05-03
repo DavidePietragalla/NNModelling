@@ -1,0 +1,56 @@
+{
+  "category": "TransformerEncoderLayer",
+  "pythonClassName": "nn.TransformerEncoderLayer",
+  "expr": "",
+  "view": {
+    "color": "#8a2be2",
+    "width": 220,
+    "height": 80
+  },
+  "params": {
+    "d_model": {
+      "type": "int",
+      "default": "Undefined"
+    },
+    "nhead": {
+      "type": "int",
+      "default": "Undefined"
+    },
+    "dim_feedforward": {
+      "type": "int",
+      "default": "2048"
+    },
+    "dropout": {
+      "type": "float",
+      "default": "0.1"
+    },
+    "activation": {
+      "type": "str | Callable | Tensor",
+      "default": "relu"
+    },
+    "layer_norm_eps": {
+      "type": "float",
+      "default": "1e-05"
+    },
+    "batch_first": {
+      "type": "bool",
+      "default": "False"
+    },
+    "norm_first": {
+      "type": "bool",
+      "default": "False"
+    },
+    "bias": {
+      "type": "bool",
+      "default": "True"
+    },
+    "device": {
+      "type": "Any",
+      "default": "None"
+    },
+    "dtype": {
+      "type": "Any",
+      "default": "None"
+    }
+  }
+}

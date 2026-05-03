@@ -1,0 +1,112 @@
+.editor-layout {
+  display: flex;
+  width: 100%;
+  height: 100%; /* Si adatterà ai 100vh di App.svelte */
+}
+
+.canvas-container {
+  flex-grow: 1; /* Il canvas si prende tutto lo spazio rimanente */
+  position: relative;
+}
+
+/* Stile veloce per il nuovo pulsante */
+.toggle-sidebar-btn {
+  padding: 8px 12px;
+  background: white;
+  border: 1px solid #ddd;
+  border-radius: 8px;
+  cursor: pointer;
+  box-shadow: 0 4px 6px rgba(0, 0, 0, 0.1);
+  font-family: sans-serif;
+  font-size: 14px;
+}
+.toggle-sidebar-btn:hover {
+  background: #f0f0f0;
+}
+
+:global(.toolbar) {
+  display: flex;
+  gap: 8px;
+  background: white;
+  padding: 10px;
+  border-radius: 8px;
+  box-shadow: 0 4px 6px rgba(0, 0, 0, 0.1);
+  align-items: center;
+  border: 1px solid #ddd;
+  font-family: sans-serif;
+}
+
+button {
+  padding: 8px 12px;
+  cursor: pointer;
+  border-radius: 4px;
+  border: 1px solid #ccc;
+  background: #f8f8f8;
+  font-size: 14px;
+  transition: all 0.2s;
+}
+
+button:hover:not(:disabled) {
+  background: #e0e0e0;
+}
+
+button:disabled {
+  opacity: 0.5;
+  cursor: not-allowed;
+}
+
+button.active {
+  background: #e6f2ff;
+  border-color: #007bff;
+  color: #0056b3;
+}
+
+button.danger {
+  background: #ffe6e6;
+  border-color: #dc3545;
+  color: #c82333;
+}
+
+/* .divider { */
+/*   width: 2px; */
+/*   height: 24px; */
+/*   background-color: #ddd; */
+/*   margin: 0 4px; */
+/* } */
+
+:global(.toolbar-panel) {
+  background: white;
+  padding: 8px;
+  border-radius: 8px;
+  box-shadow: 0 4px 12px rgba(0, 0, 0, 0.1);
+  display: flex;
+  gap: 8px;
+  align-items: center;
+  border: 1px solid #e0e0e0;
+}
+
+.toolbar-btn {
+  background: #f8f9fa;
+  border: 1px solid #ccc;
+  padding: 6px 12px;
+  border-radius: 6px;
+  cursor: pointer;
+  font-size: 13px;
+  font-weight: 600;
+  color: #333;
+  display: flex;
+  align-items: center;
+  gap: 4px;
+  transition: all 0.2s;
+}
+
+.toolbar-btn:hover:not(:disabled) {
+  background: #e9ecef;
+  border-color: #adb5bd;
+  transform: translateY(-1px);
+}
+
+.toolbar-btn:disabled {
+  opacity: 0.4;
+  cursor: not-allowed;
+}

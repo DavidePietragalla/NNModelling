@@ -1,0 +1,83 @@
+.node-body {
+  width: 100%;
+  height: 100%;
+  border: 2px solid #333;
+  border-radius: 8px;
+  display: flex;
+  flex-direction: column;
+  justify-content: space-between; /* Spinge top in alto, bottom in basso, e il centro in mezzo */
+  box-sizing: border-box;
+  font-family: sans-serif;
+  overflow: hidden;
+}
+
+.node-title {
+  flex-grow: 1; /* Il titolo occupa tutto lo spazio rimanente al centro */
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  font-weight: bold;
+  padding: 4px;
+  text-align: center;
+}
+
+.params-container {
+  display: flex;
+  flex-direction: column;
+  padding: 4px 6px;
+  font-size: 0.7rem;
+  gap: 2px;
+  background: rgba(
+    0,
+    0,
+    0,
+    0.1
+  ); /* Leggero sfondo per separare i parametri dal titolo */
+}
+
+.top-params {
+  border-bottom: 1px solid rgba(0, 0, 0, 0.2);
+}
+
+.bottom-params {
+  border-top: 1px solid rgba(0, 0, 0, 0.2);
+}
+
+.param-row {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+}
+
+.param-key {
+  opacity: 0.9;
+}
+
+.param-value {
+  font-weight: bold;
+  background: rgba(0, 0, 0, 0.2);
+  padding: 1px 4px;
+  border-radius: 4px;
+  font-family: monospace;
+}
+
+.input-circle {
+    width: 30px;
+    height: 30px;
+    background-color: #222; /* Nero scuro/Grigio antracite */
+    border-radius: 50%;
+    position: relative;
+    box-shadow: 0 4px 6px rgba(0,0,0,0.3);
+  }
+
+  .input-label {
+    position: absolute;
+    top: 35px; /* Lo posiziona subito sotto il cerchio */
+    left: 50%;
+    transform: translateX(-50%);
+    font-size: 10px;
+    font-family: sans-serif;
+    color: #333;
+    white-space: nowrap;
+    pointer-events: none;
+  }

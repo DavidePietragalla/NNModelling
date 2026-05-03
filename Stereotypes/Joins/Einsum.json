@@ -1,0 +1,9 @@
+{
+  "Name": "Einsum",
+  "params": {
+    "expr": {
+      "type": "string",
+      "default": ""
+    }
+  }
+}

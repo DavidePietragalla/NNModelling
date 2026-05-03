@@ -1,0 +1,48 @@
+{
+  "category": "Embedding",
+  "pythonClassName": "nn.Embedding",
+  "expr": "",
+  "view": {
+    "color": "#4169e1",
+    "width": 160,
+    "height": 60
+  },
+  "params": {
+    "num_embeddings": {
+      "type": "int",
+      "default": "Undefined"
+    },
+    "embedding_dim": {
+      "type": "int",
+      "default": "Undefined"
+    },
+    "padding_idx": {
+      "type": "int",
+      "default": "None"
+    },
+    "max_norm": {
+      "type": "float",
+      "default": "None"
+    },
+    "norm_type": {
+      "type": "float",
+      "default": "2.0"
+    },
+    "scale_grad_by_freq": {
+      "type": "bool",
+      "default": "False"
+    },
+    "sparse": {
+      "type": "bool",
+      "default": "False"
+    },
+    "device": {
+      "type": "str",
+      "default": "None"
+    },
+    "dtype": {
+      "type": "str",
+      "default": "None"
+    }
+  }
+}

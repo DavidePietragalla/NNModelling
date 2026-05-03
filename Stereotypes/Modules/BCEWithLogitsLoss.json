@@ -1,0 +1,32 @@
+{
+  "category": "BCEWithLogitsLoss",
+  "pythonClassName": "nn.BCEWithLogitsLoss",
+  "expr": "",
+  "view": {
+    "color": "#cd5c5c",
+    "width": 160,
+    "height": 60
+  },
+  "params": {
+    "weight": {
+      "type": "Tensor",
+      "default": "None"
+    },
+    "size_average": {
+      "type": "bool",
+      "default": "None"
+    },
+    "reduce": {
+      "type": "bool",
+      "default": "None"
+    },
+    "reduction": {
+      "type": "str",
+      "default": "mean"
+    },
+    "pos_weight": {
+      "type": "Tensor",
+      "default": "None"
+    }
+  }
+}

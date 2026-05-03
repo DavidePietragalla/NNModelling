@@ -1,0 +1,34 @@
+{
+  "category": "Linear",
+  "pythonClassName": "nn.Linear",
+  "expr": "",
+  "view": {
+    "color": "#4779c4",
+    "width": 140,
+    "height": 60
+  },
+  "params": {
+    "in_features": {
+      "type": "int",
+      "default": "Undefined",
+      "position": "top"
+    },
+    "out_features": {
+      "type": "int",
+      "default": "Undefined",
+      "position": "bottom"
+    },
+    "bias": {
+      "type": "bool",
+      "default": "True"
+    },
+    "device": {
+      "type": "str",
+      "default": "None"
+    },
+    "dtype": {
+      "type": "str",
+      "default": "None"
+    }
+  }
+}

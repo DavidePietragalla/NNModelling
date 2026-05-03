@@ -1,0 +1,36 @@
+{
+  "category": "CrossEntropyLoss",
+  "pythonClassName": "nn.CrossEntropyLoss",
+  "expr": "",
+  "view": {
+    "color": "#cd5c5c",
+    "width": 160,
+    "height": 60
+  },
+  "params": {
+    "weight": {
+      "type": "Tensor",
+      "default": "None"
+    },
+    "size_average": {
+      "type": "bool",
+      "default": "None"
+    },
+    "ignore_index": {
+      "type": "int",
+      "default": "-100"
+    },
+    "reduce": {
+      "type": "bool",
+      "default": "None"
+    },
+    "reduction": {
+      "type": "str",
+      "default": "mean"
+    },
+    "label_smoothing": {
+      "type": "float",
+      "default": "0.0"
+    }
+  }
+}

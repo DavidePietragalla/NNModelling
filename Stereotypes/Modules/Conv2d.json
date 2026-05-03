@@ -1,0 +1,58 @@
+{
+  "category": "Conv2d",
+  "pythonClassName": "nn.Conv2d",
+  "expr": "",
+  "view": {
+    "color": "#20b2aa",
+    "width": 140,
+    "height": 60
+  },
+  "params": {
+    "in_channels": {
+      "type": "int",
+      "default": "Undefined",
+      "position": "top"
+    },
+    "out_channels": {
+      "type": "int",
+      "default": "Undefined",
+      "position": "bottom"
+    },
+    "kernel_size": {
+      "type": "int | tuple",
+      "default": "Undefined"
+    },
+    "stride": {
+      "type": "int | tuple",
+      "default": "1"
+    },
+    "padding": {
+      "type": "int | tuple | str",
+      "default": "0"
+    },
+    "dilation": {
+      "type": "int | tuple",
+      "default": "1"
+    },
+    "groups": {
+      "type": "int",
+      "default": "1"
+    },
+    "bias": {
+      "type": "bool",
+      "default": "True"
+    },
+    "padding_mode": {
+      "type": "str",
+      "default": "zeros"
+    },
+    "device": {
+      "type": "str",
+      "default": "None"
+    },
+    "dtype": {
+      "type": "str",
+      "default": "None"
+    }
+  }
+}

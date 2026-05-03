@@ -1,0 +1,40 @@
+{
+  "category": "BatchNorm2d",
+  "pythonClassName": "nn.BatchNorm2d",
+  "expr": "",
+  "view": {
+    "color": "#9370db",
+    "width": 140,
+    "height": 60
+  },
+  "params": {
+    "num_features": {
+      "type": "int",
+      "default": "Undefined"
+    },
+    "eps": {
+      "type": "float",
+      "default": "1e-05"
+    },
+    "momentum": {
+      "type": "float",
+      "default": "0.1"
+    },
+    "affine": {
+      "type": "bool",
+      "default": "True"
+    },
+    "track_running_stats": {
+      "type": "bool",
+      "default": "True"
+    },
+    "device": {
+      "type": "str",
+      "default": "None"
+    },
+    "dtype": {
+      "type": "str",
+      "default": "None"
+    }
+  }
+}
