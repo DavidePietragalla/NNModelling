@@ -22,6 +22,17 @@ export class Diagram {
     }
   }
 
+  public getNodeById(id: string): Node | undefined {
+    return this.nodes.find(n => n.id === id);
+  }
+
+  public getChilds(id: string): Node[] {
+    let childsIds = this.edges.filter(e => e.source === id).map(e => e.target);
+    let childs = [];
+    childs.push(...this.nodes.filter(n => childsIds.find(c_id => c_id === n.id)));
+    return childs;
+  }
+
   get layerStereotypes() { return this.stereotypes.filter(s => !s.isJoin); }
   get joinStereotypes() { return this.stereotypes.filter(s => s.isJoin); }
 

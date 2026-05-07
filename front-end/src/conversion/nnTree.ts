@@ -17,11 +17,89 @@ export class NNTree {
     if (inputNodes.length !== 1) {
       throw new Error("Expected exactly one input node, but found " + inputNodes.length);
     }
-    this.root = new NNTreeNode(inputNodes[0].id, diagram);
+    this.root = this.processNode(inputNodes[0], diagram, new Set());
+  }
+
+  private processNode(node: Node, diagram: Diagram, visited: Set<string>): NNTreeNode {
+    if (visited.has(node.id)) {
+      throw new Error("Node with id " + node.id + "is visited, there is a loop");
+    }
+    visited.add(node.id);
+
+    let childs = diagram.getChilds(node.id);
+    if (childs.length === 1) {
+      // sequential
+      let seq = [];
+      seq.push({
+        type: "module",
+        moduleId: node.id,
+        name: node.data.name,
+        stereotype: node.data.stereotype,
+        params: node.data.params
+      } as ModuleData)
+      do {
+        let child = childs[0];
+        visited.add(child.id);
+        childs = diagram.getChilds(child.id);
+        // TODO: potrebbe essere la loss
+        if (childs.length === 0) {
+          // Loss
+          this.lossNode = {
+            type: "module",
+            moduleId: node.id,
+            name: node.data.name,
+            stereotype: node.data.stereotype,
+            params: node.data.params
+          } as ModuleData;
+          break
+        }
+        seq.push({
+          type: "module",
+          moduleId: child.id,
+          name: child.data.name,
+          stereotype: child.data.stereotype,
+          params: child.data.params
+        } as ModuleData
+        )
+
+      } while (childs.length === 1);
+
+      let next_tree_nodes: NNTreeNode[] = [];
+      for (const child of childs) {
+        next_tree_nodes.push(this.processNode(child, diagram, visited));
+      }
+      return NNTreeNode.fromParts(node.id, next_tree_nodes, {
+        type: "sequential",
+        layers: seq,
+      });
+
+    } else if (childs.length > 1) {
+      // fork
+      let next_tree_nodes: NNTreeNode[] = [];
+      for (const child of childs) {
+        next_tree_nodes.push(this.processNode(child, diagram, visited));
+      }
+      return NNTreeNode.fromParts(node.id, next_tree_nodes, {
+        type: "module",
+        moduleId: node.id,
+        name: node.data.name,
+        stereotype: node.data.stereotype,
+        params: node.data.params
+      } as ModuleData);
+    } else {
+      // Loss
+      this.lossNode = {
+        type: "module",
+        moduleId: node.id,
+        name: node.data.name,
+        stereotype: node.data.stereotype,
+        params: node.data.params
+      } as ModuleData;
+    }
   }
 
   public toJson(): string {
-    return JSON.stringify(this.root, null, 2);
+    return JSON.stringify(this, null, 2);
   }
 }
 
@@ -30,6 +108,15 @@ export class NNTreeNode {
   public children: NNTreeNode[] = [];
   public data: SequentialData | ModuleData;
   public inputNodes: string[] = []; // For tracking which nodes feed into this node
+
+  static fromParts(id: string, children: NNTreeNode[], data: SequentialData | ModuleData): NNTreeNode {
+    return {
+      id: id,
+      children: children,
+      data: data,
+      inputNodes: [] as string[],
+    } as NNTreeNode;
+  }
 
   constructor(id: string, diagram: Diagram, sequentialData?: SequentialData) {
     this.id = id;
@@ -44,54 +131,54 @@ export class NNTreeNode {
     // TODO: Caso sequential senza figli
     if (nextNodes.length === 1) {
 
-        // Prendiamo il nodo da diagram e verifichiamo che esista
-        const currentNextNode: Node | undefined = diagram.nodes.find(n => n.id === nextNodes[0]);
-        if (!currentNextNode) {
-            throw new Error("Node " + nextNodes[0] + " not found in diagram.");
-        }
+      // Prendiamo il nodo da diagram e verifichiamo che esista
+      const currentNextNode: Node | undefined = diagram.nodes.find(n => n.id === nextNodes[0]);
+      if (!currentNextNode) {
+        throw new Error("Node " + nextNodes[0] + " not found in diagram.");
+      }
 
-        // Se ci troviamo gia in un blocco sequenziale appendiamo al sequential esistente
-        if (sequentialData){
-            this.data = {
-                type: "module",
-                moduleId: nextNodes[0],
-                name: currentNextNode.data.name,
-                stereotype: currentNextNode.data.stereotype,
-                params: currentNextNode.data.params
-            } as ModuleData;
-            sequentialData.layers.push(this.data);
-        }
-        // Altrimenti creo un nuovo blocco sequenziale con questo nodo come primo layer
-        else {
-            this.data = {
-                type: "sequential",
-                layers: [{
-                    type: "module",
-                    moduleId: nextNodes[0],
-                    name: currentNextNode.data.name,
-                    stereotype: currentNextNode.data.stereotype,
-                    params: currentNextNode.data.params
-                }]
-            } as SequentialData;
-        }
-    } else {
-        // Se ha piu di un nextnode si tratta di un fork e quindi aggiungiamo direttamente i figli
-        if (nextNodes.length > 1) {
-            this.children = nextNodes.map(targetId => new NNTreeNode(targetId, diagram));
-        }
-
-        // In ogni caso, non essendo un sequential, salviamo il noto corrente come modulo
-        const currentNode: Node | undefined = diagram.nodes.find(n => n.id === id);
-        if (!currentNode) {
-            throw new Error("Node " + id + " not found in diagram (type2).");
-        }
+      // Se ci troviamo gia in un blocco sequenziale appendiamo al sequential esistente
+      if (sequentialData) {
         this.data = {
-            type: "module",
-            moduleId: id,
-            name: currentNode.data.name,
-            stereotype: currentNode.data.stereotype,
-            params: currentNode.data.params
+          type: "module",
+          moduleId: nextNodes[0],
+          name: currentNextNode.data.name,
+          stereotype: currentNextNode.data.stereotype,
+          params: currentNextNode.data.params
         } as ModuleData;
+        sequentialData.layers.push(this.data);
+      }
+      // Altrimenti creo un nuovo blocco sequenziale con questo nodo come primo layer
+      else {
+        this.data = {
+          type: "sequential",
+          layers: [{
+            type: "module",
+            moduleId: nextNodes[0],
+            name: currentNextNode.data.name,
+            stereotype: currentNextNode.data.stereotype,
+            params: currentNextNode.data.params
+          }]
+        } as SequentialData;
+      }
+    } else {
+      // Se ha piu di un nextnode si tratta di un fork e quindi aggiungiamo direttamente i figli
+      if (nextNodes.length > 1) {
+        this.children = nextNodes.map(targetId => new NNTreeNode(targetId, diagram));
+      }
+
+      // In ogni caso, non essendo un sequential, salviamo il noto corrente come modulo
+      const currentNode: Node | undefined = diagram.nodes.find(n => n.id === id);
+      if (!currentNode) {
+        throw new Error("Node " + id + " not found in diagram (type2).");
+      }
+      this.data = {
+        type: "module",
+        moduleId: id,
+        name: currentNode.data.name,
+        stereotype: currentNode.data.stereotype,
+        params: currentNode.data.params
+      } as ModuleData;
     }
   }
 
@@ -118,21 +205,21 @@ export class NNTreeNode {
     return (this.data as SequentialData).type === "sequential";
   }
 
-//   isFork(): boolean {
-//     return (this.data as ForkData).type === "fork";
-//   }
+  //   isFork(): boolean {
+  //     return (this.data as ForkData).type === "fork";
+  //   }
 
-//   isJoin(): boolean {
-//     return (this.data as JoinData).type === "join";
-//   }
+  //   isJoin(): boolean {
+  //     return (this.data as JoinData).type === "join";
+  //   }
 
   isModule(): boolean {
     return (this.data as ModuleData).type === "module";
   }
 
-//   isEmpty(): boolean {
-//     return (this.data as any).type === "empty";
-//   }
+  //   isEmpty(): boolean {
+  //     return (this.data as any).type === "empty";
+  //   }
 }
 
 /**
