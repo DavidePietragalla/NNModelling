@@ -22,49 +22,49 @@ export class NNTree {
 
   private createSequential(node: Node, diagram: Diagram, visited: Set<string>, childs: Node[]): NNTreeNode {
     // sequential
-      let seq = [];
-      seq.push({
-        type: "module",
-        moduleId: node.id,
-        name: node.data.name,
-        stereotype: node.data.stereotype,
-        params: node.data.params
-      } as ModuleData)
-      do {
-        let child = childs[0];
-        visited.add(child.id);
-        childs = diagram.getChilds(child.id);
-        // TODO: potrebbe essere la loss
-        if (childs.length === 0) {
-          // Loss
-          this.lossNode = {
-            type: "module",
-            moduleId: node.id,
-            name: node.data.name,
-            stereotype: node.data.stereotype,
-            params: node.data.params
-          } as ModuleData;
-          break
-        }
-        seq.push({
+    let seq = [];
+    seq.push({
+      type: "module",
+      moduleId: node.id,
+      name: node.data.name,
+      stereotype: node.data.stereotype,
+      params: node.data.params
+    } as ModuleData)
+    do {
+      let child = childs[0];
+      visited.add(child.id);
+      childs = diagram.getChilds(child.id);
+      // TODO: potrebbe essere la loss
+      if (childs.length === 0) {
+        // Loss
+        this.lossNode = {
           type: "module",
           moduleId: child.id,
           name: child.data.name,
           stereotype: child.data.stereotype,
           params: child.data.params
-        } as ModuleData
-        )
-
-      } while (childs.length === 1);
-
-      let next_tree_nodes: NNTreeNode[] = [];
-      for (const child of childs) {
-        next_tree_nodes.push(this.processNode(child, diagram, visited));
+        } as ModuleData;
+        break
       }
-      return NNTreeNode.fromParts(node.id, next_tree_nodes, {
-        type: "sequential",
-        layers: seq,
-      });
+      seq.push({
+        type: "module",
+        moduleId: child.id,
+        name: child.data.name,
+        stereotype: child.data.stereotype,
+        params: child.data.params
+      } as ModuleData
+      )
+
+    } while (childs.length === 1);
+
+    let next_tree_nodes: NNTreeNode[] = [];
+    for (const child of childs) {
+      next_tree_nodes.push(this.processNode(child, diagram, visited));
+    }
+    return NNTreeNode.fromParts(node.id, next_tree_nodes, {
+      type: "sequential",
+      layers: seq,
+    });
   }
 
   private processNode(node: Node, diagram: Diagram, visited: Set<string>): NNTreeNode {
