@@ -19,6 +19,10 @@ export class NNTree {
     }
     this.root = new NNTreeNode(inputNodes[0].id, diagram);
   }
+
+  public toJson(): string {
+    return JSON.stringify(this.root, null, 2);
+  }
 }
 
 export class NNTreeNode {

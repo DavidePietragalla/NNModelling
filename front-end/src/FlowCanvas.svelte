@@ -25,6 +25,8 @@
     onNodeDragStop,
   } from "./utils";
 
+  import {NNTree} from "./conversion/nnTree";
+
   // 1. Importiamo la classe Diagram
   import { Diagram } from "./Diagram.svelte"; // Modifica il path se necessario
 
@@ -87,6 +89,12 @@
     if (selectedEdges.length > 0)
       diagram.deleteEdges(selectedEdges.map((e) => e.id));
   }
+
+  function handleConversion(){
+    const nnTree = new NNTree(diagram);
+    console.log("NNTree:", nnTree.toJson());
+  }
+  
 </script>
 
 <div class="editor-layout">
@@ -123,6 +131,9 @@
             isSidebarOpen = false;
           }}
           class="toolbar-btn">📂 Carica</button
+        >
+        <button onclick={handleConversion} class="toolbar-btn"
+          >📦 Converti in Python</button
         >
         <button onclick={handleAddSubGraph} class="toolbar-btn"
           >📦 Aggiungi SubGraph</button
