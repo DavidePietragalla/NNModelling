@@ -217,9 +217,6 @@ export function handleLoadModel(diagram: Diagram) {
       if (fileContent) {
         // Passiamo il contenuto al diagramma!
         diagram.importFromJson(fileContent);
-
-        // Chiudiamo la sidebar se era aperta su un nodo vecchio
-        isSidebarOpen = false;
       }
     };
     // Leggiamo il file come testo semplice
@@ -228,4 +225,9 @@ export function handleLoadModel(diagram: Diagram) {
 
   // Simuliamo il click per aprire la finestra di dialogo del SO
   input.click();
+}
+
+// --- Conversione Python ---
+export function convertJsonToPython(jsonModel: string): string {
+
 }

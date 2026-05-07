@@ -146,7 +146,7 @@ export class Diagram {
         }
 
         // Il padre diretto è stato eliminato! Iniziamo la ricerca dell'antenato superstite.
-        let currentAncestorId = n.parentId;
+        let currentAncestorId: string | undefined = n.parentId;
         let accumulatedX = n.position.x;
         let accumulatedY = n.position.y;
 
