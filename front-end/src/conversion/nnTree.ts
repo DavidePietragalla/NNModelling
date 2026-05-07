@@ -20,15 +20,8 @@ export class NNTree {
     this.root = this.processNode(inputNodes[0], diagram, new Set());
   }
 
-  private processNode(node: Node, diagram: Diagram, visited: Set<string>): NNTreeNode {
-    if (visited.has(node.id)) {
-      throw new Error("Node with id " + node.id + "is visited, there is a loop");
-    }
-    visited.add(node.id);
-
-    let childs = diagram.getChilds(node.id);
-    if (childs.length === 1) {
-      // sequential
+  private createSequential(node: Node, diagram: Diagram, visited: Set<string>, childs: Node[]): NNTreeNode {
+    // sequential
       let seq = [];
       seq.push({
         type: "module",
@@ -72,7 +65,17 @@ export class NNTree {
         type: "sequential",
         layers: seq,
       });
+  }
 
+  private processNode(node: Node, diagram: Diagram, visited: Set<string>): NNTreeNode {
+    if (visited.has(node.id)) {
+      throw new Error("Node with id " + node.id + "is visited, there is a loop");
+    }
+    visited.add(node.id);
+
+    let childs = diagram.getChilds(node.id);
+    if (childs.length === 1) {
+      return this.createSequential(node, diagram, visited, childs);
     } else if (childs.length > 1) {
       // fork
       let next_tree_nodes: NNTreeNode[] = [];
