@@ -17,36 +17,78 @@ export class NNTree {
     if (inputNodes.length !== 1) {
       throw new Error("Expected exactly one input node, but found " + inputNodes.length);
     }
-    this.root = new NNTreeNode(inputNodes[0].id);
-    this.processNode(this.root, null, new Set());
-  }
-
-  private processNode(node: Node, parent: NNTreeNode | null, visited: Set<string>): void {
-
+    this.root = new NNTreeNode(inputNodes[0].id, diagram);
   }
 }
 
 export class NNTreeNode {
   public id: string;
-  public children: NNTreeNode[];
-  public data: SequentialData | ForkData | JoinData | ModuleData | EmptyData;
-  public inputNodes: string[]; // For tracking which nodes feed into this node
+  public children: NNTreeNode[] = [];
+  public data: SequentialData | ModuleData;
+  public inputNodes: string[] = []; // For tracking which nodes feed into this node
 
-  constructor(id: string, parentId: string | null = null) {
+  constructor(id: string, diagram: Diagram, sequentialData?: SequentialData) {
     this.id = id;
-    this.children = [];
-    this.data = { type: "empty" };
-    this.inputNodes = [];
-  }
 
-  processNode(node: Node, parent: NNTreeNode | null, visited: Set<string>): void {
-    if (visited.has(node.id)) {
-      throw new Error(`Cycle detected at node ${node.id}. This should not happen in a well-formed diagram.`);
+    // Trova i nodi figli direttamente connessi a questo nodo
+    let nextNodes: string[] = diagram.edges
+      .filter(e => e.source === id)
+      .map(e => e.target);
+
+    // Se ha piu nextNodes si tratta di un fork e quindi aggiungiamo direttamente a this.children
+    // Se ha un solo nextNode bisogna appendere al sequential e verificare che non esista gia
+    // TODO: Caso sequential senza figli
+    if (nextNodes.length === 1) {
+
+        // Prendiamo il nodo da diagram e verifichiamo che esista
+        const currentNextNode: Node | undefined = diagram.nodes.find(n => n.id === nextNodes[0]);
+        if (!currentNextNode) {
+            throw new Error("Node " + nextNodes[0] + " not found in diagram.");
+        }
+
+        // Se ci troviamo gia in un blocco sequenziale appendiamo al sequential esistente
+        if (sequentialData){
+            this.data = {
+                type: "module",
+                moduleId: nextNodes[0],
+                name: currentNextNode.data.name,
+                stereotype: currentNextNode.data.stereotype,
+                params: currentNextNode.data.params
+            } as ModuleData;
+            sequentialData.layers.push(this.data);
+        }
+        // Altrimenti creo un nuovo blocco sequenziale con questo nodo come primo layer
+        else {
+            this.data = {
+                type: "sequential",
+                layers: [{
+                    type: "module",
+                    moduleId: nextNodes[0],
+                    name: currentNextNode.data.name,
+                    stereotype: currentNextNode.data.stereotype,
+                    params: currentNextNode.data.params
+                }]
+            } as SequentialData;
+        }
+    } else {
+        // Se ha piu di un nextnode si tratta di un fork e quindi aggiungiamo direttamente i figli
+        if (nextNodes.length > 1) {
+            this.children = nextNodes.map(targetId => new NNTreeNode(targetId, diagram));
+        }
+
+        // In ogni caso, non essendo un sequential, salviamo il noto corrente come modulo
+        const currentNode: Node | undefined = diagram.nodes.find(n => n.id === id);
+        if (!currentNode) {
+            throw new Error("Node " + id + " not found in diagram (type2).");
+        }
+        this.data = {
+            type: "module",
+            moduleId: id,
+            name: currentNode.data.name,
+            stereotype: currentNode.data.stereotype,
+            params: currentNode.data.params
+        } as ModuleData;
     }
-    visited.add(node.id);
-
-    const stereotypeName = node.data.stereotype;
-    const stereotype = Stereotype.getByName(stereotypeName);
   }
 
   addChild(child: NNTreeNode): void {
@@ -72,21 +114,21 @@ export class NNTreeNode {
     return (this.data as SequentialData).type === "sequential";
   }
 
-  isFork(): boolean {
-    return (this.data as ForkData).type === "fork";
-  }
+//   isFork(): boolean {
+//     return (this.data as ForkData).type === "fork";
+//   }
 
-  isJoin(): boolean {
-    return (this.data as JoinData).type === "join";
-  }
+//   isJoin(): boolean {
+//     return (this.data as JoinData).type === "join";
+//   }
 
   isModule(): boolean {
     return (this.data as ModuleData).type === "module";
   }
 
-  isEmpty(): boolean {
-    return (this.data as any).type === "empty";
-  }
+//   isEmpty(): boolean {
+//     return (this.data as any).type === "empty";
+//   }
 }
 
 /**
@@ -99,30 +141,30 @@ export interface SequentialData {
   layers: ModuleData[];
 }
 
-// Fork node with multiple output branches
-export interface ForkData {
-  type: "fork";
-  branches: NNTreeNode[]; // Multiple paths from this point
-}
+// // Fork node with multiple output branches
+// export interface ForkData {
+//   type: "fork";
+//   branches: NNTreeNode[]; // Multiple paths from this point
+// }
 
-// Join node with multiple input branches
-export interface JoinData {
-  type: "join";
-  joinType: Stereotype;
-  inputNodes: string[]; // IDs of nodes being joined
-  outputChannel?: number; // Track output channel count for validation
-}
+// // Join node with multiple input branches
+// export interface JoinData {
+//   type: "join";
+//   joinType: string;
+//   inputNodes: string[]; // IDs of nodes being joined
+//   outputChannel?: number; // Track output channel count for validation
+// }
 
-// Empty data for initial node state
-export interface EmptyData {
-  type: "empty";
-}
+// // Empty data for initial node state
+// export interface EmptyData {
+//   type: "empty";
+// }
 
 // Single module layer
 export interface ModuleData {
   type: "module";
   moduleId: string;
   name: string;
-  stereotype: Stereotype;
+  stereotype: string;
   params: any;
 }
