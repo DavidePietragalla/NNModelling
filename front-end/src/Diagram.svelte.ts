@@ -33,6 +33,13 @@ export class Diagram {
     return childs;
   }
 
+  public getParents(id: string): Node[] {
+    let parentsIds = this.edges.filter(e => e.target === id).map(e => e.source);
+    let parents = [];
+    parents.push(...this.nodes.filter(n => parentsIds.find(c_id => c_id === n.id)));
+    return parents;
+  }
+
   get layerStereotypes() { return this.stereotypes.filter(s => !s.isJoin); }
   get joinStereotypes() { return this.stereotypes.filter(s => s.isJoin); }
 

@@ -16,7 +16,9 @@ export class NNTree {
     if (inputNodes.length !== 1) {
       throw new Error("Expected exactly one input node, but found " + inputNodes.length);
     }
-    this.root = this.processNode(inputNodes[0], diagram, new Set());
+    let new_root = this.processNode(inputNodes[0], diagram, new Set());
+    if (new_root === undefined) throw new Error("root is undefined");
+    this.root = new_root;
   }
 
   private createSequential(node: Node, diagram: Diagram, visited: Set<string>, childs: Node[]): NNTreeNode {
@@ -24,7 +26,6 @@ export class NNTree {
     let seq = [];
     seq.push({
       type: "module",
-      moduleId: node.id,
       name: node.data.name,
       stereotype: node.data.stereotype,
       params: node.data.params
@@ -47,7 +48,6 @@ export class NNTree {
       }
       seq.push({
         type: "module",
-        moduleId: child.id,
         name: child.data.name,
         stereotype: child.data.stereotype,
         params: child.data.params
@@ -58,7 +58,9 @@ export class NNTree {
 
     let next_tree_nodes: NNTreeNode[] = [];
     for (const child of childs) {
-      next_tree_nodes.push(this.processNode(child, diagram, visited));
+      let nn_node = this.processNode(child, diagram, visited);
+      if (nn_node !== undefined) // TODO: cambia
+        next_tree_nodes.push(nn_node);
     }
     return new NNTreeNode(node.id, next_tree_nodes, {
       type: "sequential",
@@ -66,11 +68,34 @@ export class NNTree {
     });
   }
 
-  private processNode(node: Node, diagram: Diagram, visited: Set<string>): NNTreeNode {
+  private handleJoin(node: Node, diagram: Diagram, visited: Set<string>): NNTreeNode {
+    let childs = diagram.getChilds(node.id);
+    let next_tree_nodes: NNTreeNode[] = [];
+    for (const child of childs) {
+      let nn_node = this.processNode(child, diagram, visited);
+      if (nn_node !== undefined) // TODO: cambia
+        next_tree_nodes.push(nn_node);
+    }
+    return new NNTreeNode(node.id, next_tree_nodes, {
+      type: "join",
+      name: node.data.name,
+      stereotype: node.data.stereotype,
+      params: node.data.params
+    } as JoinData);
+  }
+
+  private processNode(node: Node, diagram: Diagram, visited: Set<string>): NNTreeNode | undefined {
     if (visited.has(node.id)) {
-      throw new Error("Node with id " + node.id + "is visited, there is a loop");
+      console.warn("Node with id " + node.id + "is visited, there is a loop");
+      return;
     }
     visited.add(node.id);
+
+    let parents = diagram.getParents(node.id);
+    if (parents.length > 1) {
+      // Join
+      return this.handleJoin(node, diagram, visited);
+    }
 
     let childs = diagram.getChilds(node.id);
     if (childs.length === 1) {
@@ -79,11 +104,12 @@ export class NNTree {
       // fork
       let next_tree_nodes: NNTreeNode[] = [];
       for (const child of childs) {
-        next_tree_nodes.push(this.processNode(child, diagram, visited));
+        let nn_node = this.processNode(child, diagram, visited);
+        if (nn_node !== undefined) // TODO: cambia
+          next_tree_nodes.push(nn_node);
       }
       return new NNTreeNode(node.id, next_tree_nodes, {
         type: "module",
-        moduleId: node.id,
         name: node.data.name,
         stereotype: node.data.stereotype,
         params: node.data.params
@@ -151,6 +177,7 @@ export interface SequentialData {
 // // Join node with multiple input branches
 export interface JoinData {
   type: "join";
+  name: string;
   stereotype: string;
   params: any;
 }
@@ -158,7 +185,6 @@ export interface JoinData {
 // Single module layer
 export interface ModuleData {
   type: "module";
-  moduleId: string;
   name: string;
   stereotype: string;
   params: any;
