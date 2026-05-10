@@ -1,5 +1,5 @@
 import { Diagram } from "../Diagram.svelte";
-import { type Node, type Edge } from "@xyflow/svelte";
+import { type Node } from "@xyflow/svelte";
 /**
  * A tree node representing either a collapsed sequential block or a branching point.
  * - If sequential: contains multiple layers that are collapsed into one logical unit
@@ -7,11 +7,13 @@ import { type Node, type Edge } from "@xyflow/svelte";
  */
 
 export class NNTree {
-  public root: NNTreeNode;
+  public nodes: Map<string, NNTreeNode>;
+  public root: string;
   public lossNode: ModuleData | null = null;
 
   //TODO: ADJUST
   constructor(diagram: Diagram) {
+    this.nodes = new Map();
     const inputNodes: Node[] = diagram.nodes.filter(n => n.data.stereotype === "Input");
     if (inputNodes.length !== 1) {
       throw new Error("Expected exactly one input node, but found " + inputNodes.length);
@@ -21,7 +23,7 @@ export class NNTree {
     this.root = new_root;
   }
 
-  private createSequential(node: Node, diagram: Diagram, visited: Set<string>, childs: Node[]): NNTreeNode {
+  private createSequential(node: Node, diagram: Diagram, visited: Set<string>, childs: Node[]): string {
     // sequential
     let seq = [];
     seq.push({
@@ -61,38 +63,42 @@ export class NNTree {
 
     } while (childs.length === 1);
 
-    let next_tree_nodes: NNTreeNode[] = [];
+    let next_tree_nodes: string[] = [];
     for (const child of childs) {
       let nn_node = this.processNode(child, diagram, visited);
       if (nn_node !== undefined) // TODO: cambia
         next_tree_nodes.push(nn_node);
     }
-    return new NNTreeNode(node.id, next_tree_nodes, {
+    this.nodes.set(node.id, new NNTreeNode(node.id, next_tree_nodes, {
       type: "sequential",
       layers: seq,
-    });
+    }));
+    return node.id;
+
   }
 
-  private handleJoin(node: Node, diagram: Diagram, visited: Set<string>): NNTreeNode {
+  private handleJoin(node: Node, diagram: Diagram, visited: Set<string>): string {
     let childs = diagram.getChilds(node.id);
-    let next_tree_nodes: NNTreeNode[] = [];
+    let next_tree_nodes: string[] = [];
     for (const child of childs) {
       let nn_node = this.processNode(child, diagram, visited);
-      if (nn_node !== undefined) // TODO: cambia
+      if (nn_node !== undefined)
         next_tree_nodes.push(nn_node);
     }
-    return new NNTreeNode(node.id, next_tree_nodes, {
+    this.nodes.set(node.id, new NNTreeNode(node.id, next_tree_nodes, {
       type: "join",
       name: node.data.name,
       stereotype: node.data.stereotype,
       params: node.data.params
-    } as JoinData);
+    } as JoinData));
+    return node.id;
+
   }
 
-  private processNode(node: Node, diagram: Diagram, visited: Set<string>): NNTreeNode | undefined {
+  private processNode(node: Node, diagram: Diagram, visited: Set<string>): string | undefined {
     if (visited.has(node.id)) {
       console.warn("Node with id " + node.id + "is visited, there is a loop");
-      return;
+      return node.id;
     }
     visited.add(node.id);
 
@@ -107,18 +113,19 @@ export class NNTree {
       return this.createSequential(node, diagram, visited, childs);
     } else if (childs.length > 1) {
       // fork
-      let next_tree_nodes: NNTreeNode[] = [];
+      let next_tree_nodes: string[] = [];
       for (const child of childs) {
         let nn_node = this.processNode(child, diagram, visited);
         if (nn_node !== undefined) // TODO: cambia
           next_tree_nodes.push(nn_node);
       }
-      return new NNTreeNode(node.id, next_tree_nodes, {
+      this.nodes.set(node.id, new NNTreeNode(node.id, next_tree_nodes, {
         type: "module",
         name: node.data.name,
         stereotype: node.data.stereotype,
         params: node.data.params
-      } as ModuleData);
+      } as ModuleData));
+      return node.id;
     } else {
       // Loss
       this.lossNode = {
@@ -132,28 +139,34 @@ export class NNTree {
   }
 
   public toJson(): string {
-    return JSON.stringify(this, null, 2);
+    const serializableObject = {
+      root: this.root,
+      lossNode: this.lossNode,
+      nodes: Object.fromEntries(this.nodes)
+    };
+
+    return JSON.stringify(serializableObject, null, 2);
   }
 }
 
 export class NNTreeNode {
   public id: string;
-  public childrens: NNTreeNode[] = [];
+  public childrens: string[] = [];
   public data: SequentialData | ModuleData | JoinData;
 
-  constructor(id: string, childrens: NNTreeNode[], data: SequentialData | ModuleData | JoinData) {
+  constructor(id: string, childrens: string[], data: SequentialData | ModuleData | JoinData) {
     this.id = id;
     this.childrens = childrens;
     this.data = data;
   }
 
 
-  addChild(child: NNTreeNode): void {
+  addChild(child: string): void {
     this.childrens.push(child);
   }
 
   removeChild(childId: string): boolean {
-    const index = this.childrens.findIndex((c) => c.id === childId);
+    const index = this.childrens.findIndex((c) => c === childId);
     if (index !== -1) {
       this.childrens.splice(index, 1);
       return true;
