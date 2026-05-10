@@ -32,6 +32,11 @@ export class NNTree {
     } as ModuleData)
     do {
       let child = childs[0];
+      let parents = diagram.getParents(child.id);
+      if (parents.length > 1) {
+        // Join
+        break;
+      }
       visited.add(child.id);
       childs = diagram.getChilds(child.id);
       // TODO: potrebbe essere la loss
@@ -116,7 +121,13 @@ export class NNTree {
       } as ModuleData);
     } else {
       // Loss
-      throw new Error("this not does not have childers and it is not a loss" + node);
+      this.lossNode = {
+        type: "module",
+        name: node.data.name,
+        stereotype: node.data.stereotype,
+        params: node.data.params,
+      } as ModuleData;
+      return;
     }
   }
 
