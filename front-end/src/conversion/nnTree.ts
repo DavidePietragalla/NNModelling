@@ -109,10 +109,10 @@ export class NNTree {
 export class NNTreeNode {
   public id: string;
   public children: NNTreeNode[] = [];
-  public data: SequentialData | ModuleData;
+  public data: SequentialData | ModuleData | JoinData;
   public inputNodes: string[] = []; // For tracking which nodes feed into this node
 
-  static fromParts(id: string, children: NNTreeNode[], data: SequentialData | ModuleData): NNTreeNode {
+  static fromParts(id: string, children: NNTreeNode[], data: SequentialData | ModuleData | JoinData): NNTreeNode {
     return {
       id: id,
       children: children,
@@ -242,12 +242,12 @@ export interface SequentialData {
 // }
 
 // // Join node with multiple input branches
-// export interface JoinData {
-//   type: "join";
-//   joinType: string;
-//   inputNodes: string[]; // IDs of nodes being joined
-//   outputChannel?: number; // Track output channel count for validation
-// }
+export interface JoinData {
+  type: "join";
+  joinType: string;
+  inputNodes: string[]; // IDs of nodes being joined
+  params: any;
+}
 
 // // Empty data for initial node state
 // export interface EmptyData {
