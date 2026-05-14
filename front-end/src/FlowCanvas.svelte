@@ -25,7 +25,7 @@
     onNodeDragStop,
   } from "./utils";
 
-  import {NNTree} from "./conversion/nnTree";
+  import { NNTree } from "./conversion/nnTree";
 
   // 1. Importiamo la classe Diagram
   import { Diagram } from "./Diagram.svelte"; // Modifica il path se necessario
@@ -90,11 +90,36 @@
       diagram.deleteEdges(selectedEdges.map((e) => e.id));
   }
 
-  function handleConversion(){
+  async function handleConversion() {
     const nnTree = new NNTree(diagram);
-    console.log("NNTree:", nnTree.toJson());
+    const data = nnTree.toJson();
+
+    // Controlla se showSaveFilePicker esiste (Chrome/Edge)
+    if ("showSaveFilePicker" in window) {
+      try {
+        const handle = await (window as any).showSaveFilePicker({
+          suggestedName: "nnTree.json",
+          types: [{ accept: { "application/json": [".json"] } }],
+        });
+        const writable = await handle.createWritable();
+        await writable.write(data);
+        await writable.close();
+        return;
+      } catch (e) {
+        console.warn("L'utente ha chiuso la finestra o c'è stato un errore.");
+        return;
+      }
+    }
+
+    // Fallback per Firefox e browser vecchi
+    const blob = new Blob([data], { type: "application/json" });
+    const url = URL.createObjectURL(blob);
+    const a = document.createElement("a");
+    a.href = url;
+    a.download = "nnTree.json";
+    a.click();
+    URL.revokeObjectURL(url);
   }
-  
 </script>
 
 <div class="editor-layout">

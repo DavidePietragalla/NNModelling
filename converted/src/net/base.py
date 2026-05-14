@@ -4,7 +4,7 @@ import torch.nn.functional as F
 import lightning as lit
 from torchmetrics import Accuracy
 from hydra.utils import instantiate
-from omegaconf import DictConfig
+from omegaconf import DictConfig, OmegaConf
 
 
 class Net(lit.LightningModule):
@@ -14,6 +14,12 @@ class Net(lit.LightningModule):
         self.cfg = cfg
         self.module_dict = nn.ModuleDict()
 
+        # Funzione helper: converte la config in dict e scarta 'stereotype' per PyTorch
+        def instantiate_layer(layer_config):
+            layer_dict = OmegaConf.to_container(layer_config, resolve=True)
+            layer_dict.pop("stereotype", None)
+            return instantiate(layer_dict)
+
         # Istanziazione dinamica tramite Hydra
         if hasattr(cfg.net, "nodes"):
             for node_id, node in cfg.net.nodes.items():
@@ -21,20 +27,19 @@ class Net(lit.LightningModule):
                     layers = []
                     for layer_cfg in node.layers:
                         if layer_cfg.get("stereotype") != "Input":
-                            layers.append(instantiate(layer_cfg))
+                            layers.append(instantiate_layer(layer_cfg))
                     if layers:
                         self.module_dict[node_id] = nn.Sequential(*layers)
 
                 elif node.type == "module" and hasattr(node, "layer"):
                     if node.layer.get("stereotype") != "Input":
-                        self.module_dict[node_id] = instantiate(node.layer)
+                        self.module_dict[node_id] = instantiate_layer(node.layer)
 
-        # Istanzia il modulo Loss fornito da Hydra
-        self.loss_fn = (
-            instantiate(cfg.net.lossNode)
-            if cfg.net.get("lossNode")
-            else nn.CrossEntropyLoss()
-        )
+        # Istanzia il modulo Loss
+        if cfg.net.get("lossNode"):
+            self.loss_fn = instantiate_layer(cfg.net.lossNode)
+        else:
+            self.loss_fn = nn.CrossEntropyLoss()
 
     def forward(self, x):
         # BFS per calcolare il forward pass dell'albero del grafo
@@ -60,6 +65,7 @@ class Net(lit.LightningModule):
                     out = torch.cat(inputs, dim=-1)  # Fallback
             else:
                 inp = inputs[0]  # Nodi standard prendono un solo input
+
                 # Flatten automatico se è l'input generico prima dei layer Lineari classici
                 if curr_node.get("stereotype") == "Input" or (
                     curr_node.type == "sequential" and "Linear" in str(curr_node.layers)

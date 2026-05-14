@@ -7,6 +7,14 @@ wandb/
 uv.lock
 *.pt
 
+cfg/
+
+NeuralNetworks
+
+*.log
+
+*.json
+
 docker.sh
 api.key
 MNIST-FD/
