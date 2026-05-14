@@ -1,0 +1,12 @@
+outputs
+*.pyc
+multirun
+data/
+fds-mnist/
+wandb/
+uv.lock
+*.pt
+
+docker.sh
+api.key
+MNIST-FD/
