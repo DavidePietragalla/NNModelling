@@ -46,11 +46,13 @@ def main(cfg: DictConfig):
     dataset = instantiate(cfg.dataset)
     train_loader, val_loader, test_loader = dataset.division()
 
+    task_type = cfg.net.lossNode.get("taskType", "classification")
+    es_mode = "min" if task_type == "regression" else "max"
     trainer = lit.Trainer(
         logger=wandb_logger,
         callbacks=[
             cb.EarlyStopping(
-                monitor="val_metric", patience=3, verbose=True, mode="max", min_delta=1e-2
+                monitor="val_metric", patience=3, verbose=True, mode=es_mode, min_delta=1e-2
             )
         ],
         **cfg.trainer,

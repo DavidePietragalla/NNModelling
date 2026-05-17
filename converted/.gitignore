@@ -7,7 +7,7 @@ wandb/
 uv.lock
 *.pt
 
-cfg/
+cfg*/
 
 NeuralNetworks
 
