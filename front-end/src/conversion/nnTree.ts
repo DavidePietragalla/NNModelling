@@ -1,17 +1,11 @@
 import { Diagram } from "../Diagram.svelte";
 import { type Node } from "@xyflow/svelte";
-/**
- * A tree node representing either a collapsed sequential block or a branching point.
- * - If sequential: contains multiple layers that are collapsed into one logical unit
- * - If fork/join: contains branches that split or merge the data flow
- */
 
 export class NNTree {
   public nodes: Map<string, NNTreeNode>;
   public root: string;
   public lossNode: ModuleData | null = null;
 
-  //TODO: ADJUST
   constructor(diagram: Diagram) {
     this.nodes = new Map();
     const inputNodes: Node[] = diagram.nodes.filter(n => n.data.stereotype === "Input");
@@ -23,32 +17,35 @@ export class NNTree {
     this.root = new_root;
   }
 
+  private getPythonClassName(diagram: Diagram, node: Node): string {
+    const stereo = diagram.getStereotype(node.data.stereotype);
+    return stereo?.pythonClassName || "";
+  }
+
   private createSequential(node: Node, diagram: Diagram, visited: Set<string>, childs: Node[]): string {
-    // sequential
     let seq = [];
     seq.push({
       type: "module",
       name: node.data.name,
       stereotype: node.data.stereotype,
+      pythonClassName: this.getPythonClassName(diagram, node),
       params: node.data.params
     } as ModuleData)
     do {
       let child = childs[0];
       let parents = diagram.getParents(child.id);
       if (parents.length > 1) {
-        // Join
         break;
       }
       visited.add(child.id);
       childs = diagram.getChilds(child.id);
-      // TODO: potrebbe essere la loss
       if (childs.length === 0) {
-        // Loss
         this.lossNode = {
           type: "module",
           moduleId: child.id,
           name: child.data.name,
           stereotype: child.data.stereotype,
+          pythonClassName: this.getPythonClassName(diagram, child),
           params: child.data.params
         } as ModuleData;
         break
@@ -57,16 +54,16 @@ export class NNTree {
         type: "module",
         name: child.data.name,
         stereotype: child.data.stereotype,
+        pythonClassName: this.getPythonClassName(diagram, child),
         params: child.data.params
-      } as ModuleData
-      )
+      } as ModuleData)
 
     } while (childs.length === 1);
 
     let next_tree_nodes: string[] = [];
     for (const child of childs) {
       let nn_node = this.processNode(child, diagram, visited);
-      if (nn_node !== undefined) // TODO: cambia
+      if (nn_node !== undefined)
         next_tree_nodes.push(nn_node);
     }
     this.nodes.set(node.id, new NNTreeNode(node.id, next_tree_nodes, {
@@ -104,7 +101,6 @@ export class NNTree {
 
     let parents = diagram.getParents(node.id);
     if (parents.length > 1) {
-      // Join
       return this.handleJoin(node, diagram, visited);
     }
 
@@ -112,26 +108,26 @@ export class NNTree {
     if (childs.length === 1) {
       return this.createSequential(node, diagram, visited, childs);
     } else if (childs.length > 1) {
-      // fork
       let next_tree_nodes: string[] = [];
       for (const child of childs) {
         let nn_node = this.processNode(child, diagram, visited);
-        if (nn_node !== undefined) // TODO: cambia
+        if (nn_node !== undefined)
           next_tree_nodes.push(nn_node);
       }
       this.nodes.set(node.id, new NNTreeNode(node.id, next_tree_nodes, {
         type: "module",
         name: node.data.name,
         stereotype: node.data.stereotype,
+        pythonClassName: this.getPythonClassName(diagram, node),
         params: node.data.params
       } as ModuleData));
       return node.id;
     } else {
-      // Loss
       this.lossNode = {
         type: "module",
         name: node.data.name,
         stereotype: node.data.stereotype,
+        pythonClassName: this.getPythonClassName(diagram, node),
         params: node.data.params,
       } as ModuleData;
       return;
@@ -151,24 +147,24 @@ export class NNTree {
 
 export class NNTreeNode {
   public id: string;
-  public childrens: string[] = [];
+  public children: string[] = [];
   public data: SequentialData | ModuleData | JoinData;
 
-  constructor(id: string, childrens: string[], data: SequentialData | ModuleData | JoinData) {
+  constructor(id: string, children: string[], data: SequentialData | ModuleData | JoinData) {
     this.id = id;
-    this.childrens = childrens;
+    this.children = children;
     this.data = data;
   }
 
 
   addChild(child: string): void {
-    this.childrens.push(child);
+    this.children.push(child);
   }
 
   removeChild(childId: string): boolean {
-    const index = this.childrens.findIndex((c) => c === childId);
+    const index = this.children.findIndex((c) => c === childId);
     if (index !== -1) {
-      this.childrens.splice(index, 1);
+      this.children.splice(index, 1);
       return true;
     }
     return false;
@@ -188,17 +184,11 @@ export class NNTreeNode {
 
 }
 
-/**
- * Data structures for different node types
- */
-
-// Sequential block containing multiple layers
 export interface SequentialData {
   type: "sequential";
   layers: ModuleData[];
 }
 
-// // Join node with multiple input branches
 export interface JoinData {
   type: "join";
   name: string;
@@ -206,10 +196,10 @@ export interface JoinData {
   params: any;
 }
 
-// Single module layer
 export interface ModuleData {
   type: "module";
   name: string;
   stereotype: string;
+  pythonClassName?: string;
   params: any;
 }

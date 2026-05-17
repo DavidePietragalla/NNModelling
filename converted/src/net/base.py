@@ -1,6 +1,5 @@
 import torch
 import torch.nn as nn
-import torch.nn.functional as F
 import lightning as lit
 from torchmetrics import Accuracy
 from hydra.utils import instantiate
@@ -14,35 +13,53 @@ class Net(lit.LightningModule):
         self.cfg = cfg
         self.module_dict = nn.ModuleDict()
 
-        # Funzione helper: converte la config in dict e scarta 'stereotype' per PyTorch
+        loss_stereotypes = {"CrossEntropyLoss", "BCELoss", "BCEWithLogitsLoss", "MSELoss"}
+
         def instantiate_layer(layer_config):
             layer_dict = OmegaConf.to_container(layer_config, resolve=True)
             layer_dict.pop("stereotype", None)
             return instantiate(layer_dict)
 
-        # Istanziazione dinamica tramite Hydra
         if hasattr(cfg.net, "nodes"):
             for node_id, node in cfg.net.nodes.items():
+                node_stereotype = node.get("stereotype", "")
+                if node_stereotype in loss_stereotypes:
+                    continue
                 if node.type == "sequential":
                     layers = []
                     for layer_cfg in node.layers:
-                        if layer_cfg.get("stereotype") != "Input":
+                        if layer_cfg.get("stereotype") not in ("Input", *loss_stereotypes):
                             layers.append(instantiate_layer(layer_cfg))
                     if layers:
                         self.module_dict[node_id] = nn.Sequential(*layers)
 
                 elif node.type == "module" and hasattr(node, "layer"):
-                    if node.layer.get("stereotype") != "Input":
+                    if node.layer.get("stereotype") not in ("Input", *loss_stereotypes):
                         self.module_dict[node_id] = instantiate_layer(node.layer)
 
-        # Istanzia il modulo Loss
         if cfg.net.get("lossNode"):
             self.loss_fn = instantiate_layer(cfg.net.lossNode)
         else:
             self.loss_fn = nn.CrossEntropyLoss()
 
+        num_classes = self._detect_num_classes()
+        self.accuracy = Accuracy(task="multiclass", num_classes=num_classes)
+
+    def _detect_num_classes(self):
+        if hasattr(self.cfg.net, "num_classes"):
+            return self.cfg.net.num_classes
+        if hasattr(self.cfg.net, "nodes"):
+            for node in self.cfg.net.nodes.values():
+                if node.type == "sequential":
+                    for layer in getattr(node, "layers", []):
+                        target = layer.get("_target_", "")
+                        if "Linear" in target or "Linear" in layer.get("stereotype", ""):
+                            out_features = layer.get("out_features", None)
+                            if out_features is not None:
+                                return int(out_features)
+        return 10
+
     def forward(self, x):
-        # BFS per calcolare il forward pass dell'albero del grafo
         root_id = self.cfg.net.root
         node_inputs = {root_id: [x]}
         in_degrees = self._compute_in_degrees()
@@ -56,48 +73,58 @@ class Net(lit.LightningModule):
             curr_node = self.cfg.net.nodes[curr_id]
             inputs = node_inputs[curr_id]
 
-            # Applica l'operazione in base al tipo di nodo
             if curr_node.type == "join":
-                # Gestione dinamica dei join operativi
                 if curr_node.stereotype == "Addition":
                     out = sum(inputs)
+                elif curr_node.stereotype == "Einsum":
+                    expr = curr_node.get("expr", "")
+                    if expr:
+                        out = torch.einsum(expr, *inputs)
+                    else:
+                        raise ValueError("Einsum join requires non-empty 'expr' parameter")
                 else:
-                    out = torch.cat(inputs, dim=-1)  # Fallback
+                    raise NotImplementedError(
+                        f"Join type '{curr_node.stereotype}' not implemented"
+                    )
             else:
-                inp = inputs[0]  # Nodi standard prendono un solo input
+                inp = inputs[0]
 
-                # Flatten automatico se è l'input generico prima dei layer Lineari classici
-                if curr_node.get("stereotype") == "Input" or (
-                    curr_node.type == "sequential" and "Linear" in str(curr_node.layers)
-                ):
-                    if len(inp.shape) > 2:
-                        inp = inp.view(inp.size(0), -1)
+                needs_flatten = False
+                if curr_node.get("stereotype") == "Input":
+                    needs_flatten = True
+                elif curr_node.type == "sequential" and hasattr(curr_node, "layers"):
+                    for l in curr_node.layers:
+                        ls = l.get("stereotype", "")
+                        lt = l.get("_target_", "")
+                        if "Linear" in lt or "Linear" in ls:
+                            needs_flatten = True
+                            break
+
+                if needs_flatten and len(inp.shape) > 2:
+                    inp = inp.view(inp.size(0), -1)
 
                 if curr_id in self.module_dict:
                     out = self.module_dict[curr_id](inp)
                 else:
-                    out = inp  # Nodi solo per pass-through o Input root
+                    out = inp
 
             final_output = out
 
-            # Propagazione ai figli
-            for child_id in curr_node.childrens:
+            for child_id in curr_node.children:
                 if child_id not in node_inputs:
                     node_inputs[child_id] = []
                 node_inputs[child_id].append(out)
                 processed_count[child_id] += 1
 
-                # Aggiunge alla coda solo quando tutti gli input per il nodo figlio sono calcolati
                 if processed_count[child_id] == in_degrees[child_id]:
                     queue.append(child_id)
 
         return final_output
 
     def _compute_in_degrees(self):
-        """Calcola i gradi di ingresso per capire quando un nodo Join può essere eseguito."""
         deg = {node_id: 0 for node_id in self.cfg.net.nodes}
         for node in self.cfg.net.nodes.values():
-            for child_id in node.childrens:
+            for child_id in node.children:
                 if child_id in deg:
                     deg[child_id] += 1
         return deg
@@ -114,17 +141,14 @@ class Net(lit.LightningModule):
         y_hat = self(x)
         loss = self.loss_fn(y_hat, y)
         self.log("val_loss", loss)
-        self.log("val_acc", accuracy(y_hat, y), prog_bar=True)
+        self.log("val_acc", self.accuracy(y_hat, y), prog_bar=True)
 
     def test_step(self, batch, batch_idx):
         x, y = batch
         y_hat = self(x)
         loss = self.loss_fn(y_hat, y)
         self.log("test_loss", loss)
-        self.log("test_acc", accuracy(y_hat, y), prog_bar=True)
+        self.log("test_acc", self.accuracy(y_hat, y), prog_bar=True)
 
     def configure_optimizers(self):
         return instantiate(self.cfg.optimizer, self.parameters())
-
-
-accuracy = Accuracy(task="multiclass", num_classes=10)

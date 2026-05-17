@@ -7,13 +7,18 @@ import ast
 
 
 def parse_params(params_dict: dict[str, Any]) -> dict[str, Any]:
-    """Converte i parametri estratti dal JSON deducendo automaticamente il tipo."""
+    """Converte i parametri dal JSON in valori Python."""
     result: dict[str, Any] = {}
     for param_name, param_data in params_dict.items():
         val_str = param_data.get("value", "")
 
-        if str(val_str).lower() in ["none", "null", "undefined", ""]:
+        if str(val_str).lower() in ["null", "undefined"]:
             continue
+
+        if str(val_str).lower() in ["none", ""]:
+            result[param_name] = None
+            continue
+
         if str(val_str).lower() == "true":
             result[param_name] = True
             continue
@@ -33,9 +38,14 @@ def build_layer_config(layer_data: dict[str, Any]) -> dict[str, Any]:
     stereotype = layer_data.get("stereotype", "")
     config = {"stereotype": stereotype}
 
-    # Nodi come Input e Join non hanno un corrispondente modulo torch.nn diretto
-    if stereotype not in ["Input", "Addition", ""]:
-        config["_target_"] = f"torch.nn.{stereotype}"
+    if stereotype not in ["Input", "Addition", "Einsum", ""]:
+        python_class_name = layer_data.get("pythonClassName", stereotype)
+        if python_class_name.startswith("nn."):
+            config["_target_"] = "torch." + python_class_name
+        elif python_class_name.startswith("torch."):
+            config["_target_"] = python_class_name
+        else:
+            config["_target_"] = f"torch.nn.{python_class_name}"
 
     config.update(parse_params(layer_data.get("params", {})))
     return config
@@ -45,11 +55,10 @@ def build_hydra_configs(json_path: str, output_dir: str = "cfg"):
     with open(json_path, "r") as f:
         diagram: dict[str, Any] = json.load(f)
 
-    # Crea le cartelle necessarie
     for d in ["net", "optimizer", "trainer", "wandb", "dataset"]:
         os.makedirs(os.path.join(output_dir, d), exist_ok=True)
 
-    nntree = diagram.get("NNTree", diagram)  # Gestisce eventuale wrapper
+    nntree = diagram.get("NNTree", diagram)
 
     net_config_dict = {
         "root": nntree.get("root", ""),
@@ -59,11 +68,10 @@ def build_hydra_configs(json_path: str, output_dir: str = "cfg"):
         else None,
     }
 
-    # Popola i nodi mantenendo la struttura ad albero e generando i config dei layer
     for node_id, node_info in nntree.get("nodes", {}).items():
         node_type = node_info["data"].get("type", "")
         node_config = {
-            "childrens": node_info.get("childrens", []),
+            "children": node_info.get("children", []),
             "type": node_type,
             "stereotype": node_info["data"].get("stereotype", ""),
         }
@@ -77,13 +85,11 @@ def build_hydra_configs(json_path: str, output_dir: str = "cfg"):
 
         net_config_dict["nodes"][node_id] = node_config
 
-    # Salva il file network principale come dict OmegaConf
     net_config = OmegaConf.create(net_config_dict)
     OmegaConf.save(
         config=net_config, f=os.path.join(output_dir, "net", "custom_sequence.yaml")
     )
 
-    # File di default (Optimizer, Trainer, W&B, Dataset, Base)
     OmegaConf.save(
         config=OmegaConf.create({"_target_": "torch.optim.Adam", "lr": 0.001}),
         f=os.path.join(output_dir, "optimizer", "adam.yaml"),
