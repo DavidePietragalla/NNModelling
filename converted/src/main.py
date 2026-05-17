@@ -48,11 +48,13 @@ def main(cfg: DictConfig):
 
     task_type = cfg.net.lossNode.get("taskType", "classification")
     es_mode = "min" if task_type == "regression" else "max"
+    es_cfg = cfg.early_stopping
     trainer = lit.Trainer(
         logger=wandb_logger,
         callbacks=[
             cb.EarlyStopping(
-                monitor="val_metric", patience=3, verbose=True, mode=es_mode, min_delta=1e-2
+                monitor="val_metric", patience=es_cfg.patience, verbose=True,
+                mode=es_mode, min_delta=es_cfg.min_delta,
             )
         ],
         **cfg.trainer,

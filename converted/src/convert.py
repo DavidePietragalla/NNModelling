@@ -58,11 +58,14 @@ def build_layer_config(layer_data: dict[str, Any]) -> dict[str, Any]:
     return config
 
 
-def build_hydra_configs(json_path: str, output_dir: str = "cfg", num_classes: int | None = None, dataset: str = "dataset.mnist.MNISTDataset"):
+def build_hydra_configs(json_path: str, output_dir: str = "cfg", num_classes: int | None = None,
+                        dataset: str = "dataset.mnist.MNISTDataset",
+                        early_stop_patience: int = 3, early_stop_min_delta: float = 0.0,
+                        max_epochs: int = 20):
     with open(json_path, "r") as f:
         diagram: dict[str, Any] = json.load(f)
 
-    for d in ["net", "optimizer", "trainer", "wandb", "dataset"]:
+    for d in ["net", "optimizer", "trainer", "wandb", "dataset", "early_stopping"]:
         os.makedirs(os.path.join(output_dir, d), exist_ok=True)
 
     nntree = diagram.get("NNTree", diagram)
@@ -112,7 +115,7 @@ def build_hydra_configs(json_path: str, output_dir: str = "cfg", num_classes: in
         f=os.path.join(output_dir, "optimizer", "adam.yaml"),
     )
     OmegaConf.save(
-        config=OmegaConf.create({"max_epochs": 20, "accelerator": "auto"}),
+        config=OmegaConf.create({"max_epochs": max_epochs, "accelerator": "auto"}),
         f=os.path.join(output_dir, "trainer", "default.yaml"),
     )
     OmegaConf.save(
@@ -130,6 +133,15 @@ def build_hydra_configs(json_path: str, output_dir: str = "cfg", num_classes: in
         f=os.path.join(output_dir, "dataset", "dataset.yaml"),
     )
 
+    early_stopping_config = OmegaConf.create({
+        "patience": early_stop_patience,
+        "min_delta": early_stop_min_delta,
+    })
+    OmegaConf.save(
+        config=early_stopping_config,
+        f=os.path.join(output_dir, "early_stopping", "default.yaml"),
+    )
+
     base_config = OmegaConf.create(
         {
             "defaults": [
@@ -138,6 +150,7 @@ def build_hydra_configs(json_path: str, output_dir: str = "cfg", num_classes: in
                 {"trainer": "default"},
                 {"wandb": "wandb"},
                 {"dataset": "dataset"},
+                {"early_stopping": "default"},
                 "_self_",
             ],
             "seed": 42,
@@ -161,7 +174,16 @@ if __name__ == "__main__":
                         help="Number of classes (required for classification tasks)")
     parser.add_argument("--dataset", type=str, default="dataset.mnist.MNISTDataset",
                         help="Dataset class path (e.g. dataset.autoencoder_mnist.AutoencoderMNIST)")
+    parser.add_argument("--early-stop-patience", type=int, default=3,
+                        help="Early stopping patience (default: 3)")
+    parser.add_argument("--early-stop-min-delta", type=float, default=0.0,
+                        help="Early stopping min delta (default: 0.0)")
+    parser.add_argument("--max-epochs", type=int, default=20,
+                        help="Max training epochs (default: 20)")
     args = parser.parse_args()
 
     build_hydra_configs(args.json_path, output_dir=args.output_dir,
-                        num_classes=args.num_classes, dataset=args.dataset)
+                        num_classes=args.num_classes, dataset=args.dataset,
+                        early_stop_patience=args.early_stop_patience,
+                        early_stop_min_delta=args.early_stop_min_delta,
+                        max_epochs=args.max_epochs)
