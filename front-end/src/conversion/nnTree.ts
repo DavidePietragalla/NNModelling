@@ -92,6 +92,7 @@ export class NNTree {
       type: "join",
       name: node.data.name,
       stereotype: node.data.stereotype,
+      pythonClassName: this.getPythonClassName(diagram, node),
       params: node.data.params
     } as JoinData));
     return node.id;
@@ -200,6 +201,7 @@ export interface JoinData {
   type: "join";
   name: string;
   stereotype: string;
+  pythonClassName?: string;
   params: any;
 }
 

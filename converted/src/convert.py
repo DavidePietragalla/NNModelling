@@ -95,6 +95,8 @@ def build_hydra_configs(json_path: str, output_dir: str = "cfg", num_classes: in
             ]
         elif node_type == "module":
             node_config["layer"] = build_layer_config(node_info["data"])
+        elif node_type == "join":
+            node_config["layer"] = build_layer_config(node_info["data"])
 
         net_config_dict["nodes"][node_id] = node_config
 

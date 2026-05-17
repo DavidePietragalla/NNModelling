@@ -9,6 +9,7 @@ import torch
 from lightning.pytorch.loggers import WandbLogger
 from omegaconf import DictConfig, OmegaConf
 
+import ops
 import wandb
 from dataset.ds import Dataset
 from dataset.mnist import MNISTDataset

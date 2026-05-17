@@ -37,6 +37,8 @@ class Net(lit.LightningModule):
                     ls = node.layer.get("stereotype", "")
                     if not self._is_input(ls) and not self._is_loss(ls):
                         self.module_dict[node_id] = instantiate_layer(node.layer)
+                elif node.type == "join" and hasattr(node, "layer"):
+                    self.module_dict[node_id] = instantiate_layer(node.layer)
 
         if cfg.net.get("lossNode"):
             self.loss_fn = instantiate_layer(cfg.net.lossNode)
@@ -81,17 +83,11 @@ class Net(lit.LightningModule):
             inputs = node_inputs[curr_id]
 
             if curr_node.type == "join":
-                if curr_node.stereotype == "Addition":
-                    out = sum(inputs)
-                elif curr_node.stereotype == "Einsum":
-                    expr = curr_node.get("expr", "")
-                    if expr:
-                        out = torch.einsum(expr, *inputs)
-                    else:
-                        raise ValueError("Einsum join requires non-empty 'expr' parameter")
+                if curr_id in self.module_dict:
+                    out = self.module_dict[curr_id](inputs)
                 else:
                     raise NotImplementedError(
-                        f"Join type '{curr_node.stereotype}' not implemented"
+                        f"Join node {curr_id} has no instantiated module"
                     )
             else:
                 inp = inputs[0]
