@@ -1,5 +1,11 @@
 {
-  "Name": "Einsum",
+  "category": "Join",
+  "pythonClassName": "ops.Einsum",
+  "view": {
+    "color": "#888888",
+    "width": 80,
+    "height": 60
+  },
   "params": {
     "expr": {
       "type": "string",

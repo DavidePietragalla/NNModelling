@@ -22,6 +22,28 @@ export class Diagram {
     }
   }
 
+  public getNodeById(id: string): Node | undefined {
+    return this.nodes.find(n => n.id === id);
+  }
+
+  public getChilds(id: string): Node[] {
+    let childsIds = this.edges.filter(e => e.source === id).map(e => e.target);
+    let childs = [];
+    childs.push(...this.nodes.filter(n => childsIds.find(c_id => c_id === n.id)));
+    return childs;
+  }
+
+  public getParents(id: string): Node[] {
+    let parentsIds = this.edges.filter(e => e.target === id).map(e => e.source);
+    let parents = [];
+    parents.push(...this.nodes.filter(n => parentsIds.find(c_id => c_id === n.id)));
+    return parents;
+  }
+
+  public getStereotype(name: string): Stereotype | undefined {
+    return this.stereotypes.find(s => s.name === name);
+  }
+
   get layerStereotypes() { return this.stereotypes.filter(s => !s.isJoin); }
   get joinStereotypes() { return this.stereotypes.filter(s => s.isJoin); }
 
@@ -146,7 +168,7 @@ export class Diagram {
         }
 
         // Il padre diretto è stato eliminato! Iniziamo la ricerca dell'antenato superstite.
-        let currentAncestorId = n.parentId;
+        let currentAncestorId: string | undefined = n.parentId;
         let accumulatedX = n.position.x;
         let accumulatedY = n.position.y;
 

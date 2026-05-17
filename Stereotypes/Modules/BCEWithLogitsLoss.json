@@ -1,6 +1,7 @@
 {
   "category": "BCEWithLogitsLoss",
   "pythonClassName": "nn.BCEWithLogitsLoss",
+  "taskType": "classification",
   "expr": "",
   "view": {
     "color": "#cd5c5c",

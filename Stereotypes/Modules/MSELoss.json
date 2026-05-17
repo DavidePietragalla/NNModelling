@@ -1,6 +1,7 @@
 {
   "category": "MSELoss",
   "pythonClassName": "nn.MSELoss",
+  "taskType": "regression",
   "expr": "",
   "view": {
     "color": "#cd5c5c",

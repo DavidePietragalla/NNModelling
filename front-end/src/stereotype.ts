@@ -14,6 +14,7 @@ export interface StereotypeView {
 export interface StereotypeJson {
   category?: string;
   pythonClassName?: string;
+  taskType?: "classification" | "regression";
   expr?: string;
   view?: Partial<StereotypeView>;
   params?: Record<string, ModuleParameter>;
@@ -25,6 +26,7 @@ export class Stereotype {
   public readonly name: string; // <-- Calcolato una sola volta!
   public readonly category: string;
   public readonly pythonClassName: string;
+  public readonly taskType: string;
   public readonly expr: string;
   public readonly parameters: Record<string, ModuleParameter>;
   public readonly view: StereotypeView;
@@ -44,6 +46,7 @@ export class Stereotype {
     // Fallback di sicurezza se il JSON è incompleto
     this.category = data.category || "Uncategorized";
     this.pythonClassName = data.pythonClassName || "";
+    this.taskType = data.taskType || "";
     this.expr = data.expr || "";
     this.parameters = data.params || {};
 
