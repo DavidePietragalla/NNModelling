@@ -1,7 +1,7 @@
 import torch
 import torch.nn as nn
 import lightning as lit
-from torchmetrics import Accuracy
+from torchmetrics import Accuracy, MeanSquaredError
 from hydra.utils import instantiate
 from omegaconf import DictConfig, OmegaConf
 
@@ -16,6 +16,7 @@ class Net(lit.LightningModule):
         def instantiate_layer(layer_config):
             layer_dict = OmegaConf.to_container(layer_config, resolve=True)
             layer_dict.pop("stereotype", None)
+            layer_dict.pop("taskType", None)
             return instantiate(layer_dict)
 
         if hasattr(cfg.net, "nodes"):
@@ -42,8 +43,7 @@ class Net(lit.LightningModule):
         else:
             self.loss_fn = nn.CrossEntropyLoss()
 
-        num_classes = self._detect_num_classes()
-        self.accuracy = Accuracy(task="multiclass", num_classes=num_classes)
+        self.metric = self._build_metric()
 
     def _is_loss(self, name: str) -> bool:
         return "loss" in name.lower()
@@ -51,22 +51,20 @@ class Net(lit.LightningModule):
     def _is_input(self, name: str) -> bool:
         return name.lower() == "input"
 
-    def _detect_num_classes(self):
-        if hasattr(self.cfg.net, "num_classes"):
-            return self.cfg.net.num_classes
-        if hasattr(self.cfg.net, "nodes"):
-            last_out = None
-            for node in self.cfg.net.nodes.values():
-                if node.type == "sequential":
-                    for layer in getattr(node, "layers", []):
-                        target = layer.get("_target_", "")
-                        if "Linear" in target:
-                            out_features = layer.get("out_features", None)
-                            if out_features is not None:
-                                last_out = int(out_features)
-            if last_out is not None:
-                return last_out
-        return 10
+    def _build_metric(self):
+        loss_node = self.cfg.net.get("lossNode")
+        if loss_node is not None:
+            task_type = loss_node.get("taskType", "")
+        else:
+            task_type = "classification"
+
+        if task_type == "classification":
+            num_classes = getattr(self.cfg.net, "num_classes", 10)
+            return Accuracy(task="multiclass", num_classes=num_classes)
+        elif task_type == "regression":
+            return MeanSquaredError()
+        else:
+            return Accuracy(task="multiclass", num_classes=10)
 
     def forward(self, x):
         root_id = self.cfg.net.root
@@ -149,14 +147,14 @@ class Net(lit.LightningModule):
         y_hat = self(x)
         loss = self.loss_fn(y_hat, y)
         self.log("val_loss", loss)
-        self.log("val_acc", self.accuracy(y_hat, y), prog_bar=True)
+        self.log("val_metric", self.metric(y_hat, y), prog_bar=True)
 
     def test_step(self, batch, batch_idx):
         x, y = batch
         y_hat = self(x)
         loss = self.loss_fn(y_hat, y)
         self.log("test_loss", loss)
-        self.log("test_acc", self.accuracy(y_hat, y), prog_bar=True)
+        self.log("test_metric", self.metric(y_hat, y), prog_bar=True)
 
     def configure_optimizers(self):
         return instantiate(self.cfg.optimizer, self.parameters())

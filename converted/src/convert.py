@@ -1,6 +1,7 @@
 from typing import Any
 import json
 import os
+import argparse
 from omegaconf import OmegaConf
 
 import ast
@@ -47,11 +48,15 @@ def build_layer_config(layer_data: dict[str, Any]) -> dict[str, Any]:
         else:
             config["_target_"] = f"torch.nn.{python_class_name}"
 
+    task_type = layer_data.get("taskType", "")
+    if task_type:
+        config["taskType"] = task_type
+
     config.update(parse_params(layer_data.get("params", {})))
     return config
 
 
-def build_hydra_configs(json_path: str, output_dir: str = "cfg"):
+def build_hydra_configs(json_path: str, output_dir: str = "cfg", num_classes: int | None = None):
     with open(json_path, "r") as f:
         diagram: dict[str, Any] = json.load(f)
 
@@ -60,17 +65,25 @@ def build_hydra_configs(json_path: str, output_dir: str = "cfg"):
 
     nntree = diagram.get("NNTree", diagram)
 
-    net_config_dict = {
+    loss_node = build_layer_config(nntree.get("lossNode", {})) if "lossNode" in nntree else None
+    loss_task_type = (loss_node or {}).get("taskType", "")
+
+    net_config_dict: dict[str, Any] = {
         "root": nntree.get("root", ""),
         "nodes": {},
-        "lossNode": build_layer_config(nntree.get("lossNode", {}))
-        if "lossNode" in nntree
-        else None,
+        "lossNode": loss_node,
     }
+
+    if loss_task_type == "classification":
+        if num_classes is None:
+            print("Warning: loss taskType is 'classification' but --num-classes not set. Defaulting to 10.")
+            net_config_dict["num_classes"] = 10
+        else:
+            net_config_dict["num_classes"] = num_classes
 
     for node_id, node_info in nntree.get("nodes", {}).items():
         node_type = node_info["data"].get("type", "")
-        node_config = {
+        node_config: dict[str, Any] = {
             "children": node_info.get("children", []),
             "type": node_type,
             "stereotype": node_info["data"].get("stereotype", ""),
@@ -128,11 +141,20 @@ def build_hydra_configs(json_path: str, output_dir: str = "cfg"):
     )
     OmegaConf.save(config=base_config, f=os.path.join(output_dir, "base.yaml"))
     print(f"\nConfigurazione salvata con successo in '{output_dir}/'!")
+    if loss_task_type == "classification":
+        print(f"   - Task type: classification (num_classes={net_config_dict['num_classes']})")
+    elif loss_task_type == "regression":
+        print("   - Task type: regression")
 
 
 if __name__ == "__main__":
-    import sys
+    parser = argparse.ArgumentParser(description="Convert NNTree JSON to Hydra configs")
+    parser.add_argument("json_path", nargs="?", default="../converted_minst.json",
+                        help="Path to NNTree JSON file")
+    parser.add_argument("output_dir", nargs="?", default="cfg",
+                        help="Output directory for generated configs")
+    parser.add_argument("--num-classes", type=int, default=None,
+                        help="Number of classes (required for classification tasks)")
+    args = parser.parse_args()
 
-    json_path = sys.argv[1] if len(sys.argv) > 1 else "../converted_minst.json"
-    output_dir = sys.argv[2] if len(sys.argv) > 2 else "cfg"
-    build_hydra_configs(json_path, output_dir=output_dir)
+    build_hydra_configs(args.json_path, output_dir=args.output_dir, num_classes=args.num_classes)

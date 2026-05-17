@@ -63,7 +63,7 @@ def main(cfg: DictConfig):
         logger=wandb_logger,
         callbacks=[
             cb.EarlyStopping(
-                monitor="val_acc", patience=3, verbose=True, mode="max", min_delta=1e-2
+                monitor="val_metric", patience=3, verbose=True, mode="max", min_delta=1e-2
             )
         ],
         **cfg.trainer,

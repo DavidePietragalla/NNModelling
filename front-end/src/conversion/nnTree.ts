@@ -22,6 +22,11 @@ export class NNTree {
     return stereo?.pythonClassName || "";
   }
 
+  private getTaskType(diagram: Diagram, node: Node): string {
+    const stereo = diagram.getStereotype(node.data.stereotype);
+    return stereo?.taskType || "";
+  }
+
   private createSequential(node: Node, diagram: Diagram, visited: Set<string>, childs: Node[]): string {
     let seq = [];
     seq.push({
@@ -46,6 +51,7 @@ export class NNTree {
           name: child.data.name,
           stereotype: child.data.stereotype,
           pythonClassName: this.getPythonClassName(diagram, child),
+          taskType: this.getTaskType(diagram, child),
           params: child.data.params
         } as ModuleData;
         break
@@ -128,6 +134,7 @@ export class NNTree {
         name: node.data.name,
         stereotype: node.data.stereotype,
         pythonClassName: this.getPythonClassName(diagram, node),
+        taskType: this.getTaskType(diagram, node),
         params: node.data.params,
       } as ModuleData;
       return;
@@ -201,5 +208,6 @@ export interface ModuleData {
   name: string;
   stereotype: string;
   pythonClassName?: string;
+  taskType?: string;
   params: any;
 }
