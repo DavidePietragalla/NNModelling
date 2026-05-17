@@ -45,6 +45,8 @@ def build_layer_config(layer_data: dict[str, Any]) -> dict[str, Any]:
             config["_target_"] = "torch." + python_class_name
         elif python_class_name.startswith("torch."):
             config["_target_"] = python_class_name
+        elif "." in python_class_name:
+            config["_target_"] = python_class_name
         else:
             config["_target_"] = f"torch.nn.{python_class_name}"
 
