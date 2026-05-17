@@ -40,6 +40,10 @@ export class Diagram {
     return parents;
   }
 
+  public getStereotype(name: string): Stereotype | undefined {
+    return this.stereotypes.find(s => s.name === name);
+  }
+
   get layerStereotypes() { return this.stereotypes.filter(s => !s.isJoin); }
   get joinStereotypes() { return this.stereotypes.filter(s => s.isJoin); }
 
