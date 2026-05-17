@@ -13,8 +13,6 @@ class Net(lit.LightningModule):
         self.cfg = cfg
         self.module_dict = nn.ModuleDict()
 
-        loss_stereotypes = {"CrossEntropyLoss", "BCELoss", "BCEWithLogitsLoss", "MSELoss"}
-
         def instantiate_layer(layer_config):
             layer_dict = OmegaConf.to_container(layer_config, resolve=True)
             layer_dict.pop("stereotype", None)
@@ -23,18 +21,20 @@ class Net(lit.LightningModule):
         if hasattr(cfg.net, "nodes"):
             for node_id, node in cfg.net.nodes.items():
                 node_stereotype = node.get("stereotype", "")
-                if node_stereotype in loss_stereotypes:
+                if self._is_loss(node_stereotype):
                     continue
                 if node.type == "sequential":
                     layers = []
                     for layer_cfg in node.layers:
-                        if layer_cfg.get("stereotype") not in ("Input", *loss_stereotypes):
+                        ls = layer_cfg.get("stereotype", "")
+                        if not self._is_input(ls) and not self._is_loss(ls):
                             layers.append(instantiate_layer(layer_cfg))
                     if layers:
                         self.module_dict[node_id] = nn.Sequential(*layers)
 
                 elif node.type == "module" and hasattr(node, "layer"):
-                    if node.layer.get("stereotype") not in ("Input", *loss_stereotypes):
+                    ls = node.layer.get("stereotype", "")
+                    if not self._is_input(ls) and not self._is_loss(ls):
                         self.module_dict[node_id] = instantiate_layer(node.layer)
 
         if cfg.net.get("lossNode"):
@@ -45,18 +45,27 @@ class Net(lit.LightningModule):
         num_classes = self._detect_num_classes()
         self.accuracy = Accuracy(task="multiclass", num_classes=num_classes)
 
+    def _is_loss(self, name: str) -> bool:
+        return "loss" in name.lower()
+
+    def _is_input(self, name: str) -> bool:
+        return name.lower() == "input"
+
     def _detect_num_classes(self):
         if hasattr(self.cfg.net, "num_classes"):
             return self.cfg.net.num_classes
         if hasattr(self.cfg.net, "nodes"):
+            last_out = None
             for node in self.cfg.net.nodes.values():
                 if node.type == "sequential":
                     for layer in getattr(node, "layers", []):
                         target = layer.get("_target_", "")
-                        if "Linear" in target or "Linear" in layer.get("stereotype", ""):
+                        if "Linear" in target:
                             out_features = layer.get("out_features", None)
                             if out_features is not None:
-                                return int(out_features)
+                                last_out = int(out_features)
+            if last_out is not None:
+                return last_out
         return 10
 
     def forward(self, x):
@@ -90,13 +99,12 @@ class Net(lit.LightningModule):
                 inp = inputs[0]
 
                 needs_flatten = False
-                if curr_node.get("stereotype") == "Input":
+                if self._is_input(curr_node.get("stereotype", "")):
                     needs_flatten = True
                 elif curr_node.type == "sequential" and hasattr(curr_node, "layers"):
                     for l in curr_node.layers:
-                        ls = l.get("stereotype", "")
                         lt = l.get("_target_", "")
-                        if "Linear" in lt or "Linear" in ls:
+                        if "Linear" in lt:
                             needs_flatten = True
                             break
 
