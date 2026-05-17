@@ -58,7 +58,7 @@ def build_layer_config(layer_data: dict[str, Any]) -> dict[str, Any]:
     return config
 
 
-def build_hydra_configs(json_path: str, output_dir: str = "cfg", num_classes: int | None = None):
+def build_hydra_configs(json_path: str, output_dir: str = "cfg", num_classes: int | None = None, dataset: str = "dataset.mnist.MNISTDataset"):
     with open(json_path, "r") as f:
         diagram: dict[str, Any] = json.load(f)
 
@@ -119,14 +119,14 @@ def build_hydra_configs(json_path: str, output_dir: str = "cfg", num_classes: in
         config=OmegaConf.create({"project": "NeuralNetworks", "name": "Dynamic_Model"}),
         f=os.path.join(output_dir, "wandb", "wandb.yaml"),
     )
+    dataset_config = OmegaConf.create({
+        "_target_": dataset,
+        "batch_size": 1024,
+        "train_size": 0.8,
+        "num_workers": 4,
+    })
     OmegaConf.save(
-        config=OmegaConf.create(
-            {
-                "import": "dataset.mnist",
-                "name": "MNISTDataset",
-                "params": {"batch_size": 1024, "train_size": 0.8},
-            }
-        ),
+        config=dataset_config,
         f=os.path.join(output_dir, "dataset", "dataset.yaml"),
     )
 
@@ -159,6 +159,9 @@ if __name__ == "__main__":
                         help="Output directory for generated configs")
     parser.add_argument("--num-classes", type=int, default=None,
                         help="Number of classes (required for classification tasks)")
+    parser.add_argument("--dataset", type=str, default="dataset.mnist.MNISTDataset",
+                        help="Dataset class path (e.g. dataset.autoencoder_mnist.AutoencoderMNIST)")
     args = parser.parse_args()
 
-    build_hydra_configs(args.json_path, output_dir=args.output_dir, num_classes=args.num_classes)
+    build_hydra_configs(args.json_path, output_dir=args.output_dir,
+                        num_classes=args.num_classes, dataset=args.dataset)

@@ -11,8 +11,7 @@ from omegaconf import DictConfig, OmegaConf
 
 import ops
 import wandb
-from dataset.ds import Dataset
-from dataset.mnist import MNISTDataset
+from hydra.utils import instantiate
 from net.base import Net
 
 
@@ -42,22 +41,9 @@ def main(cfg: DictConfig):
     lit.seed_everything(cfg.seed)
     wandb_logger = WandbLogger(**cfg.wandb)
 
-    # Use SequentialNet for generated configs
     model = Net(cfg)
 
-    # Load dataset
-    # Handle both flat and nested params format
-    if hasattr(cfg.dataset, "params"):
-        params = cfg.dataset.params
-        dataset: Dataset = MNISTDataset(
-            batch_size=params.batch_size,
-            train_size=params.train_size,
-        )
-    else:
-        dataset: Dataset = MNISTDataset(
-            batch_size=cfg.dataset.batch_size,
-            train_size=cfg.dataset.train_size,
-        )
+    dataset = instantiate(cfg.dataset)
     train_loader, val_loader, test_loader = dataset.division()
 
     trainer = lit.Trainer(
