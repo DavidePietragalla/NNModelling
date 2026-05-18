@@ -19,3 +19,12 @@
     font-size: 12px;
     font-family: sans-serif;
 }
+
+.collapse-btn {
+    background: #007bff;
+    color: white;
+    border: none;
+    font-size: 15px;
+    text-align: center;
+    cursor: pointer;
+}

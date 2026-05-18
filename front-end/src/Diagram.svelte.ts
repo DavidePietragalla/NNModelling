@@ -119,7 +119,8 @@ export class Diagram {
       id,
       type: "subflow",
       position: { x, y },
-      data: { label: `Sottografo ${id}` },
+      style: "width: 400px; height: 300px;",
+      data: { label: `Sottografo ${id}`, isCollapsed: false, onToggle: (id: string, collapse: boolean) => this.toggleSubflow(id, collapse) },
       width: 400,
       height: 300
     }
@@ -209,6 +210,29 @@ export class Diagram {
 
   public deleteEdge(edgeId: string) {
     this.edges = this.edges.filter((e) => e.id !== edgeId);
+  }
+
+  toggleSubflow(parentId: string, willCollapse: boolean) {
+    this.nodes = this.nodes.map((node) => {
+      if (node.parentId === parentId) {
+        return { ...node, hidden: willCollapse };
+      }
+      
+      if (node.id === parentId) {
+        return {
+          ...node,
+          style: willCollapse ? "width: 150px; height: 50px;" : "width: 400px; height: 300px;",
+          width: willCollapse ? 150 : 400,
+          height: willCollapse ? 50 : 300,
+          data: {
+            ...node.data,
+            isCollapsed: willCollapse
+          }
+        };
+      }
+      
+      return node;
+    });
   }
 
   private getDefaultParams(stereotype: Stereotype): Record<string, any> {
