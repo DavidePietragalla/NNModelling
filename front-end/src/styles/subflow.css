@@ -1,4 +1,26 @@
 .subflow-wrapper {
+    padding-top: 0;
+  }
+
+  .subflow-header {
+    display: flex;
+    align-items: center;
+    padding: 6px 10px;
+    color: white;
+    font-weight: bold;
+    font-size: 0.85rem;
+    border-radius: 6px 6px 0 0;
+    flex-shrink: 0;
+    white-space: nowrap;
+    overflow: hidden;
+    text-overflow: ellipsis;
+  }
+
+  .subflow-body {
+    flex-grow: 1;
+  }
+
+.subflow-wrapper {
     width: 100%;
     height: 100%;
     border: 2px dashed #007bff;
@@ -10,30 +32,6 @@
     flex-direction: column;
     font-family: sans-serif;
     overflow: hidden;
-}
-
-.subflow-label {
-    position: absolute;
-    top: -25px;
-    left: 0;
-    background: #007bff;
-    color: white;
-    padding: 2px 8px;
-    border-radius: 4px;
-    font-size: 12px;
-    font-family: sans-serif;
-    white-space: nowrap;
-}
-
-.subflow-name {
-    flex-grow: 1;
-    display: flex;
-    align-items: center;
-    justify-content: center;
-    font-weight: bold;
-    padding: 4px;
-    text-align: center;
-    font-size: 0.85rem;
 }
 
 .params-container {
@@ -69,4 +67,60 @@
     padding: 1px 4px;
     border-radius: 4px;
     font-family: monospace;
+}
+
+.collapse-btn {
+    background: #007bff;
+    color: white;
+    border: none;
+    font-size: 15px;
+    text-align: center;
+    cursor: pointer;
+}
+
+/* NUOVO: Stile quando il nodo è collassato */
+.subflow-wrapper.collapsed {
+    width: 100%;
+    height: 100%;
+    border: 2px solid #333;
+    border-radius: 8px;
+    display: flex;
+    flex-direction: column;
+   box-sizing: border-box;
+    font-family: sans-serif;
+    overflow: hidden;
+    background: #007bff;
+    justify-content: center;
+    align-items: center;
+}
+
+/* Opzionale: se vuoi cambiare colore anche all'etichetta quando è chiuso */
+.subflow-wrapper.collapsed .subflow-header {
+    /* ANNULLIAMO il posizionamento assoluto dello stato aperto */
+    position: static; 
+    
+    /* Togliamo lo sfondo extra perché ora il contenitore principale è già blu */
+    background: transparent; 
+    
+    /* Flexbox per affiancare e centrare la scritta e il bottone */
+    display: flex;
+    flex-direction: row; /* Mettili uno di fianco all'altro (usa column se li vuoi impilati) */
+    align-items: center; /* Centra verticalmente */
+    justify-content: center; /* Centra orizzontalmente */
+    gap: 10px; /* Spazio tra la scritta e il bottone */
+    
+    width: 100%;
+    height: 100%;
+    padding: 0;
+    padding-left: 8px;
+}
+
+.subflow-wrapper.collapsed .collapse-btn {
+    /* Se vuoi staccarlo un po' o fargli un tondino, puoi personalizzarlo qui */
+    border-radius: 50%;
+    width: 24px;
+    height: 24px;
+    display: flex;
+    justify-content: center;
+    align-items: center;
 }

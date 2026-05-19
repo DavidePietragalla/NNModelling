@@ -1,7 +1,20 @@
 <script lang="ts">
   import { Handle, Position, NodeResizer, type NodeProps } from "@xyflow/svelte";
+  import { type Node, type OnResizeEnd } from "@xyflow/svelte";
 
-  let { data, selected }: NodeProps = $props();
+  type SubflowData = {
+    label: string;
+    isCollapsed: boolean;
+    color: any,
+    params: Object,
+    stereotype: any,
+    onToggle: (id: string, collapse: boolean) => void;
+    onResizeEnd: (id: string, width: number, height: number) => void;
+  };
+
+  type MySubflowNode = Node<SubflowData, 'subflow'>;
+
+  let { data, selected, id }: NodeProps<MySubflowNode> = $props();
 
   let topParams = $derived(
     Object.entries(data.params || {}).filter(
@@ -14,15 +27,22 @@
       ([_, p]: any) => p?.position === "bottom",
     ),
   );
+
+  const handleResize: OnResizeEnd = (event, params) => {
+    data.onResizeEnd(id, params.width, params.height);
+  };
 </script>
 
-<NodeResizer minWidth={250} minHeight={250} isVisible={selected} />
+<NodeResizer minWidth={200} minHeight={50} isVisible={selected} onResizeEnd={handleResize}/>
 
 <Handle type="target" position={Position.Top} />
 
-<div class="subflow-wrapper">
+<div class="subflow-wrapper" class:collapsed={data.isCollapsed}>
   <div class="subflow-header" style:background={String(data.color || "#007bff")}>
-    {data.name || data.label}
+    {data.label?.slice(11) || ''}
+    <button class="collapse-btn" onclick={() => data.onToggle(id, !data.isCollapsed)}>
+      {data.isCollapsed ? '+' : '-'}
+    </button>
   </div>
 
   {#if data.stereotype && topParams.length > 0}
@@ -54,26 +74,4 @@
 
 <style>
   @import "../styles/subflow.css";
-
-  .subflow-wrapper {
-    padding-top: 0;
-  }
-
-  .subflow-header {
-    display: flex;
-    align-items: center;
-    padding: 6px 10px;
-    color: white;
-    font-weight: bold;
-    font-size: 0.85rem;
-    border-radius: 6px 6px 0 0;
-    flex-shrink: 0;
-    white-space: nowrap;
-    overflow: hidden;
-    text-overflow: ellipsis;
-  }
-
-  .subflow-body {
-    flex-grow: 1;
-  }
 </style>
