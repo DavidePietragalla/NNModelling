@@ -33,7 +33,7 @@
   };
 </script>
 
-<NodeResizer minWidth={200} minHeight={50} isVisible={selected} onResizeEnd={handleResize}/>
+<NodeResizer minWidth={250} minHeight={50} isVisible={selected} onResizeEnd={handleResize}/>
 
 <Handle type="target" position={Position.Top} />
 
