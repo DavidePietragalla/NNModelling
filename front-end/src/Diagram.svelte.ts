@@ -120,14 +120,14 @@ export class Diagram {
       type: "subflow",
       position: { x, y },
       data: {
-        label: `Sottografo ${id}`, 
+        label: `${id}`, 
         isCollapsed: false,
         onToggle: (id: string, collapse: boolean) => this.toggleSubflow(id, collapse),
         oldWidth: 400,
         oldHeight: 300,
         onResizeEnd: (nodeId: string, w: number, h: number) => {
           this.nodes = this.nodes.map(n => {
-            if (n.id === nodeId) {
+            if (n.id === nodeId && !n.data.isCollapsed) {
               return {
                 ...n,
                 data: {

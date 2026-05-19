@@ -39,7 +39,7 @@
 
 <div class="subflow-wrapper" class:collapsed={data.isCollapsed}>
   <div class="subflow-header" style:background={String(data.color || "#007bff")}>
-    {data.label?.slice(11) || ''}
+    {data.label || ''}
     <button class="collapse-btn" onclick={() => data.onToggle(id, !data.isCollapsed)}>
       {data.isCollapsed ? '+' : '-'}
     </button>
