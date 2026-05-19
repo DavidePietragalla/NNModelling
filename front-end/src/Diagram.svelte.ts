@@ -234,6 +234,11 @@ export class Diagram {
   }
 
   toggleSubflow(parentId: string, willCollapse: boolean) {
+    for (const child of this.nodes.filter(n => n.parentId === parentId)) {
+      if (child.type === "subflow") {
+        this.toggleSubflow(child.id, willCollapse);
+      } 
+    }
     this.nodes = this.nodes.map((node) => {
       if (node.parentId === parentId) {
         return { ...node, hidden: willCollapse };
@@ -253,8 +258,6 @@ export class Diagram {
       
       return node;
     });
-
-
 
     const childNodeIds = this.nodes
     .filter((node) => node.parentId === parentId)
