@@ -85,7 +85,7 @@ export class Diagram {
         params: customConfig?.params ? JSON.parse(JSON.stringify(customConfig.params)) : {},
         // Passiamo i flag al frontend
         isInput: isInput,
-        isLoss: stereotype.isLoss
+        isLoss: stereotype.isLoss,
       }
     };
     // 3. Aggiungiamo il nodo allo stato
@@ -119,8 +119,28 @@ export class Diagram {
       id,
       type: "subflow",
       position: { x, y },
-      style: "width: 400px; height: 300px;",
-      data: { label: `Sottografo ${id}`, isCollapsed: false, onToggle: (id: string, collapse: boolean) => this.toggleSubflow(id, collapse) },
+      data: {
+        label: `Sottografo ${id}`, 
+        isCollapsed: false,
+        onToggle: (id: string, collapse: boolean) => this.toggleSubflow(id, collapse),
+        oldWidth: 400,
+        oldHeight: 300,
+        onResizeEnd: (nodeId: string, w: number, h: number) => {
+          this.nodes = this.nodes.map(n => {
+            if (n.id === nodeId) {
+              return {
+                ...n,
+                data: {
+                  ...n.data,
+                  oldWidth: w,
+                  oldHeight: h
+                }
+              } as Node;
+            }
+            return n;
+          });
+        }
+      },
       width: 400,
       height: 300
     }
@@ -134,14 +154,15 @@ export class Diagram {
           ...node,
           width: config.width ?? node.width,
           height: config.height ?? node.height,
-
           data: {
             ...node.data,
             name: config.name ?? node.data.name,
             label: config.label ?? node.data.label,
             color: config.color ?? node.data.color,
             stereotype: config.stereotype ?? node.data.stereotype,
-            params: config.params ? JSON.parse(JSON.stringify(config.params)) : node.data.params
+            params: config.params ? JSON.parse(JSON.stringify(config.params)) : node.data.params,
+            oldWidth: config.width ?? node.data.oldWidth,
+            oldHeight: config.height ?? node.data.oldHeight,
           }
         };
       }
@@ -221,17 +242,34 @@ export class Diagram {
       if (node.id === parentId) {
         return {
           ...node,
-          style: willCollapse ? "width: 150px; height: 50px;" : "width: 400px; height: 300px;",
-          width: willCollapse ? 150 : 400,
-          height: willCollapse ? 50 : 300,
+          width: willCollapse ? 150 : node.data.oldWidth,
+          height: willCollapse ? 50 : node.data.oldHeight,
           data: {
             ...node.data,
             isCollapsed: willCollapse
           }
-        };
-      }
+        } as Node;
+      } 
       
       return node;
+    });
+
+
+
+    const childNodeIds = this.nodes
+    .filter((node) => node.parentId === parentId)
+    .map((node) => node.id);
+    this.edges = this.edges.map((edge) => {
+      const isConnectedToChild = childNodeIds.includes(edge.source) || childNodeIds.includes(edge.target);
+
+      if (isConnectedToChild) {
+        return {
+          ...edge,
+          hidden: willCollapse
+        };
+      }
+
+      return edge;
     });
   }
 

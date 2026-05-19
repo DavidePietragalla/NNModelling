@@ -1,18 +1,23 @@
 <script lang="ts">
-  import { NodeResizer, type NodeProps, type Node } from "@xyflow/svelte";
+  import { NodeResizer, type NodeProps, type Node, type OnResizeEnd } from "@xyflow/svelte";
 
   type SubflowData = {
     label: string;
     isCollapsed: boolean;
     onToggle: (id: string, collapse: boolean) => void;
+    onResizeEnd: (id: string, width: number, height: number) => void;
   };
 
   type MySubflowNode = Node<SubflowData, 'subflow'>;
 
   let { data, selected, id }: NodeProps<MySubflowNode> = $props();
+
+  const handleResize: OnResizeEnd = (event, params) => {
+    data.onResizeEnd(id, params.width, params.height);
+  };
 </script>
 
-<NodeResizer minWidth={150} minHeight={50} isVisible={selected} />
+<NodeResizer minWidth={150} minHeight={50} isVisible={selected} onResizeEnd={handleResize}/>
 
 <div class="subflow-wrapper">
   <div class="subflow-label">
