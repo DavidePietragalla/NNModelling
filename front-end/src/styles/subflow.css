@@ -6,6 +6,10 @@
     background: rgba(0, 123, 255, 0.05);
     position: relative;
     box-sizing: border-box;
+    display: flex;
+    flex-direction: column;
+    font-family: sans-serif;
+    overflow: hidden;
 }
 
 .subflow-label {
@@ -18,4 +22,51 @@
     border-radius: 4px;
     font-size: 12px;
     font-family: sans-serif;
+    white-space: nowrap;
+}
+
+.subflow-name {
+    flex-grow: 1;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    font-weight: bold;
+    padding: 4px;
+    text-align: center;
+    font-size: 0.85rem;
+}
+
+.params-container {
+    display: flex;
+    flex-direction: column;
+    padding: 4px 6px;
+    font-size: 0.7rem;
+    gap: 2px;
+    background: rgba(0, 0, 0, 0.1);
+}
+
+.top-params {
+    border-bottom: 1px solid rgba(0, 0, 0, 0.2);
+}
+
+.bottom-params {
+    border-top: 1px solid rgba(0, 0, 0, 0.2);
+}
+
+.param-row {
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+}
+
+.param-key {
+    opacity: 0.9;
+}
+
+.param-value {
+    font-weight: bold;
+    background: rgba(0, 0, 0, 0.2);
+    padding: 1px 4px;
+    border-radius: 4px;
+    font-family: monospace;
 }

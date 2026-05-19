@@ -33,6 +33,7 @@ export class Stereotype {
   public readonly isJoin: boolean;
   public readonly isInput: boolean;
   public readonly isLoss: boolean;
+  public readonly isSubFlow: boolean;
 
   constructor(filePath: string, data: StereotypeJson) {
     this.id = filePath;
@@ -56,6 +57,7 @@ export class Stereotype {
 
     // Una Loss ha "Loss" nel nome della categoria (es. BCEWithLogitsLoss)
     this.isLoss = data.category?.includes("Loss") || false;
+    this.isSubFlow = data.category === "SubFlow" || filePath.includes("/SubFlows/");
     // Gestione sicura della view
     this.view = {
       color: data.view?.color || "#4779c4",
