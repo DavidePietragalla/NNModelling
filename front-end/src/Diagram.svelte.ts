@@ -120,14 +120,14 @@ export class Diagram {
       type: "subflow",
       position: { x, y },
       data: {
-        label: `Sottografo ${id}`, 
+        label: `${id}`, 
         isCollapsed: false,
         onToggle: (id: string, collapse: boolean) => this.toggleSubflow(id, collapse),
         oldWidth: 400,
         oldHeight: 300,
         onResizeEnd: (nodeId: string, w: number, h: number) => {
           this.nodes = this.nodes.map(n => {
-            if (n.id === nodeId) {
+            if (n.id === nodeId && !n.data.isCollapsed) {
               return {
                 ...n,
                 data: {
@@ -234,6 +234,11 @@ export class Diagram {
   }
 
   toggleSubflow(parentId: string, willCollapse: boolean) {
+    for (const child of this.nodes.filter(n => n.parentId === parentId)) {
+      if (child.type === "subflow") {
+        this.toggleSubflow(child.id, willCollapse);
+      } 
+    }
     this.nodes = this.nodes.map((node) => {
       if (node.parentId === parentId) {
         return { ...node, hidden: willCollapse };
@@ -242,7 +247,7 @@ export class Diagram {
       if (node.id === parentId) {
         return {
           ...node,
-          width: willCollapse ? 200 : node.data.oldWidth,
+          width: willCollapse ? 250 : node.data.oldWidth,
           height: willCollapse ? 50 : node.data.oldHeight,
           data: {
             ...node.data,
@@ -253,8 +258,6 @@ export class Diagram {
       
       return node;
     });
-
-
 
     const childNodeIds = this.nodes
     .filter((node) => node.parentId === parentId)

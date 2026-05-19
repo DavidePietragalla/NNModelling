@@ -33,13 +33,13 @@
   };
 </script>
 
-<NodeResizer minWidth={200} minHeight={50} isVisible={selected} onResizeEnd={handleResize}/>
+<NodeResizer minWidth={250} minHeight={50} isVisible={selected} onResizeEnd={handleResize}/>
 
 <Handle type="target" position={Position.Top} />
 
 <div class="subflow-wrapper" class:collapsed={data.isCollapsed}>
   <div class="subflow-header" style:background={String(data.color || "#007bff")}>
-    {data.label?.slice(11) || ''}
+    {data.label || ''}
     <button class="collapse-btn" onclick={() => data.onToggle(id, !data.isCollapsed)}>
       {data.isCollapsed ? '+' : '-'}
     </button>
