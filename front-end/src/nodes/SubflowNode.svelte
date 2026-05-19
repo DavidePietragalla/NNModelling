@@ -1,18 +1,23 @@
 <script lang="ts">
-  import { Handle, Position, NodeResizer, type NodeProps } from "@xyflow/svelte";
+  import {
+    Handle,
+    Position,
+    NodeResizer,
+    type NodeProps,
+  } from "@xyflow/svelte";
   import { type Node, type OnResizeEnd } from "@xyflow/svelte";
 
   type SubflowData = {
     label: string;
     isCollapsed: boolean;
-    color: any,
-    params: Object,
-    stereotype: any,
+    color: any;
+    params: Object;
+    stereotype: any;
     onToggle: (id: string, collapse: boolean) => void;
     onResizeEnd: (id: string, width: number, height: number) => void;
   };
 
-  type MySubflowNode = Node<SubflowData, 'subflow'>;
+  type MySubflowNode = Node<SubflowData, "subflow">;
 
   let { data, selected, id }: NodeProps<MySubflowNode> = $props();
 
@@ -33,15 +38,26 @@
   };
 </script>
 
-<NodeResizer minWidth={250} minHeight={50} isVisible={selected} onResizeEnd={handleResize}/>
+<NodeResizer
+  minWidth={200}
+  minHeight={50}
+  isVisible={selected}
+  onResizeEnd={handleResize}
+/>
 
 <Handle type="target" position={Position.Top} />
 
 <div class="subflow-wrapper" class:collapsed={data.isCollapsed}>
-  <div class="subflow-header" style:background={String(data.color || "#007bff")}>
-    {data.label || ''}
-    <button class="collapse-btn" onclick={() => data.onToggle(id, !data.isCollapsed)}>
-      {data.isCollapsed ? '+' : '-'}
+  <div
+    class="subflow-header"
+    style:background={String(data.color || "#007bff")}
+  >
+    {data.label || ""}
+    <button
+      class="collapse-btn"
+      onclick={() => data.onToggle(id, !data.isCollapsed)}
+    >
+      {data.isCollapsed ? "+" : "-"}
     </button>
   </div>
 

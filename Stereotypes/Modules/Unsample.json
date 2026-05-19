@@ -1,0 +1,28 @@
+{
+  "category": "Unsample",
+  "pythonClassName": "nn.Upsample",
+  "expr": "",
+  "view": {
+    "color": "#48d1cc",
+    "width": 120,
+    "height": 60
+  },
+  "params": {
+    "size": {
+      "type": "int | tuple | list",
+      "default": "None"
+    },
+    "scale_factor": {
+      "type": "float | tuple",
+      "default": "None"
+    },
+    "mode": {
+      "type": "str",
+      "default": "nearest"
+    },
+    "align_corners": {
+      "type": "bool",
+      "default": "None"
+    }
+  }
+}
