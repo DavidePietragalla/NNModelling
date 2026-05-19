@@ -17,11 +17,11 @@
   };
 </script>
 
-<NodeResizer minWidth={150} minHeight={50} isVisible={selected} onResizeEnd={handleResize}/>
+<NodeResizer minWidth={200} minHeight={50} isVisible={selected} onResizeEnd={handleResize}/>
 
-<div class="subflow-wrapper">
+<div class="subflow-wrapper" class:collapsed={data.isCollapsed}>
   <div class="subflow-label">
-    {data.label}
+    {data.label?.slice(11) || ''}
     <button class="collapse-btn" onclick={() => data.onToggle(id, !data.isCollapsed)}>
       {data.isCollapsed ? '+' : '-'}
     </button>

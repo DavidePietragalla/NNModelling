@@ -242,7 +242,7 @@ export class Diagram {
       if (node.id === parentId) {
         return {
           ...node,
-          width: willCollapse ? 150 : node.data.oldWidth,
+          width: willCollapse ? 200 : node.data.oldWidth,
           height: willCollapse ? 50 : node.data.oldHeight,
           data: {
             ...node.data,
