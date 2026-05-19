@@ -14,22 +14,15 @@
       ([_, p]: any) => p?.position === "bottom",
     ),
   );
-
-  let borderColor = $derived(String(data.color || "#007bff"));
-  let bgColor = $derived(data.color ? `${String(data.color)}11` : "rgba(0, 123, 255, 0.05)");
 </script>
 
 <NodeResizer minWidth={250} minHeight={250} isVisible={selected} />
 
 <Handle type="target" position={Position.Top} />
 
-<div
-  class="subflow-wrapper"
-  style:border-color={borderColor}
-  style:background={bgColor}
->
-  <div class="subflow-label" style:background={borderColor}>
-    {data.stereotype || data.label}
+<div class="subflow-wrapper">
+  <div class="subflow-header" style:background={String(data.color || "#007bff")}>
+    {data.name || data.label}
   </div>
 
   {#if data.stereotype && topParams.length > 0}
@@ -43,13 +36,7 @@
     </div>
   {/if}
 
-  <div class="subflow-name">
-    {#if data.stereotype}
-      {data.name || data.label}
-    {:else}
-      {data.label}
-    {/if}
-  </div>
+  <div class="subflow-body"></div>
 
   {#if data.stereotype && bottomParams.length > 0}
     <div class="params-container bottom-params">
@@ -67,4 +54,26 @@
 
 <style>
   @import "../styles/subflow.css";
+
+  .subflow-wrapper {
+    padding-top: 0;
+  }
+
+  .subflow-header {
+    display: flex;
+    align-items: center;
+    padding: 6px 10px;
+    color: white;
+    font-weight: bold;
+    font-size: 0.85rem;
+    border-radius: 6px 6px 0 0;
+    flex-shrink: 0;
+    white-space: nowrap;
+    overflow: hidden;
+    text-overflow: ellipsis;
+  }
+
+  .subflow-body {
+    flex-grow: 1;
+  }
 </style>
