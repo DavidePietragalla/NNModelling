@@ -26,6 +26,7 @@
   let selection = $state<Stereotype | null>(null);
   let isEditing = $derived(selectedNode !== null);
   let isSubflow = $derived(selectedNode?.type === "subflow"); // <-- Rileva se è un sottografo
+  let subflowStereotypes = $derived(diagram.stereotypes.filter(s => s.isSubFlow));
 
   // --- LOGICA RESIZER ---
   let sidebarWidth = $state(320);
@@ -63,12 +64,13 @@
 
   function loadExistingNode(vnode: Node) {
     if (vnode.type === "subflow") {
-      // Gestione specifica per Subflow
-      selection = null;
-      form.name = (vnode.data.label as string) || ""; // I subflow usano 'label'
+      const stereotypeName = vnode.data.stereotype as string;
+      selection = diagram.stereotypes.find((s) => s.name === stereotypeName) || null;
+      form.name = (vnode.data.name as string) || (vnode.data.label as string) || "";
+      form.color = (vnode.data.color as string) || "#9b59b6";
       form.width = vnode.width || 400;
       form.height = vnode.height || 300;
-      form.params = {};
+      form.params = JSON.parse(JSON.stringify(vnode.data.params || {}));
     } else {
       // Gestione standard per nodi Custom
       const stereotypeName = vnode.data.stereotype as string;
@@ -110,6 +112,24 @@
     form.params = initialValues;
   }
 
+  function onSubflowStereotypeChange(e: Event) {
+    const target = e.target as HTMLSelectElement;
+    const found = diagram.stereotypes.find(s => s.name === target.value && s.isSubFlow) || null;
+    selection = found;
+    if (!found) {
+      form.params = {};
+      return;
+    }
+    form.color = found.view?.color ?? "#9b59b6";
+    form.width = found.view?.width ?? 400;
+    form.height = found.view?.height ?? 300;
+    let initialValues: Record<string, any> = {};
+    for (const [key, prop] of Object.entries(found.parameters || {})) {
+      initialValues[key] = { value: prop.default, position: prop.position };
+    }
+    form.params = initialValues;
+  }
+
   function handleCreate() {
     if (!selection) return alert("Scegli uno stereotipo!");
  
@@ -137,11 +157,18 @@
     if (isEditing && selectedNode) {
       // Configuriamo il payload in base al tipo di nodo
       if (isSubflow) {
-        diagram.updateModule(selectedNode.id, {
-          label: form.name, // Passiamo il testo come 'label' per i subflow
+        const updateConfig: any = {
+          label: form.name,
           width: form.width,
           height: form.height
-        });
+        };
+        if (selection) {
+          updateConfig.name = form.name;
+          updateConfig.color = form.color;
+          updateConfig.stereotype = selection.name;
+          updateConfig.params = { ...form.params };
+        }
+        diagram.updateModule(selectedNode.id, updateConfig);
       } else {
         diagram.updateModule(selectedNode.id, {
           name: form.name,
@@ -185,12 +212,36 @@
       </label>
 
       <div class="row">
-        {#if !isSubflow}
+        {#if !isSubflow || (isSubflow && selection !== null)}
           <label>Colore <input type="color" bind:value={form.color} oninput={handleLiveUpdate} /></label>
         {/if}
         <label>Width <input type="number" bind:value={form.width} oninput={handleLiveUpdate} /></label>
         <label>Height <input type="number" bind:value={form.height} oninput={handleLiveUpdate} /></label>
       </div>
+
+      {#if isSubflow}
+        <div>
+          <label>Stereotipo SubFlow</label>
+          <select onchange={onSubflowStereotypeChange}>
+            <option value="">-- nessuno stereotipo --</option>
+            {#each subflowStereotypes as stype}
+              <option value={stype.name} selected={selection?.name === stype.name}>{stype.name}</option>
+            {/each}
+          </select>
+        </div>
+
+        {#if selection !== null}
+          <div class="params-section">
+            <h4>Parametri</h4>
+            {#each Object.entries(selection.parameters || {}) as [key, config]}
+              <div class="param-row">
+                <label for={key}>{key}</label>
+                <input type="text" id={key} bind:value={form.params[key].value} oninput={handleLiveUpdate} />
+              </div>
+            {/each}
+          </div>
+        {/if}
+      {/if}
 
       {#if !isSubflow}
         <div>

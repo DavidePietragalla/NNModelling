@@ -1,0 +1,13 @@
+{
+  "category": "SubFlow",
+  "pythonClassName": "None",
+  "expr": "",
+  "view": {
+    "color": "#9b59b6",
+    "width": 400,
+    "height": 300
+  },
+  "params": {
+    "iterations": { "type": "int", "default": "1" }
+  }
+}
