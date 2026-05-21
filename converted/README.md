@@ -1,51 +1,131 @@
-# MNIST-FDS
+# NNModelling — Python Codegen Target
 
-This repo implements a simple CNN for classifying the MNIST digits.
+This directory converts NNTree JSON diagrams (exported from the visual editor) into runnable PyTorch/Lightning models. It is the backend half of the NNModelling DSL pipeline.
 
-It also shows how to use `wandb`, `hydra-conf`, and `lightning`.
+## Pipeline
 
-## Technologies
+```
+Diagram → NNTree JSON → convert.py → Hydra YAML configs → main.py → training
+```
 
-In this project we use many technologies that you should try to be familiar with, as they'll make it easier for you to complete you projects.
+## Setup
 
-### Be Tidy
-
-It's crucial to keep you code organized and well-mantained, for this reason it's usually recommended to break your code into different files and folders, each containing only one class or a couple of functions, usually divided by functionality (try to avoid using generic names like `utils`).
-
-For the same reason **avoid putting all your code into a jupyter notebook**, as this makes the code difficult to browse, and it quickly becomes unreasonably long and difficult to handle. Jupyter Notebooks are a nice tool for data analysis and exploration, and even for code running, but you should avoid keeping there all your code logic.
-
-### Version Control
-
-The most used and recommended tool for version control is [`git`](https://rogerdudler.github.io/git-guide/). Use it extensively to save your changes, share your code and edit together a project with your friends. It can be a bit difficult to get into it at first, but at the end you need to know only three things:
-
-1. you `pull` the changes from the online repo.
-2. you `commit` your local changes (possibly with meaningful descriptions).
-3. you `push` the commits to the online repo.
-
-When you want to collaborate with a friend on git remember that you may want to do so on different `branches` and then `merge` them together. If you don't want to delve into that, just remember to edit different files. Also Jupyter Notebooks don't play very nicely with git, so consider to clear all outputs out of the jupyter notebook before commiting the changes.
-
-You can also enable the `GitLens` extension from VSCode, which hopefully should make it easier for you to handle git.
-
-### Experiment Running
-
-During a project it's likely that you'll run many experiments, each with a different set of parameters, ex: How deep is your network, or which non-linearity you want to use. You want to setup you code in such a way that you can easily run every model configuration with just a change of a couple of lines. Possibly try to keep all you configurable parameters in just one file, in such a way that if (for example) you want to change the value of the learning rate you don't need to open 5 different files to find its definition.
-
-For this task there are many tools that you can use, and you may even build your own for small projects, but one tool is [`hydra-conf`](https://hydra.cc/) which enables you to write configurations in `yaml` files, compose them, and easily run multiple experiments at once. You can find an example of how to tun hydra experiments in `src/experiment.py` and configuration files in the `cfg` folder.
-
-### Logging
-
-For each of the experiments and relative parameters you want to keep a complete trace of whether it is completed, how it performed, which parameters you used. For this reasoning we highly encourage to set up some kind of tracing system, that allows you to record the outcome of every experiment.
-This is imporant for multiple reasons:
-
-- Keep track of previous experiments to avoid repeating them.
-- Keep track of hyperparameters to analyse which one works best.
-- Keep track of results in order to display them at the end.
-
-One such tool is [**Weights & Biases**](https://wandb.ai/), a dashboard website in which you can upload the results of your experiments to confront them. It's also very nice for collaborative experiments, as everyone of your friends can easily upload their results without overwriting yours. Plus at the end you can just download the whole database of experiments in `csv` format to produce any kind of visualization you may like.
-
-### Dependencies
+Requires Python 3.12. Install dependencies with `uv`:
 
 ```bash
 uv sync
 ```
 
+## Usage
+
+### Step 1: Generate Configuration
+
+```bash
+python src/convert.py [json_path] [output_dir] [options]
+```
+
+**Positional arguments:**
+
+| Argument | Default | Description |
+|----------|---------|-------------|
+| `json_path` | `../converted_minst.json` | Path to NNTree JSON exported from the visual editor |
+| `output_dir` | `cfg` | Output directory for generated Hydra configs |
+
+**Optional flags:**
+
+| Flag | Default | Description |
+|------|---------|-------------|
+| `--num-classes N` | `None` | Required when the loss node has `taskType: "classification"` |
+| `--dataset D` | `dataset.mnist.MNISTDataset` | Dataset class path (e.g. `dataset.autoencoder_mnist.AutoencoderMNIST`) |
+| `--early-stop-patience N` | `3` | Early stopping patience |
+| `--early-stop-min-delta F` | `0.0` | Early stopping minimum delta |
+| `--max-epochs N` | `20` | Maximum training epochs |
+
+**Output structure** (created under `output_dir/`):
+
+```
+cfg/
+├── base.yaml                  # Root config composing all sub-configs
+├── net/custom_sequence.yaml   # Network architecture (from NNTree JSON)
+├── optimizer/adam.yaml        # Optimizer config (Adam, lr=0.001)
+├── trainer/default.yaml       # Trainer config (max_epochs, accelerator)
+├── dataset/dataset.yaml       # Dataset class, batch_size, train/val split
+├── wandb/wandb.yaml           # W&B project settings
+└── early_stopping/default.yaml # EarlyStopping parameters
+```
+
+### Step 2: Train
+
+```bash
+python src/main.py --config-path <dir> --config-name <name>
+```
+
+| Flag | Default | Description |
+|------|---------|-------------|
+| `--config-path` | `../cfg` | Path to the Hydra config directory |
+| `--config-name` | `base` | Config file name (without `.yaml`) |
+
+The training script:
+
+- Instantiates the network dynamically from the generated config via Hydra's `instantiate()`
+- Auto-detects **classification** vs **regression** based on the loss node's `taskType` (Accuracy or MSE metric)
+- Logs metrics to **Weights & Biases** (project: `NeuralNetworks`)
+- Saves the trained model to `weights.pt`
+- Applies **early stopping** based on validation metric
+
+## End-to-End Example
+
+Train the autoencoder from the included example JSON:
+
+```bash
+# Generate configs
+python src/convert.py auto_encoder.json cfg \
+  --dataset dataset.autoencoder_mnist.AutoencoderMNIST \
+  --max-epochs 50
+
+# Train
+python src/main.py --config-path cfg --config-name base
+```
+
+## Architecture
+
+### `net/base.py` — Dynamic DAG Network
+
+The `Net` class (`LightningModule`) builds a `ModuleDict` dynamically from the config. It uses a **BFS topological sort** to execute the computation graph at runtime:
+
+1. Starts from the root (Input) node
+2. Tracks in-degree to know when all parents of a join node are ready
+3. Auto-flattens before `Linear` layers when input exceeds 2D
+4. Supports sequential chains, join merges (Addition, Einsum), and subflow containers
+
+### `ops/` — Join Operations
+
+| Module | Description |
+|--------|-------------|
+| `ops.Addition` | Element-wise sum of multiple branch outputs |
+| `ops.Einsum` | Tensor contraction via `torch.einsum` |
+
+### `dataset/` — Dataset Classes
+
+| Class | Description |
+|-------|-------------|
+| `dataset.mnist.MNISTDataset` | Standard MNIST classification (28×28 images → digit labels) |
+| `dataset.autoencoder_mnist.AutoencoderMNIST` | MNIST autoencoder (image → same image as target) |
+
+## Project Structure
+
+```
+converted/
+├── src/
+│   ├── convert.py                # NNTree JSON → Hydra YAML configs
+│   ├── main.py                   # Training entry point (Hydra + Lightning)
+│   ├── net/base.py               # Dynamic DAG LightningModule
+│   ├── ops/addition.py           # Element-wise join
+│   ├── ops/einsum.py             # Einsum join
+│   ├── dataset/ds.py             # Abstract dataset base
+│   ├── dataset/mnist.py          # MNIST classification dataset
+│   └── dataset/autoencoder_mnist.py  # MNIST autoencoder dataset
+├── auto_encoder.json             # Example NNTree JSON (autoencoder)
+├── pyproject.toml                # Dependencies (hydra, lightning, torch, wandb)
+└── README.md
+```
