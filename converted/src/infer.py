@@ -4,11 +4,105 @@ import json
 import argparse
 
 import torch
+import torch.nn.functional as F
 import lightning as lit
 from hydra import compose, initialize_config_dir
 from hydra.utils import instantiate
+from torchvision.utils import make_grid, save_image
 
 from net.base import Net
+
+
+def is_image_tensor(t: torch.Tensor) -> bool:
+    """Heuristic: tensor with spatial dims and 1/3/4 channels is an image."""
+    if t.dim() >= 3:
+        *_, h, w = t.shape[-3:]
+        return h < 1000 and w < 1000 and t.shape[-3] in (1, 3, 4)
+    return False
+
+
+def to_image_tensor(t: torch.Tensor) -> torch.Tensor:
+    """Normalize to [0,1] and ensure 3D [C,H,W] or 4D [B,C,H,W]."""
+    t = t.float()
+    if t.numel() == 0:
+        return t
+    lo, hi = t.min(), t.max()
+    if lo < 0 or hi > 1:
+        t = (t - lo) / (hi - lo + 1e-8)
+    # Remove batch dim if present
+    while t.dim() > 3:
+        t = t.squeeze(0)
+    # Add channel dim if grayscale without channel
+    if t.dim() == 2:
+        t = t.unsqueeze(0)
+    return t
+
+
+def save_samples(
+    model: torch.nn.Module,
+    test_loader,
+    image_dir: str,
+    device: str,
+    max_samples: int = 64,
+):
+    """Save image visualizations: per-sample strips + montage grid."""
+    os.makedirs(image_dir, exist_ok=True)
+    strips: list[torch.Tensor] = []
+    sample_count = 0
+    output_is_image = None
+
+    with torch.no_grad():
+        for batch in test_loader:
+            x, y = batch
+            x = x.to(device)
+            y_hat = model(x)
+            if output_is_image is None:
+                output_is_image = is_image_tensor(y_hat)
+
+            for i in range(len(x)):
+                if sample_count >= max_samples:
+                    break
+
+                inp = to_image_tensor(x[i].cpu())  # [C, H, W]
+
+                if output_is_image:
+                    target = to_image_tensor(y[i].cpu() if torch.is_tensor(y) else y)
+                    pred = to_image_tensor(y_hat[i].cpu())
+                    # Ensure same spatial size
+                    if target.shape[-2:] != inp.shape[-2:]:
+                        target = F.interpolate(
+                            target.unsqueeze(0), size=inp.shape[-2:], mode="nearest"
+                        ).squeeze(0)
+                    if pred.shape[-2:] != inp.shape[-2:]:
+                        pred = F.interpolate(
+                            pred.unsqueeze(0), size=inp.shape[-2:], mode="nearest"
+                        ).squeeze(0)
+                    # Strip: [input | target | prediction]
+                    strip = torch.cat([inp, target, pred], dim=-1)
+                else:
+                    strip = inp  # just the input image
+
+                strips.append(strip)
+                sample_count += 1
+
+            if sample_count >= max_samples:
+                break
+
+    if not strips:
+        print("  No image data to save.")
+        return
+
+    # Montage grid
+    batch = torch.stack(strips)  # [N, C, H, W]
+    grid = make_grid(batch, nrow=8, padding=2, pad_value=1)
+    save_image(grid, os.path.join(image_dir, "montage.png"))
+    print(f"  Saved {len(strips)} samples to {image_dir}/ (view montage.png)")
+
+    # Individual samples for the first 10
+    for i, strip in enumerate(strips[:10]):
+        save_image(strip, os.path.join(image_dir, f"sample_{i:03d}.png"))
+    if len(strips) > 10:
+        print(f"  Also saved individual PNGs for samples 000–{min(9, len(strips)-1):03d}")
 
 
 def main():
@@ -17,6 +111,7 @@ def main():
     parser.add_argument("--config-name", default="base", help="Config name (default: base)")
     parser.add_argument("--weights", default="weights.pt", help="Model weights (default: weights.pt)")
     parser.add_argument("--output", default=None, help="Save predictions to JSON file")
+    parser.add_argument("--image-dir", default=None, help="Save image visualizations to directory")
     parser.add_argument("--device", default="cpu", help="Device (default: cpu)")
     args = parser.parse_args()
 
@@ -84,6 +179,11 @@ def main():
         with open(output_path, "w") as f:
             json.dump(predictions, f, indent=2)
         print(f"Saved {len(predictions)} predictions to {output_path}")
+
+    # Save image visualizations if requested
+    if args.image_dir:
+        image_path = os.path.join(project_root, args.image_dir) if not os.path.isabs(args.image_dir) else args.image_dir
+        save_samples(model, test_loader, image_path, args.device)
 
 
 if __name__ == "__main__":
