@@ -93,7 +93,7 @@ export class Diagram {
   }
 
   // Aggiungi questo metodo dentro la classe Diagram in Diagram.svelte.ts
-  public addJoinNode(stereotype: Stereotype, x: number, y: number, config?: { name?: string, inputsCount?: number, params?: any }) {
+  public addJoinNode(stereotype: Stereotype, x: number, y: number, config?: { name?: string, inputsCount?: number, color?: string, params?: any }) {
     const id = `join_${crypto.randomUUID()}`;
 
     const newJoinNode: Node = {
@@ -104,7 +104,7 @@ export class Diagram {
         stereotype: stereotype.name,
         name: stereotype.name,
         inputsCount: config?.inputsCount || 2,
-        color: stereotype.view?.color || "#333",
+        color: config?.color || stereotype.view?.color || "#333",
         params: config?.params ? JSON.parse(JSON.stringify(config.params)) : {}
       }
     };

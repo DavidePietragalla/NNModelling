@@ -226,8 +226,3 @@ export function handleLoadModel(diagram: Diagram) {
   // Simuliamo il click per aprire la finestra di dialogo del SO
   input.click();
 }
-
-// --- Conversione Python ---
-export function convertJsonToPython(jsonModel: string): string {
-
-}

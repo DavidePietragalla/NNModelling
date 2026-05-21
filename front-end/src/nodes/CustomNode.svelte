@@ -39,9 +39,9 @@
 {:else}
   <div
     class="node-body"
-    style:background-color={data.color || "white"}
-    style:color={data.color ? "white" : "black"}
-    style:text-shadow={data.color ? "1px 1px 2px rgba(0,0,0,0.8)" : "none"}
+    style:background-color={(data.color as string) || "white"}
+    style:color={(data.color as string) ? "white" : "black"}
+    style:text-shadow={(data.color as string) ? "1px 1px 2px rgba(0,0,0,0.8)" : "none"}
   >
     <div class="params-container top-params">
       {#each topParams as [key, param]}

@@ -18,12 +18,12 @@ export class NNTree {
   }
 
   private getPythonClassName(diagram: Diagram, node: Node): string {
-    const stereo = diagram.getStereotype(node.data.stereotype);
+    const stereo = diagram.getStereotype(node.data.stereotype as string);
     return stereo?.pythonClassName || "";
   }
 
   private getTaskType(diagram: Diagram, node: Node): string {
-    const stereo = diagram.getStereotype(node.data.stereotype);
+    const stereo = diagram.getStereotype(node.data.stereotype as string);
     return stereo?.taskType || "";
   }
 
