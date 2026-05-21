@@ -1,0 +1,10 @@
+{
+  "category": "Join",
+  "pythonClassName": "ops.MatMul",
+  "view": {
+    "color": "#8a2be2",
+    "width": 80,
+    "height": 60
+  },
+  "params": {}
+}
