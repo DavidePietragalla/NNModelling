@@ -10,7 +10,7 @@ class _ImageOnly:
         self.ds = ds
     def __getitem__(self, idx):
         img, _ = self.ds[idx]
-        return img.view(-1), img.view(-1)
+        return img, img
     def __len__(self):
         return len(self.ds)
 
@@ -20,8 +20,7 @@ class AutoencoderMNIST(MNISTDataset):
 
     def __getitem__(self, index):
         image, _ = self.dataset[index]
-        flat = image.view(-1)
-        return flat, flat
+        return image, image
 
     def division(self) -> tuple[DataLoader, DataLoader, DataLoader]:
         train_size = int(self.train_size * len(self))
