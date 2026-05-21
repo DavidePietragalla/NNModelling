@@ -201,13 +201,6 @@
                 "value": "None"
               }
             }
-          },
-          {
-            "type": "module",
-            "name": "Sigmoid_0",
-            "stereotype": "Sigmoid",
-            "pythonClassName": "nn.Sigmoid",
-            "params": {}
           }
         ]
       }

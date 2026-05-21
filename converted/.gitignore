@@ -13,7 +13,6 @@ NeuralNetworks
 
 *.log
 
-*.json
 
 docker.sh
 api.key
