@@ -380,3 +380,245 @@ describe("NNTree — error handling", () => {
     warnSpy.mockRestore();
   });
 });
+
+// ---------------------------------------------------------------------------
+// Subflow compilation tests
+// ---------------------------------------------------------------------------
+
+describe("NNTree — subflow boundary mapping", () => {
+  function subflowFixture() {
+    const nodes: Node[] = [
+      node("input", "Input", "Input_0", { out_features: { value: "784" } }, { isInput: true, color: "#27b376" }),
+      node("sub1", "", "Sub_0", {}, { type: "subflow", color: "#9b59b6" }),
+      node("lin1", "Linear", "Linear_0", { out_features: { value: "10" } }, { parentId: "sub1", color: "#4779c4" }),
+      node("tan1", "Tanh", "Tanh_0", {}, { parentId: "sub1", color: "#f4a460" }),
+      node("lin2", "Linear", "Linear_1", { out_features: { value: "5" } }, { parentId: "sub1", color: "#4779c4" }),
+      node("loss", "CrossEntropyLoss", "CrossEntropyLoss_0", {}, { color: "#cd5c5c", isLoss: true }),
+    ];
+    const edges: Edge[] = [
+      edge("e1", "input", "sub1"),
+      edge("e2", "sub1", "loss"),
+      edge("e3", "lin1", "tan1"),
+      edge("e4", "tan1", "lin2"),
+    ];
+    return { nodes, edges };
+  }
+
+  const { nodes, edges } = subflowFixture();
+  const d = new Diagram();
+  d.nodes = nodes;
+  d.edges = edges;
+  const tree = new NNTree(d);
+
+  it("includes subflow node as a tree node", () => {
+    expect(tree.nodes.has("sub1")).toBe(true);
+  });
+
+  it("compiles subflow internals as SequentialData with ordered layers", () => {
+    const sub1 = tree.nodes.get("sub1")!;
+    expect(sub1.isSequential()).toBe(true);
+    const seq = sub1.data as SequentialData;
+    expect(seq.layers).toHaveLength(3);
+    expect(seq.layers[0]).toMatchObject({ name: "Linear_0", stereotype: "Linear", pythonClassName: "nn.Linear" });
+    expect(seq.layers[1]).toMatchObject({ name: "Tanh_0", stereotype: "Tanh", pythonClassName: "nn.Tanh" });
+    expect(seq.layers[2]).toMatchObject({ name: "Linear_1", stereotype: "Linear", pythonClassName: "nn.Linear" });
+  });
+
+  it("routes Input sequential to subflow tree node", () => {
+    const input = tree.nodes.get("input")!;
+    expect(input.children).toEqual(["sub1"]);
+  });
+
+  it("subflow has no tree children (loss absorbed as lossNode)", () => {
+    const sub1 = tree.nodes.get("sub1")!;
+    expect(sub1.children).toEqual([]);
+  });
+
+  it("lossNode is CrossEntropyLoss", () => {
+    expect(tree.lossNode).not.toBeNull();
+    expect(tree.lossNode!.stereotype).toBe("CrossEntropyLoss");
+  });
+});
+
+describe("NNTree — Repeat stereotype unrolling", () => {
+  function repeatFixture(iterations: string) {
+    const nodes: Node[] = [
+      node("input", "Input", "Input_0", { out_features: { value: "784" } }, { isInput: true, color: "#27b376" }),
+      node("sub1", "Repeat", "Sub_0", { iterations: { value: iterations } }, { type: "subflow", color: "#9b59b6" }),
+      node("conv1", "Conv2d", "Conv2d_0", { in_channels: { value: "1" }, out_channels: { value: "16" } }, { parentId: "sub1", color: "#20b2aa" }),
+      node("tan1", "Tanh", "Tanh_0", {}, { parentId: "sub1", color: "#f4a460" }),
+      node("loss", "CrossEntropyLoss", "CrossEntropyLoss_0", {}, { color: "#cd5c5c", isLoss: true }),
+    ];
+    const edges: Edge[] = [
+      edge("e1", "input", "sub1"),
+      edge("e2", "sub1", "loss"),
+      edge("e3", "conv1", "tan1"),
+    ];
+    return { nodes, edges };
+  }
+
+  it("unrolls 2 internal nodes × 3 iterations = 6 layers", () => {
+    const { nodes, edges } = repeatFixture("3");
+    const d = new Diagram();
+    d.nodes = nodes;
+    d.edges = edges;
+    const tree = new NNTree(d);
+    const sub1 = tree.nodes.get("sub1")!;
+    expect(sub1.isSequential()).toBe(true);
+    const seq = sub1.data as SequentialData;
+    expect(seq.layers).toHaveLength(6);
+    const expected = ["Conv2d", "Tanh", "Conv2d", "Tanh", "Conv2d", "Tanh"];
+    seq.layers.forEach((layer, i) => {
+      expect(layer.stereotype).toBe(expected[i]);
+      expect(layer.type).toBe("module");
+    });
+  });
+
+  it("iterations=1 produces single copy (no unrolling)", () => {
+    const { nodes, edges } = repeatFixture("1");
+    const d = new Diagram();
+    d.nodes = nodes;
+    d.edges = edges;
+    const tree = new NNTree(d);
+    const sub1 = tree.nodes.get("sub1")!;
+    const seq = sub1.data as SequentialData;
+    expect(seq.layers).toHaveLength(2);
+    expect(seq.layers[0].stereotype).toBe("Conv2d");
+    expect(seq.layers[1].stereotype).toBe("Tanh");
+  });
+});
+
+describe("NNTree — subflow in sequential chain", () => {
+  function chainFixture() {
+    const nodes: Node[] = [
+      node("input", "Input", "Input_0", { out_features: { value: "784" } }, { isInput: true, color: "#27b376" }),
+      node("linA", "Linear", "Linear_0", { out_features: { value: "10" } }, { color: "#4779c4" }),
+      node("sub1", "", "Sub_0", {}, { type: "subflow", color: "#9b59b6" }),
+      node("linB", "Linear", "Linear_1", { out_features: { value: "5" } }, { parentId: "sub1", color: "#4779c4" }),
+      node("tanC", "Tanh", "Tanh_2", {}, { parentId: "sub1", color: "#f4a460" }),
+      node("linD", "Linear", "Linear_3", { out_features: { value: "3" } }, { color: "#4779c4" }),
+      node("loss", "CrossEntropyLoss", "CrossEntropyLoss_0", {}, { color: "#cd5c5c", isLoss: true }),
+    ];
+    const edges: Edge[] = [
+      edge("e1", "input", "linA"),
+      edge("e2", "linA", "sub1"),
+      edge("e3", "sub1", "linD"),
+      edge("e4", "linD", "loss"),
+      edge("e5", "linB", "tanC"),
+    ];
+    return { nodes, edges };
+  }
+
+  const { nodes, edges } = chainFixture();
+  const d = new Diagram();
+  d.nodes = nodes;
+  d.edges = edges;
+  const tree = new NNTree(d);
+
+  it("creates three tree nodes (input, sub1, linD)", () => {
+    expect(tree.nodes.has("input")).toBe(true);
+    expect(tree.nodes.has("sub1")).toBe(true);
+    expect(tree.nodes.has("linD")).toBe(true);
+    expect(tree.nodes.size).toBe(3);
+  });
+
+  it("Input sequential contains Input + Linear_A", () => {
+    const input = tree.nodes.get("input")!;
+    expect(input.isSequential()).toBe(true);
+    const seq = input.data as SequentialData;
+    expect(seq.layers).toHaveLength(2);
+    expect(seq.layers[0].stereotype).toBe("Input");
+    expect(seq.layers[1].stereotype).toBe("Linear");
+    expect(seq.layers[1].name).toBe("Linear_0");
+    expect(input.children).toEqual(["sub1"]);
+  });
+
+  it("subflow compiles internals and routes to linD", () => {
+    const sub1 = tree.nodes.get("sub1")!;
+    expect(sub1.isSequential()).toBe(true);
+    const seq = sub1.data as SequentialData;
+    expect(seq.layers).toHaveLength(2);
+    expect(seq.layers[0].name).toBe("Linear_1");
+    expect(seq.layers[1].name).toBe("Tanh_2");
+    expect(sub1.children).toEqual(["linD"]);
+  });
+
+  it("linD is leaf sequential with loss absorbed", () => {
+    const linD = tree.nodes.get("linD")!;
+    expect(linD.isSequential()).toBe(true);
+    const seq = linD.data as SequentialData;
+    expect(seq.layers).toHaveLength(1);
+    expect(seq.layers[0].stereotype).toBe("Linear");
+    expect(seq.layers[0].name).toBe("Linear_3");
+    expect(linD.children).toEqual([]);
+  });
+
+  it("sets lossNode correctly", () => {
+    expect(tree.lossNode).not.toBeNull();
+    expect(tree.lossNode!.stereotype).toBe("CrossEntropyLoss");
+  });
+});
+
+describe("NNTree — subflow edge cases", () => {
+  it("warns on empty subflow (no internal nodes)", () => {
+    const warnSpy = vi.spyOn(console, "warn").mockImplementation(() => {});
+    const d = new Diagram();
+    d.nodes = [
+      node("input", "Input", "Input_0", {}, { isInput: true }),
+      node("sub1", "", "Sub_0", {}, { type: "subflow" }),
+      node("loss", "CrossEntropyLoss", "Loss", {}, { isLoss: true }),
+    ];
+    d.edges = [
+      edge("e1", "input", "sub1"),
+      edge("e2", "sub1", "loss"),
+    ];
+    const tree = new NNTree(d);
+    expect(tree.nodes.has("sub1")).toBe(true);
+    const sub1 = tree.nodes.get("sub1")!;
+    expect(sub1.isSequential()).toBe(true);
+    const seq = sub1.data as SequentialData;
+    expect(seq.layers).toHaveLength(0);
+    expect(warnSpy).toHaveBeenCalledWith(expect.stringContaining("no internal nodes"));
+    warnSpy.mockRestore();
+  });
+
+  it("throws on cycle inside subflow internal graph", () => {
+    const d = new Diagram();
+    d.nodes = [
+      node("input", "Input", "Input_0", {}, { isInput: true }),
+      node("sub1", "", "Sub_0", {}, { type: "subflow" }),
+      node("a", "Linear", "A", {}, { parentId: "sub1" }),
+      node("b", "Tanh", "B", {}, { parentId: "sub1" }),
+      node("c", "ReLU", "C", {}, { parentId: "sub1" }),
+      node("loss", "CrossEntropyLoss", "Loss", {}, { isLoss: true }),
+    ];
+    d.edges = [
+      edge("e1", "input", "sub1"),
+      edge("e2", "sub1", "loss"),
+      edge("ea", "a", "b"),
+      edge("eb", "b", "c"),
+      edge("ec", "c", "a"),
+    ];
+    expect(() => new NNTree(d)).toThrow("cycle");
+  });
+
+  it("compiles subflow with non-SubFlow stereotype (no unrolling)", () => {
+    const d = new Diagram();
+    d.nodes = [
+      node("input", "Input", "Input_0", {}, { isInput: true }),
+      node("sub1", "Linear", "Sub_0", {}, { type: "subflow" }),
+      node("a", "Tanh", "Tanh_0", {}, { parentId: "sub1" }),
+      node("loss", "CrossEntropyLoss", "Loss", {}, { isLoss: true }),
+    ];
+    d.edges = [
+      edge("e1", "input", "sub1"),
+      edge("e2", "sub1", "loss"),
+    ];
+    const tree = new NNTree(d);
+    expect(tree.nodes.has("sub1")).toBe(true);
+    const sub1 = tree.nodes.get("sub1")!;
+    const seq = sub1.data as SequentialData;
+    expect(seq.layers).toHaveLength(1);
+    expect(seq.layers[0].stereotype).toBe("Tanh");
+  });
+});

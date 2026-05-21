@@ -27,19 +27,112 @@ export class NNTree {
     return stereo?.taskType || "";
   }
 
-  private createSequential(node: Node, diagram: Diagram, visited: Set<string>, childs: Node[]): string {
-    let seq = [];
-    seq.push({
+  private isSubflowNode(node: Node): boolean {
+    return node.type === "subflow";
+  }
+
+  private nodeToModule(node: Node, diagram: Diagram): ModuleData {
+    return {
       type: "module",
       name: node.data.name,
       stereotype: node.data.stereotype,
       pythonClassName: this.getPythonClassName(diagram, node),
-      params: node.data.params
-    } as ModuleData)
+      params: node.data.params,
+    } as ModuleData;
+  }
+
+  private compileSubflowLayers(diagram: Diagram, subflowId: string): ModuleData[] {
+    const internalNodes = diagram.nodes.filter((n: any) => n.parentId === subflowId && !n.hidden);
+    if (internalNodes.length === 0) {
+      console.warn("Subflow " + subflowId + " has no internal nodes");
+      return [];
+    }
+    const internalIds = new Set(internalNodes.map((n: any) => n.id));
+    const internalEdges = diagram.edges.filter((e: any) =>
+      internalIds.has(e.source) && internalIds.has(e.target),
+    );
+
+    // Kahn's topological sort
+    const inDegree = new Map<string, number>();
+    const adj = new Map<string, string[]>();
+    for (const n of internalNodes) {
+      inDegree.set(n.id, 0);
+      adj.set(n.id, []);
+    }
+    for (const e of internalEdges) {
+      adj.get(e.source)?.push(e.target);
+      inDegree.set(e.target, (inDegree.get(e.target) || 0) + 1);
+    }
+
+    const queue = internalNodes.filter((n: any) => inDegree.get(n.id) === 0).map((n: any) => n.id);
+    const sorted: string[] = [];
+    while (queue.length > 0) {
+      const id = queue.shift()!;
+      sorted.push(id);
+      for (const target of adj.get(id) || []) {
+        const d = (inDegree.get(target) || 1) - 1;
+        inDegree.set(target, d);
+        if (d === 0) queue.push(target);
+      }
+    }
+
+    if (sorted.length !== internalNodes.length) {
+      throw new Error("Subflow " + subflowId + " contains a cycle");
+    }
+
+    return sorted.map((id) => {
+      const n = internalNodes.find((m: any) => m.id === id)!;
+      return this.nodeToModule(n, diagram);
+    });
+  }
+
+  private unrollLayers(iterations: number, layers: ModuleData[]): ModuleData[] {
+    if (iterations <= 1) return layers;
+    const result: ModuleData[] = [];
+    for (let i = 0; i < iterations; i++) {
+      for (const layer of layers) {
+        result.push({ ...layer });
+      }
+    }
+    return result;
+  }
+
+  private processSubflow(node: Node, diagram: Diagram, visited: Set<string>): string {
+    const layers = this.compileSubflowLayers(diagram, node.id);
+
+    const stereo = diagram.getStereotype(node.data.stereotype as string);
+    const iterations = stereo?.isSubFlow
+      ? parseInt((node.data.params as any)?.iterations?.value ?? "1", 10)
+      : 1;
+    const finalLayers = this.unrollLayers(iterations, layers);
+
+    const outerChilds = diagram.getChilds(node.id);
+    const nextNodes: string[] = [];
+    for (const child of outerChilds) {
+      const nnNode = this.processNode(child, diagram, visited);
+      if (nnNode !== undefined) nextNodes.push(nnNode);
+    }
+
+    this.nodes.set(
+      node.id,
+      new NNTreeNode(node.id, nextNodes, {
+        type: "sequential",
+        layers: finalLayers,
+      }),
+    );
+    return node.id;
+  }
+
+  private createSequential(node: Node, diagram: Diagram, visited: Set<string>, childs: Node[]): string {
+    let seq = [];
+    seq.push(this.nodeToModule(node, diagram))
     do {
       let child = childs[0];
       let parents = diagram.getParents(child.id);
       if (parents.length > 1) {
+        break;
+      }
+      if (this.isSubflowNode(child)) {
         break;
       }
       visited.add(child.id);
@@ -56,13 +149,7 @@ export class NNTree {
         } as ModuleData;
         break
       }
-      seq.push({
-        type: "module",
-        name: child.data.name,
-        stereotype: child.data.stereotype,
-        pythonClassName: this.getPythonClassName(diagram, child),
-        params: child.data.params
-      } as ModuleData)
+      seq.push(this.nodeToModule(child, diagram))
 
     } while (childs.length === 1);
 
@@ -106,6 +193,10 @@ export class NNTree {
     }
     visited.add(node.id);
 
+    if (this.isSubflowNode(node)) {
+      return this.processSubflow(node, diagram, visited);
+    }
+
     let parents = diagram.getParents(node.id);
     if (parents.length > 1) {
       return this.handleJoin(node, diagram, visited);
@@ -121,13 +212,7 @@ export class NNTree {
         if (nn_node !== undefined)
           next_tree_nodes.push(nn_node);
       }
-      this.nodes.set(node.id, new NNTreeNode(node.id, next_tree_nodes, {
-        type: "module",
-        name: node.data.name,
-        stereotype: node.data.stereotype,
-        pythonClassName: this.getPythonClassName(diagram, node),
-        params: node.data.params
-      } as ModuleData));
+      this.nodes.set(node.id, new NNTreeNode(node.id, next_tree_nodes, this.nodeToModule(node, diagram)));
       return node.id;
     } else {
       this.lossNode = {

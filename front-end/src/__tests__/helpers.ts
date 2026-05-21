@@ -20,12 +20,14 @@ export function node(
     type?: string;
     isInput?: boolean;
     isLoss?: boolean;
+    parentId?: string;
   },
 ): Node {
   return {
     id,
     type: overrides?.type ?? "custom",
     position: { x: 0, y: 0 },
+    parentId: overrides?.parentId,
     data: {
       stereotype,
       name,
