@@ -1,0 +1,401 @@
+{
+  "root": "d6df18af-14b5-43f1-ae1e-129ac129bfae",
+  "lossNode": {
+    "type": "module",
+    "name": "MSELoss_0",
+    "stereotype": "MSELoss",
+    "pythonClassName": "nn.MSELoss",
+    "taskType": "regression",
+    "params": {
+      "reduction": {
+        "value": "mean"
+      }
+    }
+  },
+  "nodes": {
+    "subflow_1779203236563": {
+      "id": "subflow_1779203236563",
+      "children": [],
+      "data": {
+        "type": "sequential",
+        "layers": [
+          {
+            "type": "module",
+            "name": "Conv2d_2",
+            "stereotype": "Conv2d",
+            "pythonClassName": "nn.Conv2d",
+            "params": {
+              "in_channels": {
+                "value": "8",
+                "position": "top"
+              },
+              "out_channels": {
+                "value": "8",
+                "position": "bottom"
+              },
+              "kernel_size": {
+                "value": "3"
+              },
+              "stride": {
+                "value": "1"
+              },
+              "padding": {
+                "value": "1"
+              },
+              "dilation": {
+                "value": "1"
+              },
+              "groups": {
+                "value": "1"
+              },
+              "bias": {
+                "value": "True"
+              },
+              "padding_mode": {
+                "value": "zeros"
+              },
+              "device": {
+                "value": "None"
+              },
+              "dtype": {
+                "value": "None"
+              }
+            }
+          },
+          {
+            "type": "module",
+            "name": "Tanh_2",
+            "stereotype": "Tanh",
+            "pythonClassName": "nn.Tanh",
+            "params": {}
+          },
+          {
+            "type": "module",
+            "name": "Unsample_0",
+            "stereotype": "Unsample",
+            "pythonClassName": "nn.Upsample",
+            "params": {
+              "size": {
+                "value": "None"
+              },
+              "scale_factor": {
+                "value": "2"
+              },
+              "mode": {
+                "value": "nearest"
+              },
+              "align_corners": {
+                "value": "None"
+              }
+            }
+          },
+          {
+            "type": "module",
+            "name": "Conv2d_3",
+            "stereotype": "Conv2d",
+            "pythonClassName": "nn.Conv2d",
+            "params": {
+              "in_channels": {
+                "value": "8",
+                "position": "top"
+              },
+              "out_channels": {
+                "value": "16",
+                "position": "bottom"
+              },
+              "kernel_size": {
+                "value": "3"
+              },
+              "stride": {
+                "value": "1"
+              },
+              "padding": {
+                "value": "1"
+              },
+              "dilation": {
+                "value": "1"
+              },
+              "groups": {
+                "value": "1"
+              },
+              "bias": {
+                "value": "True"
+              },
+              "padding_mode": {
+                "value": "zeros"
+              },
+              "device": {
+                "value": "None"
+              },
+              "dtype": {
+                "value": "None"
+              }
+            }
+          },
+          {
+            "type": "module",
+            "name": "Tanh_3",
+            "stereotype": "Tanh",
+            "pythonClassName": "nn.Tanh",
+            "params": {}
+          },
+          {
+            "type": "module",
+            "name": "Unsample_1",
+            "stereotype": "Unsample",
+            "pythonClassName": "nn.Upsample",
+            "params": {
+              "size": {
+                "value": "None"
+              },
+              "scale_factor": {
+                "value": "2"
+              },
+              "mode": {
+                "value": "nearest"
+              },
+              "align_corners": {
+                "value": "None"
+              }
+            }
+          },
+          {
+            "type": "module",
+            "name": "Conv2d_4",
+            "stereotype": "Conv2d",
+            "pythonClassName": "nn.Conv2d",
+            "params": {
+              "in_channels": {
+                "value": "16",
+                "position": "top"
+              },
+              "out_channels": {
+                "value": "1",
+                "position": "bottom"
+              },
+              "kernel_size": {
+                "value": "3"
+              },
+              "stride": {
+                "value": "1"
+              },
+              "padding": {
+                "value": "1"
+              },
+              "dilation": {
+                "value": "1"
+              },
+              "groups": {
+                "value": "1"
+              },
+              "bias": {
+                "value": "True"
+              },
+              "padding_mode": {
+                "value": "zeros"
+              },
+              "device": {
+                "value": "None"
+              },
+              "dtype": {
+                "value": "None"
+              }
+            }
+          },
+          {
+            "type": "module",
+            "name": "Sigmoid_0",
+            "stereotype": "Sigmoid",
+            "pythonClassName": "nn.Sigmoid",
+            "params": {}
+          }
+        ]
+      }
+    },
+    "subflow_1779202941276": {
+      "id": "subflow_1779202941276",
+      "children": [
+        "subflow_1779203236563"
+      ],
+      "data": {
+        "type": "sequential",
+        "layers": [
+          {
+            "type": "module",
+            "name": "Conv2d_0",
+            "stereotype": "Conv2d",
+            "pythonClassName": "nn.Conv2d",
+            "params": {
+              "in_channels": {
+                "value": "1",
+                "position": "top"
+              },
+              "out_channels": {
+                "value": "16",
+                "position": "bottom"
+              },
+              "kernel_size": {
+                "value": "3"
+              },
+              "stride": {
+                "value": "1"
+              },
+              "padding": {
+                "value": "1"
+              },
+              "dilation": {
+                "value": "1"
+              },
+              "groups": {
+                "value": "1"
+              },
+              "bias": {
+                "value": "True"
+              },
+              "padding_mode": {
+                "value": "zeros"
+              },
+              "device": {
+                "value": "None"
+              },
+              "dtype": {
+                "value": "None"
+              }
+            }
+          },
+          {
+            "type": "module",
+            "name": "Tanh_0",
+            "stereotype": "Tanh",
+            "pythonClassName": "nn.Tanh",
+            "params": {}
+          },
+          {
+            "type": "module",
+            "name": "MaxPool2d_0",
+            "stereotype": "MaxPool2d",
+            "pythonClassName": "nn.MaxPool2d",
+            "params": {
+              "kernel_size": {
+                "value": "2"
+              },
+              "stride": {
+                "value": "2"
+              },
+              "padding": {
+                "value": "0"
+              },
+              "dilation": {
+                "value": "1"
+              },
+              "return_indices": {
+                "value": "False"
+              },
+              "ceil_mode": {
+                "value": "False"
+              }
+            }
+          },
+          {
+            "type": "module",
+            "name": "Conv2d_1",
+            "stereotype": "Conv2d",
+            "pythonClassName": "nn.Conv2d",
+            "params": {
+              "in_channels": {
+                "value": "16",
+                "position": "top"
+              },
+              "out_channels": {
+                "value": "8",
+                "position": "bottom"
+              },
+              "kernel_size": {
+                "value": "3"
+              },
+              "stride": {
+                "value": "1"
+              },
+              "padding": {
+                "value": "1"
+              },
+              "dilation": {
+                "value": "1"
+              },
+              "groups": {
+                "value": "1"
+              },
+              "bias": {
+                "value": "True"
+              },
+              "padding_mode": {
+                "value": "zeros"
+              },
+              "device": {
+                "value": "None"
+              },
+              "dtype": {
+                "value": "None"
+              }
+            }
+          },
+          {
+            "type": "module",
+            "name": "Tanh_1",
+            "stereotype": "Tanh",
+            "pythonClassName": "nn.Tanh",
+            "params": {}
+          },
+          {
+            "type": "module",
+            "name": "MaxPool2d_1",
+            "stereotype": "MaxPool2d",
+            "pythonClassName": "nn.MaxPool2d",
+            "params": {
+              "kernel_size": {
+                "value": "2"
+              },
+              "stride": {
+                "value": "2"
+              },
+              "padding": {
+                "value": "0"
+              },
+              "dilation": {
+                "value": "1"
+              },
+              "return_indices": {
+                "value": "False"
+              },
+              "ceil_mode": {
+                "value": "False"
+              }
+            }
+          }
+        ]
+      }
+    },
+    "d6df18af-14b5-43f1-ae1e-129ac129bfae": {
+      "id": "d6df18af-14b5-43f1-ae1e-129ac129bfae",
+      "children": [
+        "subflow_1779202941276"
+      ],
+      "data": {
+        "type": "sequential",
+        "layers": [
+          {
+            "type": "module",
+            "name": "Input_0",
+            "stereotype": "Input",
+            "pythonClassName": "None",
+            "params": {
+              "out_features": {
+                "value": "784"
+              }
+            }
+          }
+        ]
+      }
+    }
+  }
+}
