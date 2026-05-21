@@ -1,77 +1,48 @@
 import { type Node, type Edge } from "@xyflow/svelte";
-import { Stereotype, type StereotypeJson } from "../stereotype";
 
-export class TestDiagram {
-  nodes: Node[] = [];
-  edges: Edge[] = [];
-  stereotypes: Stereotype[] = [];
-
-  constructor(nodes: Node[], edges: Edge[], stereotypes: Stereotype[]) {
-    this.nodes = nodes;
-    this.edges = edges;
-    this.stereotypes = stereotypes;
-  }
-
-  getChilds(id: string): Node[] {
-    const childIds = this.edges.filter((e) => e.source === id).map((e) => e.target);
-    return this.nodes.filter((n) => childIds.includes(n.id));
-  }
-
-  getParents(id: string): Node[] {
-    const parentIds = this.edges.filter((e) => e.target === id).map((e) => e.source);
-    return this.nodes.filter((n) => parentIds.includes(n.id));
-  }
-
-  getStereotype(name: string): Stereotype | undefined {
-    return this.stereotypes.find((s) => s.name === name);
-  }
-
-  // --- Stub methods for type compatibility with Diagram ---
-  getNodeById(id: string): Node | undefined {
-    return this.nodes.find((n) => n.id === id);
-  }
-
-  get layerStereotypes() {
-    return this.stereotypes.filter((s) => !s.isJoin);
-  }
-  get joinStereotypes() {
-    return this.stereotypes.filter((s) => s.isJoin);
-  }
-
-  addModule() {}
-  addJoinNode() {}
-  addSubGraph() {}
-  updateModule() {}
-  deleteNode() {}
-  deleteNodes(_ids: string[]) {}
-  deleteEdges(_ids: string[]) {}
-  deleteEdge(_id: string) {}
-  toggleSubflow() {}
-  exportToJson(): string {
-    return JSON.stringify({ nodes: this.nodes, edges: this.edges });
-  }
-  importFromJson() {}
+/** Stub window so Diagram constructor can auto-spawn Input node. */
+export function stubWindow() {
+  (globalThis as any).window = { innerWidth: 1024 };
 }
 
-export function buildStereotype(
+export function unstubWindow() {
+  delete (globalThis as any).window;
+}
+
+/** Factory for test Node — 1 line instead of 5. */
+export function node(
+  id: string,
+  stereotype: string,
   name: string,
-  overrides?: Partial<StereotypeJson>,
-): Stereotype {
-  const defaults: StereotypeJson = {
-    category: name,
-    pythonClassName: name === "Input" ? "None" : `nn.${name}`,
-    view: { color: "#ccc", width: 100, height: 50 },
-    params: {},
-  };
-
-  const isJoin = overrides?.category === "Join" || false;
-  const filePath = isJoin
-    ? `test://Stereotypes/Joins/${name}.json`
-    : `test://Stereotypes/Modules/${name}.json`;
-
-  return new Stereotype(filePath, { ...defaults, ...overrides });
+  params: Record<string, { value: string; position?: string }> = {},
+  overrides?: {
+    color?: string;
+    type?: string;
+    isInput?: boolean;
+    isLoss?: boolean;
+  },
+): Node {
+  return {
+    id,
+    type: overrides?.type ?? "custom",
+    position: { x: 0, y: 0 },
+    data: {
+      stereotype,
+      name,
+      color: overrides?.color ?? "#ccc",
+      params: structuredClone(params),
+      isInput: overrides?.isInput ?? false,
+      isLoss: overrides?.isLoss ?? false,
+    },
+  } as Node;
 }
 
-export function param(value: string, position?: "top" | "bottom") {
-  return position ? { value, position } : { value };
+/** Factory for test Edge. */
+export function edge(
+  id: string,
+  source: string,
+  target: string,
+  handles?: { sourceHandle?: string; targetHandle?: string },
+): Edge {
+  return { id, source, target, ...handles } as Edge;
 }

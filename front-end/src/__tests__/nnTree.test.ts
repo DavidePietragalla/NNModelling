@@ -1,7 +1,9 @@
-import { describe, it, expect, vi } from "vitest";
+import { describe, it, expect, vi, afterAll } from "vitest";
 import { type Node, type Edge } from "@xyflow/svelte";
+import { Diagram } from "../Diagram.svelte";
 import { NNTree } from "../conversion/nnTree";
-import { TestDiagram, buildStereotype, param } from "./helpers";
+import type { SequentialData } from "../conversion/nnTree";
+import { stubWindow, unstubWindow, node, edge } from "./helpers";
 
 // ---------------------------------------------------------------------------
 // Fixtures
@@ -9,198 +11,122 @@ import { TestDiagram, buildStereotype, param } from "./helpers";
 
 /** mninst.json — simple sequential chain */
 function sequentialFixture() {
+  // 8 non-loss nodes, 1 loss, 8 edges
   const nodes: Node[] = [
-    {
-      id: "input",
-      type: "custom",
-      position: { x: 0, y: 0 },
-      data: { stereotype: "Input", name: "Input_0", color: "#27b376", params: { out_features: param("784") }, isInput: true, isLoss: false },
-    },
-    {
-      id: "fc1",
-      type: "custom",
-      position: { x: 0, y: 0 },
-      data: { stereotype: "Linear", name: "Linear_0", color: "#4779c4", params: { in_features: param("784", "top"), out_features: param("350", "bottom"), bias: param("True") }, isInput: false, isLoss: false },
-    },
-    {
-      id: "act1",
-      type: "custom",
-      position: { x: 0, y: 0 },
-      data: { stereotype: "Tanh", name: "Tanh_0", color: "#f4a460", params: {}, isInput: false, isLoss: false },
-    },
-    {
-      id: "fc2",
-      type: "custom",
-      position: { x: 0, y: 0 },
-      data: { stereotype: "Linear", name: "Linear_1", color: "#4779c4", params: { in_features: param("350", "top"), out_features: param("175", "bottom"), bias: param("True") }, isInput: false, isLoss: false },
-    },
-    {
-      id: "act2",
-      type: "custom",
-      position: { x: 0, y: 0 },
-      data: { stereotype: "Tanh", name: "Tanh_1", color: "#f4a460", params: {}, isInput: false, isLoss: false },
-    },
-    {
-      id: "fc3",
-      type: "custom",
-      position: { x: 0, y: 0 },
-      data: { stereotype: "Linear", name: "Linear_2", color: "#4779c4", params: { in_features: param("175", "top"), out_features: param("50", "bottom"), bias: param("True") }, isInput: false, isLoss: false },
-    },
-    {
-      id: "act3",
-      type: "custom",
-      position: { x: 0, y: 0 },
-      data: { stereotype: "Tanh", name: "Tanh_2", color: "#f4a460", params: {}, isInput: false, isLoss: false },
-    },
-    {
-      id: "fc4",
-      type: "custom",
-      position: { x: 0, y: 0 },
-      data: { stereotype: "Linear", name: "Linear_3", color: "#4779c4", params: { in_features: param("50", "top"), out_features: param("10", "bottom"), bias: param("True") }, isInput: false, isLoss: false },
-    },
-    {
-      id: "loss",
-      type: "custom",
-      position: { x: 0, y: 0 },
-      data: { stereotype: "CrossEntropyLoss", name: "CrossEntropyLoss_0", color: "#cd5c5c", params: { reduction: param("mean") }, isInput: false, isLoss: true },
-    },
+    node("input", "Input", "Input_0", { out_features: { value: "784" } }, { isInput: true, color: "#27b376" }),
+    node("fc1", "Linear", "Linear_0", { in_features: { value: "784", position: "top" }, out_features: { value: "350", position: "bottom" }, bias: { value: "True" } }, { color: "#4779c4" }),
+    node("act1", "Tanh", "Tanh_0", {}, { color: "#f4a460" }),
+    node("fc2", "Linear", "Linear_1", { in_features: { value: "350", position: "top" }, out_features: { value: "175", position: "bottom" }, bias: { value: "True" } }, { color: "#4779c4" }),
+    node("act2", "Tanh", "Tanh_1", {}, { color: "#f4a460" }),
+    node("fc3", "Linear", "Linear_2", { in_features: { value: "175", position: "top" }, out_features: { value: "50", position: "bottom" }, bias: { value: "True" } }, { color: "#4779c4" }),
+    node("act3", "Tanh", "Tanh_2", {}, { color: "#f4a460" }),
+    node("fc4", "Linear", "Linear_3", { in_features: { value: "50", position: "top" }, out_features: { value: "10", position: "bottom" }, bias: { value: "True" } }, { color: "#4779c4" }),
+    node("loss", "CrossEntropyLoss", "CrossEntropyLoss_0", { reduction: { value: "mean" } }, { color: "#cd5c5c", isLoss: true }),
   ];
-
   const edges: Edge[] = [
-    { id: "e1", source: "input", target: "fc1" },
-    { id: "e2", source: "fc1", target: "act1" },
-    { id: "e3", source: "act1", target: "fc2" },
-    { id: "e4", source: "fc2", target: "act2" },
-    { id: "e5", source: "act2", target: "fc3" },
-    { id: "e6", source: "fc3", target: "act3" },
-    { id: "e7", source: "act3", target: "fc4" },
-    { id: "e8", source: "fc4", target: "loss" },
+    edge("e1", "input", "fc1"),
+    edge("e2", "fc1", "act1"),
+    edge("e3", "act1", "fc2"),
+    edge("e4", "fc2", "act2"),
+    edge("e5", "act2", "fc3"),
+    edge("e6", "fc3", "act3"),
+    edge("e7", "act3", "fc4"),
+    edge("e8", "fc4", "loss"),
   ];
-
-  const stereotypes = [
-    buildStereotype("Input", { category: "Input", params: { out_features: { type: "int", default: "784" } } }),
-    buildStereotype("Linear", { params: { in_features: { type: "int", default: "Undefined", position: "top" }, out_features: { type: "int", default: "Undefined", position: "bottom" }, bias: { type: "bool", default: "True" } } }),
-    buildStereotype("Tanh", { params: {} }),
-    buildStereotype("CrossEntropyLoss", { category: "CrossEntropyLoss", pythonClassName: "nn.CrossEntropyLoss", taskType: "classification" }),
-  ];
-
-  return { nodes, edges, stereotypes };
+  return { nodes, edges };
 }
 
 /** mnist_skips.json — skip connections with Addition joins */
 function skipFixture() {
   const nodes: Node[] = [
-    { id: "input", type: "custom", position: { x: 0, y: 0 }, data: { stereotype: "Input", name: "Input_0", color: "#27b376", params: { out_features: param("784") }, isInput: true, isLoss: false } },
-    { id: "fc1", type: "custom", position: { x: 0, y: 0 }, data: { stereotype: "Linear", name: "Linear_0", color: "#4779c4", params: { in_features: param("784", "top"), out_features: param("350", "bottom") }, isInput: false, isLoss: false } },
-    { id: "act1", type: "custom", position: { x: 0, y: 0 }, data: { stereotype: "Tanh", name: "Tanh_0", color: "#f4a460", params: {}, isInput: false, isLoss: false } },
-    { id: "fc2", type: "custom", position: { x: 0, y: 0 }, data: { stereotype: "Linear", name: "Linear_1", color: "#4779c4", params: { in_features: param("350", "top"), out_features: param("175", "bottom") }, isInput: false, isLoss: false } },
-    { id: "act2", type: "custom", position: { x: 0, y: 0 }, data: { stereotype: "Tanh", name: "Tanh_1", color: "#f4a460", params: {}, isInput: false, isLoss: false } },
-    { id: "fc3", type: "custom", position: { x: 0, y: 0 }, data: { stereotype: "Linear", name: "Linear_2", color: "#4779c4", params: { in_features: param("175", "top"), out_features: param("50", "bottom") }, isInput: false, isLoss: false } },
-    { id: "act3", type: "custom", position: { x: 0, y: 0 }, data: { stereotype: "Tanh", name: "Tanh_2", color: "#f4a460", params: {}, isInput: false, isLoss: false } },
-    { id: "fc4", type: "custom", position: { x: 0, y: 0 }, data: { stereotype: "Linear", name: "Linear_3", color: "#4779c4", params: { in_features: param("50", "top"), out_features: param("10", "bottom") }, isInput: false, isLoss: false } },
-    { id: "loss", type: "custom", position: { x: 0, y: 0 }, data: { stereotype: "CrossEntropyLoss", name: "CrossEntropyLoss_0", color: "#cd5c5c", params: {}, isInput: false, isLoss: true } },
-    // Skip path 1: Linear_4 → Tanh_3 → Addition_0
-    { id: "skip_fc", type: "custom", position: { x: 0, y: 0 }, data: { stereotype: "Linear", name: "Linear_4", color: "#4779c4", params: { in_features: param("784"), out_features: param("784") }, isInput: false, isLoss: false } },
-    { id: "skip_act", type: "custom", position: { x: 0, y: 0 }, data: { stereotype: "Tanh", name: "Tanh_3", color: "#f4a460", params: {}, isInput: false, isLoss: false } },
-    { id: "join0", type: "join", position: { x: 0, y: 0 }, data: { stereotype: "Addition", name: "Addition_0", inputsCount: 2, color: "#888888", params: {} } },
-    // Skip path 2: Linear_5 → Tanh_4 → Addition_1
-    { id: "skip2_fc", type: "custom", position: { x: 0, y: 0 }, data: { stereotype: "Linear", name: "Linear_5", color: "#4779c4", params: { in_features: param("350"), out_features: param("350") }, isInput: false, isLoss: false } },
-    { id: "skip2_act", type: "custom", position: { x: 0, y: 0 }, data: { stereotype: "Tanh", name: "Tanh_4", color: "#f4a460", params: {}, isInput: false, isLoss: false } },
-    { id: "join1", type: "join", position: { x: 0, y: 0 }, data: { stereotype: "Addition", name: "Addition_1", inputsCount: 2, color: "#888888", params: {} } },
+    node("input", "Input", "Input_0", { out_features: { value: "784" } }, { isInput: true, color: "#27b376" }),
+    node("fc1", "Linear", "Linear_0", { in_features: { value: "784", position: "top" }, out_features: { value: "350", position: "bottom" } }, { color: "#4779c4" }),
+    node("act1", "Tanh", "Tanh_0", {}, { color: "#f4a460" }),
+    node("fc2", "Linear", "Linear_1", { in_features: { value: "350", position: "top" }, out_features: { value: "175", position: "bottom" } }, { color: "#4779c4" }),
+    node("act2", "Tanh", "Tanh_1", {}, { color: "#f4a460" }),
+    node("fc3", "Linear", "Linear_2", { in_features: { value: "175", position: "top" }, out_features: { value: "50", position: "bottom" } }, { color: "#4779c4" }),
+    node("act3", "Tanh", "Tanh_2", {}, { color: "#f4a460" }),
+    node("fc4", "Linear", "Linear_3", { in_features: { value: "50", position: "top" }, out_features: { value: "10", position: "bottom" } }, { color: "#4779c4" }),
+    node("loss", "CrossEntropyLoss", "CrossEntropyLoss_0", {}, { color: "#cd5c5c", isLoss: true }),
+    node("skip_fc", "Linear", "Linear_4", { in_features: { value: "784" }, out_features: { value: "784" } }, { color: "#4779c4" }),
+    node("skip_act", "Tanh", "Tanh_3", {}, { color: "#f4a460" }),
+    node("join0", "Addition", "Addition_0", {},
+      { type: "join", color: "#888888" }),
+    node("skip2_fc", "Linear", "Linear_5", { in_features: { value: "350" }, out_features: { value: "350" } }, { color: "#4779c4" }),
+    node("skip2_act", "Tanh", "Tanh_4", {}, { color: "#f4a460" }),
+    node("join1", "Addition", "Addition_1", {},
+      { type: "join", color: "#888888" }),
   ];
-
   const edges: Edge[] = [
-    // Input → Linear_4 → Tanh_3 → Addition_0 (skip path 1)
-    { id: "e1", source: "input", target: "skip_fc" },
-    { id: "e2", source: "skip_fc", target: "skip_act" },
-    { id: "e3", source: "skip_act", target: "join0", targetHandle: "in-0" },
-    // Input → Addition_0 (direct skip connection)
-    { id: "e4", source: "input", target: "join0", targetHandle: "in-1" },
-    // Addition_0 → Linear_0 → Tanh_0 (main chain resumes)
-    { id: "e5", source: "join0", sourceHandle: "out", target: "fc1" },
-    { id: "e6", source: "fc1", target: "act1" },
-    // Tanh_0 → Linear_5 → Tanh_4 → Addition_1 (skip path 2)
-    { id: "e7", source: "act1", target: "skip2_fc" },
-    { id: "e8", source: "skip2_fc", target: "skip2_act" },
-    { id: "e9", source: "skip2_act", target: "join1", targetHandle: "in-1" },
-    // Tanh_0 → Addition_1 (direct skip)
-    { id: "e10", source: "act1", target: "join1", targetHandle: "in-0" },
-    // Addition_1 → Linear_1 → Tanh_1 → Linear_2 → Tanh_2 → Linear_3 → Loss
-    { id: "e11", source: "join1", sourceHandle: "out", target: "fc2" },
-    { id: "e12", source: "fc2", target: "act2" },
-    { id: "e13", source: "act2", target: "fc3" },
-    { id: "e14", source: "fc3", target: "act3" },
-    { id: "e15", source: "act3", target: "fc4" },
-    { id: "e16", source: "fc4", target: "loss" },
+    edge("e1", "input", "skip_fc"),
+    edge("e2", "skip_fc", "skip_act"),
+    edge("e3", "skip_act", "join0", { targetHandle: "in-0" }),
+    edge("e4", "input", "join0", { targetHandle: "in-1" }),
+    edge("e5", "join0", "fc1", { sourceHandle: "out" }),
+    edge("e6", "fc1", "act1"),
+    edge("e7", "act1", "skip2_fc"),
+    edge("e8", "skip2_fc", "skip2_act"),
+    edge("e9", "skip2_act", "join1", { targetHandle: "in-1" }),
+    edge("e10", "act1", "join1", { targetHandle: "in-0" }),
+    edge("e11", "join1", "fc2", { sourceHandle: "out" }),
+    edge("e12", "fc2", "act2"),
+    edge("e13", "act2", "fc3"),
+    edge("e14", "fc3", "act3"),
+    edge("e15", "act3", "fc4"),
+    edge("e16", "fc4", "loss"),
   ];
-
-  const stereotypes = [
-    buildStereotype("Input", { category: "Input" }),
-    buildStereotype("Linear", { params: { in_features: { type: "int", default: "Undefined" }, out_features: { type: "int", default: "Undefined" } } }),
-    buildStereotype("Tanh", { params: {} }),
-    buildStereotype("CrossEntropyLoss", { category: "CrossEntropyLoss", pythonClassName: "nn.CrossEntropyLoss", taskType: "classification" }),
-    buildStereotype("Addition", { category: "Join", pythonClassName: "ops.Addition" }),
-  ];
-
-  return { nodes, edges, stereotypes };
+  return { nodes, edges };
 }
 
 /** autoencoder_mnist.json — encoder-decoder with skip Addition */
 function autoencoderFixture() {
   const nodes: Node[] = [
-    { id: "input", type: "custom", position: { x: 0, y: 0 }, data: { stereotype: "Input", name: "Input_0", color: "#27b376", params: { out_features: param("784") }, isInput: true, isLoss: false } },
-    // Encoder
-    { id: "enc_fc", type: "custom", position: { x: 0, y: 0 }, data: { stereotype: "Linear", name: "Encoder_Linear", color: "#4779c4", params: { in_features: param("784", "top"), out_features: param("128", "bottom") }, isInput: false, isLoss: false } },
-    { id: "enc_act", type: "custom", position: { x: 0, y: 0 }, data: { stereotype: "Tanh", name: "Encoder_Tanh", color: "#f4a460", params: {}, isInput: false, isLoss: false } },
-    // Bottleneck
-    { id: "bot_fc1", type: "custom", position: { x: 0, y: 0 }, data: { stereotype: "Linear", name: "Bottleneck_Linear_1", color: "#4779c4", params: { in_features: param("128", "top"), out_features: param("64", "bottom") }, isInput: false, isLoss: false } },
-    { id: "bot_act1", type: "custom", position: { x: 0, y: 0 }, data: { stereotype: "Tanh", name: "Bottleneck_Tanh_1", color: "#f4a460", params: {}, isInput: false, isLoss: false } },
-    { id: "bot_fc2", type: "custom", position: { x: 0, y: 0 }, data: { stereotype: "Linear", name: "Bottleneck_Linear_2", color: "#4779c4", params: { in_features: param("64", "top"), out_features: param("128", "bottom") }, isInput: false, isLoss: false } },
-    { id: "bot_act2", type: "custom", position: { x: 0, y: 0 }, data: { stereotype: "Tanh", name: "Bottleneck_Tanh_2", color: "#f4a460", params: {}, isInput: false, isLoss: false } },
-    // Skip addition join
-    { id: "join", type: "join", position: { x: 0, y: 0 }, data: { stereotype: "Addition", name: "Addition", inputsCount: 2, color: "#888888", params: {} } },
-    // Decoder
-    { id: "out_fc", type: "custom", position: { x: 0, y: 0 }, data: { stereotype: "Linear", name: "Output_Linear", color: "#4779c4", params: { in_features: param("128", "top"), out_features: param("784", "bottom") }, isInput: false, isLoss: false } },
-    { id: "out_act", type: "custom", position: { x: 0, y: 0 }, data: { stereotype: "Sigmoid", name: "Sigmoid_0", color: "#f4a460", params: {}, isInput: false, isLoss: false } },
-    { id: "loss", type: "custom", position: { x: 0, y: 0 }, data: { stereotype: "MSELoss", name: "MSELoss_0", color: "#cd5c5c", params: { reduction: param("mean") }, isInput: false, isLoss: true } },
+    node("input", "Input", "Input_0", { out_features: { value: "784" } }, { isInput: true, color: "#27b376" }),
+    node("enc_fc", "Linear", "Encoder_Linear", { in_features: { value: "784", position: "top" }, out_features: { value: "128", position: "bottom" } }, { color: "#4779c4" }),
+    node("enc_act", "Tanh", "Encoder_Tanh", {}, { color: "#f4a460" }),
+    node("bot_fc1", "Linear", "Bottleneck_Linear_1", { in_features: { value: "128", position: "top" }, out_features: { value: "64", position: "bottom" } }, { color: "#4779c4" }),
+    node("bot_act1", "Tanh", "Bottleneck_Tanh_1", {}, { color: "#f4a460" }),
+    node("bot_fc2", "Linear", "Bottleneck_Linear_2", { in_features: { value: "64", position: "top" }, out_features: { value: "128", position: "bottom" } }, { color: "#4779c4" }),
+    node("bot_act2", "Tanh", "Bottleneck_Tanh_2", {}, { color: "#f4a460" }),
+    node("join", "Addition", "Addition", {},
+      { type: "join", color: "#888888" }),
+    node("out_fc", "Linear", "Output_Linear", { in_features: { value: "128", position: "top" }, out_features: { value: "784", position: "bottom" } }, { color: "#4779c4" }),
+    node("out_act", "Sigmoid", "Sigmoid_0", {}, { color: "#f4a460" }),
+    node("loss", "MSELoss", "MSELoss_0", { reduction: { value: "mean" } }, { color: "#cd5c5c", isLoss: true }),
   ];
-
   const edges: Edge[] = [
-    { id: "e1", source: "input", target: "enc_fc" },
-    { id: "e2", source: "enc_fc", target: "enc_act" },
-    { id: "e3", source: "enc_act", target: "bot_fc1" },
-    { id: "e4", source: "bot_fc1", target: "bot_act1" },
-    { id: "e5", source: "bot_act1", target: "bot_fc2" },
-    { id: "e6", source: "bot_fc2", target: "bot_act2" },
-    // Skip: enc_act → Addition AND bot_act2 → Addition
-    { id: "e7", source: "bot_act2", target: "join", targetHandle: "in-0" },
-    { id: "e8", source: "enc_act", target: "join", targetHandle: "in-1" },
-    // Decoder path
-    { id: "e9", source: "join", sourceHandle: "out", target: "out_fc" },
-    { id: "e10", source: "out_fc", target: "out_act" },
-    { id: "e11", source: "out_act", target: "loss" },
+    edge("e1", "input", "enc_fc"),
+    edge("e2", "enc_fc", "enc_act"),
+    edge("e3", "enc_act", "bot_fc1"),
+    edge("e4", "bot_fc1", "bot_act1"),
+    edge("e5", "bot_act1", "bot_fc2"),
+    edge("e6", "bot_fc2", "bot_act2"),
+    edge("e7", "bot_act2", "join", { targetHandle: "in-0" }),
+    edge("e8", "enc_act", "join", { targetHandle: "in-1" }),
+    edge("e9", "join", "out_fc", { sourceHandle: "out" }),
+    edge("e10", "out_fc", "out_act"),
+    edge("e11", "out_act", "loss"),
   ];
-
-  const stereotypes = [
-    buildStereotype("Input", { category: "Input" }),
-    buildStereotype("Linear", { params: { in_features: { type: "int", default: "Undefined" }, out_features: { type: "int", default: "Undefined" } } }),
-    buildStereotype("Tanh", { params: {} }),
-    buildStereotype("Sigmoid", { pythonClassName: "nn.Sigmoid", params: {} }),
-    buildStereotype("MSELoss", { category: "MSELoss", pythonClassName: "nn.MSELoss", taskType: "regression" }),
-    buildStereotype("Addition", { category: "Join", pythonClassName: "ops.Addition" }),
-  ];
-
-  return { nodes, edges, stereotypes };
+  return { nodes, edges };
 }
+
+// ---------------------------------------------------------------------------
+// Lifecycle
+// ---------------------------------------------------------------------------
+
+stubWindow();
+afterAll(() => unstubWindow());
 
 // ---------------------------------------------------------------------------
 // Tests
 // ---------------------------------------------------------------------------
 
 describe("NNTree — sequential chain", () => {
-  const { nodes, edges, stereotypes } = sequentialFixture();
-  const diagram = new TestDiagram(nodes, edges, stereotypes);
-  const tree = new NNTree(diagram as any);
+  const { nodes, edges } = sequentialFixture();
+  const d = new Diagram();
+  d.nodes = nodes;
+  d.edges = edges;
+  const tree = new NNTree(d);
   const json = JSON.parse(tree.toJson());
 
   it("compresses chain into single sequential node", () => {
@@ -219,11 +145,14 @@ describe("NNTree — sequential chain", () => {
     expect(tree.lossNode!.pythonClassName).toBe("nn.CrossEntropyLoss");
   });
 
-  it("includes all layers in correct order", () => {
-    const rootNode = tree.nodes.get("input")!;
-    expect(rootNode.isSequential()).toBe(true);
-    const seq = rootNode.data as import("../conversion/nnTree").SequentialData;
-    expect(seq.layers).toHaveLength(8);
+  it("includes all non-loss layers in correct order", () => {
+    const rootNode = tree.nodes.get("input");
+    expect(rootNode).toBeDefined();
+    expect(rootNode!.isSequential()).toBe(true);
+
+    const seq = rootNode!.data as SequentialData;
+    const nonLossNodes = nodes.filter((n) => !n.data.isLoss);
+    expect(seq.layers).toHaveLength(nonLossNodes.length);
 
     const expected = [
       { name: "Input_0", stereotype: "Input", py: "None" },
@@ -244,11 +173,11 @@ describe("NNTree — sequential chain", () => {
   });
 
   it("preserves params in sequential layers", () => {
-    const rootNode = tree.nodes.get("input")!;
-    const seq = rootNode.data as import("../conversion/nnTree").SequentialData;
-    const linear0 = seq.layers.find((l) => l.name === "Linear_0")!;
-    expect(linear0.params.out_features.value).toBe("350");
-    expect(linear0.params.in_features.value).toBe("784");
+    const seq = (tree.nodes.get("input")!.data as SequentialData);
+    const linear0 = seq.layers.find((l) => l.name === "Linear_0");
+    expect(linear0).toBeDefined();
+    expect(linear0!.params.out_features.value).toBe("350");
+    expect(linear0!.params.in_features.value).toBe("784");
   });
 
   it("serializes to valid JSON with root, lossNode, nodes", () => {
@@ -256,33 +185,68 @@ describe("NNTree — sequential chain", () => {
     expect(json.lossNode).toBeDefined();
     expect(json.lossNode.stereotype).toBe("CrossEntropyLoss");
     expect(json.nodes).toBeDefined();
-    expect(json.nodes["input"]).toBeDefined();
+    expect(json.nodes.input).toBeDefined();
   });
 });
 
 describe("NNTree — skip connections with joins", () => {
-  const { nodes, edges, stereotypes } = skipFixture();
-  const diagram = new TestDiagram(nodes, edges, stereotypes);
-  const tree = new NNTree(diagram as any);
+  const { nodes, edges } = skipFixture();
+  const d = new Diagram();
+  d.nodes = nodes;
+  d.edges = edges;
+  const tree = new NNTree(d);
 
-  it("produces multiple tree nodes (not a single sequential)", () => {
-    // Skip graph has branches → multiple NNTree nodes
+  it("produces multiple tree nodes", () => {
     expect(tree.nodes.size).toBeGreaterThan(1);
   });
 
-  it("includes Addition join nodes in the tree", () => {
-    const joinKeys = Array.from(tree.nodes.keys()).filter((k) => k.startsWith("join"));
-    expect(joinKeys.length).toBeGreaterThanOrEqual(2);
+  it("includes both Addition join nodes", () => {
+    expect(tree.nodes.has("join0")).toBe(true);
+    expect(tree.nodes.has("join1")).toBe(true);
   });
 
-  it("marks join nodes with type=join and ops.Addition pythonClassName", () => {
-    const joinNode = tree.nodes.get("join0")!;
-    expect(joinNode.isJoin()).toBe(true);
-    expect(joinNode.data).toMatchObject({
+  it("marks join nodes with type=join and pythonClassName=ops.Addition", () => {
+    const j0 = tree.nodes.get("join0");
+    expect(j0).toBeDefined();
+    expect(j0!.isJoin()).toBe(true);
+    expect(j0!.data).toMatchObject({
       type: "join",
       stereotype: "Addition",
       pythonClassName: "ops.Addition",
     });
+
+    const j1 = tree.nodes.get("join1");
+    expect(j1).toBeDefined();
+    expect(j1!.isJoin()).toBe(true);
+  });
+
+  it("preserves sequential segments between joins", () => {
+    // skip_fc + skip_act form a sequential before join0
+    const skipSeq = tree.nodes.get("skip_fc");
+    expect(skipSeq).toBeDefined();
+    expect(skipSeq!.isSequential()).toBe(true);
+    const seqData = skipSeq!.data as SequentialData;
+    expect(seqData.layers).toHaveLength(2);
+    expect(seqData.layers[0].stereotype).toBe("Linear");
+    expect(seqData.layers[1].stereotype).toBe("Tanh");
+  });
+
+  it("join nodes route to correct children", () => {
+    // join0's single child is fc1 (the main chain)
+    const j0 = tree.nodes.get("join0");
+    expect(j0).toBeDefined();
+    expect(j0!.children).toEqual(["fc1"]);
+
+    // fc1 is a sequential that branches into skip2_fc and join1
+    const fc1Node = tree.nodes.get("fc1");
+    expect(fc1Node).toBeDefined();
+    expect(fc1Node!.isSequential()).toBe(true);
+    expect(fc1Node!.children).toEqual(["skip2_fc", "join1"]);
+
+    // join1 routes to fc2
+    const j1 = tree.nodes.get("join1");
+    expect(j1).toBeDefined();
+    expect(j1!.children).toEqual(["fc2"]);
   });
 
   it("sets lossNode correctly", () => {
@@ -291,22 +255,71 @@ describe("NNTree — skip connections with joins", () => {
   });
 
   it("serializes join data in JSON output", () => {
-    const json = JSON.parse(tree.toJson());
-    expect(json.lossNode.stereotype).toBe("CrossEntropyLoss");
-    // At least one join node in the output
-    const joinKeys = Object.keys(json.nodes).filter((k) => k.startsWith("join"));
-    expect(joinKeys.length).toBeGreaterThanOrEqual(2);
+    const j = JSON.parse(tree.toJson());
+    expect(j.lossNode.stereotype).toBe("CrossEntropyLoss");
+    expect(Object.keys(j.nodes)).toContain("join0");
+    expect(Object.keys(j.nodes)).toContain("join1");
   });
 });
 
 describe("NNTree — autoencoder with skip", () => {
-  const { nodes, edges, stereotypes } = autoencoderFixture();
-  const diagram = new TestDiagram(nodes, edges, stereotypes);
-  const tree = new NNTree(diagram as any);
+  const { nodes, edges } = autoencoderFixture();
+  const d = new Diagram();
+  d.nodes = nodes;
+  d.edges = edges;
+  const tree = new NNTree(d);
 
   it("produces valid tree with join node", () => {
-    expect(tree.nodes.size).toBeGreaterThan(0);
     expect(tree.nodes.has("join")).toBe(true);
+    expect(tree.nodes.size).toBeGreaterThan(0);
+  });
+
+  it("encoder path layers inside input sequential", () => {
+    const inSeq = tree.nodes.get("input");
+    expect(inSeq).toBeDefined();
+    expect(inSeq!.isSequential()).toBe(true);
+    const seq = inSeq!.data as SequentialData;
+    expect(seq.layers).toHaveLength(3);
+    expect(seq.layers[0].stereotype).toBe("Input");
+    expect(seq.layers[1].stereotype).toBe("Linear");
+    expect(seq.layers[1].name).toBe("Encoder_Linear");
+    expect(seq.layers[2].stereotype).toBe("Tanh");
+    expect(seq.layers[2].name).toBe("Encoder_Tanh");
+  });
+
+  it("bottleneck forms sequential chain", () => {
+    const botSeq = tree.nodes.get("bot_fc1");
+    expect(botSeq).toBeDefined();
+    expect(botSeq!.isSequential()).toBe(true);
+    const seq = botSeq!.data as SequentialData;
+    expect(seq.layers).toHaveLength(4);
+    expect(seq.layers.map((l) => l.stereotype)).toEqual([
+      "Linear", "Tanh", "Linear", "Tanh",
+    ]);
+  });
+
+  it("join node receives from both encoder and bottleneck paths", () => {
+    const joinNode = tree.nodes.get("join");
+    expect(joinNode).toBeDefined();
+    expect(joinNode!.isJoin()).toBe(true);
+    expect(joinNode!.data).toMatchObject({
+      type: "join",
+      stereotype: "Addition",
+      pythonClassName: "ops.Addition",
+    });
+    // join's child is the decoder
+    expect(joinNode!.children).toEqual(["out_fc"]);
+  });
+
+  it("decoder path in sequential with Sigmoid activation", () => {
+    const outSeq = tree.nodes.get("out_fc");
+    expect(outSeq).toBeDefined();
+    expect(outSeq!.isSequential()).toBe(true);
+    const seq = outSeq!.data as SequentialData;
+    expect(seq.layers).toHaveLength(2);
+    expect(seq.layers[0].stereotype).toBe("Linear");
+    expect(seq.layers[0].name).toBe("Output_Linear");
+    expect(seq.layers[1].stereotype).toBe("Sigmoid");
   });
 
   it("sets MSELoss as lossNode with regression taskType", () => {
@@ -315,55 +328,52 @@ describe("NNTree — autoencoder with skip", () => {
     expect(tree.lossNode!.taskType).toBe("regression");
     expect(tree.lossNode!.pythonClassName).toBe("nn.MSELoss");
   });
-
-  it("creates join node with Addition data", () => {
-    const joinNode = tree.nodes.get("join")!;
-    expect(joinNode.isJoin()).toBe(true);
-    expect(joinNode.data).toMatchObject({
-      type: "join",
-      stereotype: "Addition",
-      pythonClassName: "ops.Addition",
-    });
-  });
 });
 
 describe("NNTree — error handling", () => {
   it("throws on empty diagram (no Input node)", () => {
-    const diagram = new TestDiagram([], [], [buildStereotype("Linear")]);
-    expect(() => new NNTree(diagram as any)).toThrow("Expected exactly one input node");
+    const d = new Diagram();
+    d.nodes = [];
+    d.edges = [];
+    expect(() => new NNTree(d)).toThrow("Expected exactly one input node");
   });
 
   it("throws on multiple Input nodes", () => {
-    const input1: Node = { id: "i1", type: "custom", position: { x: 0, y: 0 }, data: { stereotype: "Input", name: "Input_0", color: "", params: {}, isInput: true, isLoss: false } };
-    const input2: Node = { id: "i2", type: "custom", position: { x: 0, y: 0 }, data: { stereotype: "Input", name: "Input_1", color: "", params: {}, isInput: true, isLoss: false } };
-    const diagram = new TestDiagram([input1, input2], [], [buildStereotype("Input", { category: "Input" })]);
-    expect(() => new NNTree(diagram as any)).toThrow("Expected exactly one input node");
+    const d = new Diagram();
+    d.nodes = [
+      node("i1", "Input", "Input_0", {}, { isInput: true }),
+      node("i2", "Input", "Input_1", {}, { isInput: true }),
+    ];
+    d.edges = [];
+    expect(() => new NNTree(d)).toThrow("Expected exactly one input node");
   });
 
-  it("throws when no Input node exists among nodes", () => {
-    const relu: Node = { id: "r1", type: "custom", position: { x: 0, y: 0 }, data: { stereotype: "ReLU", name: "ReLU_0", color: "", params: {}, isInput: false, isLoss: false } };
-    const diagram = new TestDiagram([relu], [], [buildStereotype("ReLU")]);
-    expect(() => new NNTree(diagram as any)).toThrow("Expected exactly one input node");
+  it("throws when node stereotypes don't include Input", () => {
+    const d = new Diagram();
+    d.nodes = [node("r1", "ReLU", "ReLU_0")];
+    d.edges = [];
+    expect(() => new NNTree(d)).toThrow("Expected exactly one input node");
   });
 
   it("warns on graph cycle but still produces a tree", () => {
     const warnSpy = vi.spyOn(console, "warn").mockImplementation(() => {});
-    const input: Node = { id: "i", type: "custom", position: { x: 0, y: 0 }, data: { stereotype: "Input", name: "Input_0", color: "", params: { out_features: param("10") }, isInput: true, isLoss: false } };
-    const a: Node = { id: "a", type: "custom", position: { x: 0, y: 0 }, data: { stereotype: "Linear", name: "Linear_0", color: "", params: {}, isInput: false, isLoss: false } };
-    const b: Node = { id: "b", type: "custom", position: { x: 0, y: 0 }, data: { stereotype: "Tanh", name: "Tanh_0", color: "", params: {}, isInput: false, isLoss: false } };
-    // Cycle: Input → A → B → A
-    const edges: Edge[] = [
-      { id: "e1", source: "i", target: "a" },
-      { id: "e2", source: "a", target: "b" },
-      { id: "e3", source: "b", target: "a" },
+    const d = new Diagram();
+    d.nodes = [
+      node("i", "Input", "Input_0", { out_features: { value: "10" } }, { isInput: true }),
+      node("a", "Linear", "Linear_0"),
+      node("b", "Tanh", "Tanh_0"),
     ];
-    const diagram = new TestDiagram([input, a, b], edges, [
-      buildStereotype("Input", { category: "Input" }),
-      buildStereotype("Linear"),
-      buildStereotype("Tanh"),
-    ]);
-    const tree = new NNTree(diagram as any);
+    // Cycle: Input → A → B → A
+    d.edges = [
+      edge("e1", "i", "a"),
+      edge("e2", "a", "b"),
+      edge("e3", "b", "a"),
+    ];
+    const tree = new NNTree(d);
+    // Tree still produces output despite cycle
     expect(tree.nodes.size).toBeGreaterThan(0);
+    expect(tree.root).toBeDefined();
+    // Warn about loop detected
     expect(warnSpy).toHaveBeenCalledWith(
       expect.stringContaining("is visited, there is a loop"),
     );
