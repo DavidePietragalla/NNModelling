@@ -311,9 +311,29 @@ export class Diagram {
 
       // Validazione base per assicurarci che il file sia corretto
       if (Array.isArray(parsedData.nodes) && Array.isArray(parsedData.edges)) {
-        // Sovrascriviamo lo stato reattivo. 
+        // Sovrascriviamo lo stato reattivo.
         // SvelteFlow si aggiornerà automaticamente!
-        this.nodes = parsedData.nodes;
+        this.nodes = parsedData.nodes.map((n: Node) => {
+          if (n.type === "subflow") {
+            // Re-hydrate callbacks lost during JSON serialization
+            return {
+              ...n,
+              data: {
+                ...n.data,
+                onToggle: (id: string, collapse: boolean) => this.toggleSubflow(id, collapse),
+                onResizeEnd: (nodeId: string, w: number, h: number) => {
+                  this.nodes = this.nodes.map((node) => {
+                    if (node.id === nodeId && !node.data.isCollapsed) {
+                      return { ...node, data: { ...node.data, oldWidth: w, oldHeight: h } } as Node;
+                    }
+                    return node;
+                  });
+                },
+              },
+            } as Node;
+          }
+          return n;
+        });
         this.edges = parsedData.edges;
       } else {
         throw new Error("Il file JSON non contiene un formato valido (nodi o edges mancanti).");
