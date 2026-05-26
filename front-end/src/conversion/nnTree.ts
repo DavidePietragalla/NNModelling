@@ -80,10 +80,28 @@ export class NNTree {
       throw new Error("Subflow " + subflowId + " contains a cycle");
     }
 
-    return sorted.map((id) => {
+    const result: ModuleData[] = [];
+
+    for (const id of sorted) {
       const n = internalNodes.find((m: any) => m.id === id)!;
-      return this.nodeToModule(n, diagram);
-    });
+
+      if (this.isSubflowNode(n)) {
+        const innerLayers = this.compileSubflowLayers(diagram, n.id);
+
+        const stereo = diagram.getStereotype(n.data.stereotype as string);
+        const iterations = stereo?.isSubFlow
+          ? parseInt((n.data.params as any)?.iterations?.value ?? "1", 10)
+          : 1;
+
+        const finalInnerLayers = this.unrollLayers(iterations, innerLayers);
+
+        result.push(...finalInnerLayers);
+      } else {
+        result.push(this.nodeToModule(n, diagram));
+      }
+    }
+
+    return result;
   }
 
   private unrollLayers(iterations: number, layers: ModuleData[]): ModuleData[] {
