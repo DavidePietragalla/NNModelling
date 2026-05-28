@@ -661,32 +661,6 @@
       "expandParent": true
     },
     {
-      "id": "61b02251-5c9e-4656-a594-e074292ea48f",
-      "type": "custom",
-      "position": {
-        "x": 135.24506733358305,
-        "y": 827.4813987212112
-      },
-      "width": 100,
-      "height": 50,
-      "data": {
-        "stereotype": "Sigmoid",
-        "name": "Sigmoid_0",
-        "color": "#f4a460",
-        "params": {},
-        "isInput": false,
-        "isLoss": false
-      },
-      "measured": {
-        "width": 100,
-        "height": 50
-      },
-      "selected": false,
-      "dragging": false,
-      "parentId": "subflow_1779203236563",
-      "expandParent": true
-    },
-    {
       "id": "c657fb94-0225-4421-a938-b921e9a1261b",
       "type": "custom",
       "position": {
@@ -780,11 +754,6 @@
       "source": "efb477af-1a67-4b78-8a12-595daeca8520",
       "target": "aec49ebe-9dfc-49d6-b382-7b43272eb49a",
       "id": "xy-edge__efb477af-1a67-4b78-8a12-595daeca8520-aec49ebe-9dfc-49d6-b382-7b43272eb49a"
-    },
-    {
-      "source": "aec49ebe-9dfc-49d6-b382-7b43272eb49a",
-      "target": "61b02251-5c9e-4656-a594-e074292ea48f",
-      "id": "xy-edge__aec49ebe-9dfc-49d6-b382-7b43272eb49a-61b02251-5c9e-4656-a594-e074292ea48f"
     },
     {
       "source": "subflow_1779203236563",
