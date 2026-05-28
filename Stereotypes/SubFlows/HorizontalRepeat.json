@@ -1,0 +1,13 @@
+{
+  "category": "SubFlow",
+  "pythonClassName": "ops.HorizontalRepeat",
+  "expr": "",
+  "view": {
+    "color": "#8e44ad",
+    "width": 400,
+    "height": 300
+  },
+  "params": {
+    "n": { "type": "int", "default": "1" }
+  }
+}

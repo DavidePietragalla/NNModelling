@@ -1,0 +1,199 @@
+{
+  "nodes": [
+    {
+      "id": "input",
+      "type": "custom",
+      "position": { "x": 50, "y": 225 },
+      "width": 30, "height": 30,
+      "data": {
+        "stereotype": "Input",
+        "name": "Input_0",
+        "color": "#27b376",
+        "params": { "out_features": { "value": "64" } },
+        "isInput": true, "isLoss": false
+      }
+    },
+    {
+      "id": "flatten_0",
+      "type": "custom",
+      "position": { "x": 50, "y": 300 },
+      "width": 100, "height": 50,
+      "data": {
+        "stereotype": "Flatten",
+        "name": "Flatten_0",
+        "color": "#a9a9a9",
+        "params": { "start_dim": { "value": "1" }, "end_dim": { "value": "-1" } },
+        "isInput": false, "isLoss": false
+      }
+    },
+    {
+      "id": "subflow_attn_head",
+      "type": "subflow",
+      "position": { "x": 300, "y": 150 },
+      "width": 440, "height": 360,
+      "data": {
+        "label": "subflow_attn_head",
+        "isCollapsed": false,
+        "oldWidth": 440, "oldHeight": 360,
+        "name": "Attention_Head",
+        "color": "#8e44ad",
+        "stereotype": "HorizontalRepeat",
+        "params": { "n": { "value": "4" } }
+      }
+    },
+    {
+      "id": "lin_out",
+      "type": "custom",
+      "position": { "x": 820, "y": 225 },
+      "width": 140, "height": 60,
+      "data": {
+        "stereotype": "Linear",
+        "name": "Linear_out",
+        "color": "#4779c4",
+        "params": {
+          "in_features": { "value": "64", "position": "top" },
+          "out_features": { "value": "64", "position": "bottom" },
+          "bias": { "value": "True" }
+        },
+        "isInput": false, "isLoss": false
+      }
+    },
+    {
+      "id": "loss",
+      "type": "custom",
+      "position": { "x": 1020, "y": 225 },
+      "width": 140, "height": 60,
+      "data": {
+        "stereotype": "MSELoss",
+        "name": "MSELoss_0",
+        "color": "#cd5c5c",
+        "params": { "reduction": { "value": "mean" } },
+        "isInput": false, "isLoss": true
+      }
+    },
+
+    {
+      "id": "fork_h",
+      "type": "custom",
+      "position": { "x": 10, "y": 145 },
+      "width": 30, "height": 30,
+      "data": {
+        "stereotype": "Fork",
+        "name": "Fork_Head",
+        "color": "#95a5a6",
+        "params": {},
+        "isInput": false, "isLoss": false
+      },
+      "parentId": "subflow_attn_head"
+    },
+    {
+      "id": "lin_q",
+      "type": "custom",
+      "position": { "x": 140, "y": 30 },
+      "width": 140, "height": 60,
+      "data": {
+        "stereotype": "Linear",
+        "name": "Linear_Q",
+        "color": "#4779c4",
+        "params": {
+          "in_features": { "value": "64", "position": "top" },
+          "out_features": { "value": "16", "position": "bottom" },
+          "bias": { "value": "True" }
+        },
+        "isInput": false, "isLoss": false
+      },
+      "parentId": "subflow_attn_head"
+    },
+    {
+      "id": "lin_k",
+      "type": "custom",
+      "position": { "x": 140, "y": 130 },
+      "width": 140, "height": 60,
+      "data": {
+        "stereotype": "Linear",
+        "name": "Linear_K",
+        "color": "#4779c4",
+        "params": {
+          "in_features": { "value": "64", "position": "top" },
+          "out_features": { "value": "16", "position": "bottom" },
+          "bias": { "value": "True" }
+        },
+        "isInput": false, "isLoss": false
+      },
+      "parentId": "subflow_attn_head"
+    },
+    {
+      "id": "lin_v",
+      "type": "custom",
+      "position": { "x": 140, "y": 260 },
+      "width": 140, "height": 60,
+      "data": {
+        "stereotype": "Linear",
+        "name": "Linear_V",
+        "color": "#4779c4",
+        "params": {
+          "in_features": { "value": "64", "position": "top" },
+          "out_features": { "value": "16", "position": "bottom" },
+          "bias": { "value": "True" }
+        },
+        "isInput": false, "isLoss": false
+      },
+      "parentId": "subflow_attn_head"
+    },
+    {
+      "id": "join_sdp",
+      "type": "join",
+      "position": { "x": 320, "y": 80 },
+      "data": {
+        "stereotype": "ScaledDotProduct",
+        "name": "ScaledDotProduct",
+        "inputsCount": 2,
+        "color": "#8a2be2",
+        "params": { "d_model": { "value": "16" } }
+      },
+      "parentId": "subflow_attn_head"
+    },
+    {
+      "id": "softmax",
+      "type": "custom",
+      "position": { "x": 320, "y": 180 },
+      "width": 100, "height": 50,
+      "data": {
+        "stereotype": "Softmax",
+        "name": "Softmax",
+        "color": "#f4a460",
+        "params": {},
+        "isInput": false, "isLoss": false
+      },
+      "parentId": "subflow_attn_head"
+    },
+    {
+      "id": "join_mm",
+      "type": "join",
+      "position": { "x": 320, "y": 280 },
+      "data": {
+        "stereotype": "MatMul",
+        "name": "MatMul",
+        "inputsCount": 2,
+        "color": "#8a2be2",
+        "params": {}
+      },
+      "parentId": "subflow_attn_head"
+    }
+  ],
+  "edges": [
+    { "source": "fork_h", "target": "lin_q", "id": "e_fork_q" },
+    { "source": "fork_h", "target": "lin_k", "id": "e_fork_k" },
+    { "source": "fork_h", "target": "lin_v", "id": "e_fork_v" },
+    { "source": "lin_q", "target": "join_sdp", "targetHandle": "in-0", "id": "e_q_sdp" },
+    { "source": "lin_k", "target": "join_sdp", "targetHandle": "in-1", "id": "e_k_sdp" },
+    { "source": "join_sdp", "sourceHandle": "out", "target": "softmax", "id": "e_sdp_sm" },
+    { "source": "softmax", "target": "join_mm", "targetHandle": "in-0", "id": "e_sm_mm" },
+    { "source": "lin_v", "target": "join_mm", "targetHandle": "in-1", "id": "e_v_mm" },
+
+    { "source": "input", "target": "flatten_0", "id": "e_in_flatten" },
+    { "source": "flatten_0", "target": "subflow_attn_head", "id": "e_flatten_sub" },
+    { "source": "subflow_attn_head", "target": "lin_out", "id": "e_sub_out" },
+    { "source": "lin_out", "target": "loss", "id": "e_out_loss" }
+  ]
+}
