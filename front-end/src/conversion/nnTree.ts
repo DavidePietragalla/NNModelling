@@ -42,7 +42,7 @@ export class NNTree {
   }
 
   private compileSubflowGraph(diagram: Diagram, subflowId: string): SubflowGraph {
-    const internalNodes = diagram.nodes.filter((n: any) => n.parentId === subflowId && !n.hidden);
+    const internalNodes = diagram.nodes.filter((n: any) => n.parentId === subflowId);
     if (internalNodes.length === 0) {
       console.warn("Subflow " + subflowId + " has no internal nodes");
       return { entryNode: "", nodes: {} };

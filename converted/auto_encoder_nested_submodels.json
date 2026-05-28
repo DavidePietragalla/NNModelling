@@ -109,8 +109,65 @@
             "children": [
               "efb477af-1a67-4b78-8a12-595daeca8520"
             ],
-            "entryNode": "",
-            "nodes": {}
+            "entryNode": "ff482ddf-8aba-4c96-a91a-f48850752d35",
+            "nodes": {
+              "ff482ddf-8aba-4c96-a91a-f48850752d35": {
+                "type": "module",
+                "name": "Conv2d_3",
+                "stereotype": "Conv2d",
+                "pythonClassName": "nn.Conv2d",
+                "taskType": "",
+                "params": {
+                  "in_channels": {
+                    "value": "8",
+                    "position": "top"
+                  },
+                  "out_channels": {
+                    "value": "16",
+                    "position": "bottom"
+                  },
+                  "kernel_size": {
+                    "value": "3"
+                  },
+                  "stride": {
+                    "value": "1"
+                  },
+                  "padding": {
+                    "value": "1"
+                  },
+                  "dilation": {
+                    "value": "1"
+                  },
+                  "groups": {
+                    "value": "1"
+                  },
+                  "bias": {
+                    "value": "True"
+                  },
+                  "padding_mode": {
+                    "value": "zeros"
+                  },
+                  "device": {
+                    "value": "None"
+                  },
+                  "dtype": {
+                    "value": "None"
+                  }
+                },
+                "children": [
+                  "472d0060-5424-4bee-9f52-3ff4327154c9"
+                ]
+              },
+              "472d0060-5424-4bee-9f52-3ff4327154c9": {
+                "type": "module",
+                "name": "Tanh_3",
+                "stereotype": "Tanh",
+                "pythonClassName": "nn.Tanh",
+                "taskType": "",
+                "params": {},
+                "children": []
+              }
+            }
           },
           "efb477af-1a67-4b78-8a12-595daeca8520": {
             "type": "module",
@@ -333,8 +390,48 @@
             "type": "subflow",
             "pythonClassName": "",
             "children": [],
-            "entryNode": "",
-            "nodes": {}
+            "entryNode": "c66ed008-9463-4166-b867-de1351b61e05",
+            "nodes": {
+              "c66ed008-9463-4166-b867-de1351b61e05": {
+                "type": "module",
+                "name": "Tanh_1",
+                "stereotype": "Tanh",
+                "pythonClassName": "nn.Tanh",
+                "taskType": "",
+                "params": {},
+                "children": [
+                  "c5e5f47b-009a-4963-875b-4606d0cc52fe"
+                ]
+              },
+              "c5e5f47b-009a-4963-875b-4606d0cc52fe": {
+                "type": "module",
+                "name": "MaxPool2d_1",
+                "stereotype": "MaxPool2d",
+                "pythonClassName": "nn.MaxPool2d",
+                "taskType": "",
+                "params": {
+                  "kernel_size": {
+                    "value": "2"
+                  },
+                  "stride": {
+                    "value": "2"
+                  },
+                  "padding": {
+                    "value": "0"
+                  },
+                  "dilation": {
+                    "value": "1"
+                  },
+                  "return_indices": {
+                    "value": "False"
+                  },
+                  "ceil_mode": {
+                    "value": "False"
+                  }
+                },
+                "children": []
+              }
+            }
           }
         }
       }
