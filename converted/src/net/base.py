@@ -94,19 +94,6 @@ class Net(lit.LightningModule):
             else:
                 inp = inputs[0]
 
-                needs_flatten = False
-                if self._is_input(curr_node.get("stereotype", "")):
-                    needs_flatten = True
-                elif curr_node.type == "sequential" and hasattr(curr_node, "layers"):
-                    for l in curr_node.layers:
-                        lt = l.get("_target_", "")
-                        if "Linear" in lt:
-                            needs_flatten = True
-                            break
-
-                if needs_flatten and len(inp.shape) > 2:
-                    inp = inp.view(inp.size(0), -1)
-
                 if curr_id in self.module_dict:
                     out = self.module_dict[curr_id](inp)
                 else:

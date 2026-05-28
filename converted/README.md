@@ -95,7 +95,7 @@ The `Net` class (`LightningModule`) builds a `ModuleDict` dynamically from the c
 
 1. Starts from the root (Input) node
 2. Tracks in-degree to know when all parents of a join node are ready
-3. Auto-flattens before `Linear` layers when input exceeds 2D
+3. Users explicitly place Flatten nodes for dimension adjustment
 4. Supports sequential chains, join merges (Addition, Einsum), and subflow containers
 
 ### `ops/` — Join Operations

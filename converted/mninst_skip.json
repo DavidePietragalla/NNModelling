@@ -286,8 +286,7 @@
     "058e8cff-1165-43d1-a6a3-bcb3ff1f223e": {
       "id": "058e8cff-1165-43d1-a6a3-bcb3ff1f223e",
       "children": [
-        "join_9d59ac58-c8c7-4a20-afe7-0be4e46acee9",
-        "0a95c095-9aea-4050-b773-855bbbdd2b17"
+        "flatten_0"
       ],
       "data": {
         "type": "module",
@@ -297,6 +296,27 @@
         "params": {
           "out_features": {
             "value": "784"
+          }
+        }
+      }
+    },
+    "flatten_0": {
+      "id": "flatten_0",
+      "children": [
+        "join_9d59ac58-c8c7-4a20-afe7-0be4e46acee9",
+        "0a95c095-9aea-4050-b773-855bbbdd2b17"
+      ],
+      "data": {
+        "type": "module",
+        "name": "Flatten_0",
+        "stereotype": "Flatten",
+        "pythonClassName": "nn.Flatten",
+        "params": {
+          "start_dim": {
+            "value": "1"
+          },
+          "end_dim": {
+            "value": "-1"
           }
         }
       }

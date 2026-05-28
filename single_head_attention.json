@@ -3,22 +3,63 @@
     {
       "id": "input",
       "type": "custom",
-      "position": { "x": 50, "y": 225 },
+      "position": {
+        "x": 50,
+        "y": 225
+      },
       "width": 30,
       "height": 30,
       "data": {
         "stereotype": "Input",
         "name": "Input_0",
         "color": "#27b376",
-        "params": { "out_features": { "value": "64" } },
+        "params": {
+          "out_features": {
+            "value": "64"
+          }
+        },
         "isInput": true,
         "isLoss": false
       }
     },
     {
+      "id": "flatten_0",
+      "type": "custom",
+      "position": {
+        "x": 50,
+        "y": 285
+      },
+      "width": 100,
+      "height": 50,
+      "data": {
+        "stereotype": "Flatten",
+        "name": "Flatten_0",
+        "color": "#a9a9a9",
+        "params": {
+          "start_dim": {
+            "value": "1"
+          },
+          "end_dim": {
+            "value": "-1"
+          }
+        },
+        "isInput": false,
+        "isLoss": false
+      },
+      "measured": {
+        "width": 100,
+        "height": 50
+      },
+      "selected": false,
+      "dragging": false
+    },
+    {
       "id": "lin_q",
       "type": "custom",
-      "position": { "x": 250, "y": 50 },
+      "position": {
+        "x": 250,
+        "y": 50
+      },
       "width": 140,
       "height": 60,
       "data": {
@@ -26,9 +67,17 @@
         "name": "Linear_Q",
         "color": "#4779c4",
         "params": {
-          "in_features": { "value": "64", "position": "top" },
-          "out_features": { "value": "64", "position": "bottom" },
-          "bias": { "value": "True" }
+          "in_features": {
+            "value": "64",
+            "position": "top"
+          },
+          "out_features": {
+            "value": "64",
+            "position": "bottom"
+          },
+          "bias": {
+            "value": "True"
+          }
         },
         "isInput": false,
         "isLoss": false
@@ -37,7 +86,10 @@
     {
       "id": "lin_k",
       "type": "custom",
-      "position": { "x": 250, "y": 200 },
+      "position": {
+        "x": 250,
+        "y": 200
+      },
       "width": 140,
       "height": 60,
       "data": {
@@ -45,9 +97,17 @@
         "name": "Linear_K",
         "color": "#4779c4",
         "params": {
-          "in_features": { "value": "64", "position": "top" },
-          "out_features": { "value": "64", "position": "bottom" },
-          "bias": { "value": "True" }
+          "in_features": {
+            "value": "64",
+            "position": "top"
+          },
+          "out_features": {
+            "value": "64",
+            "position": "bottom"
+          },
+          "bias": {
+            "value": "True"
+          }
         },
         "isInput": false,
         "isLoss": false
@@ -56,7 +116,10 @@
     {
       "id": "lin_v",
       "type": "custom",
-      "position": { "x": 250, "y": 350 },
+      "position": {
+        "x": 250,
+        "y": 350
+      },
       "width": 140,
       "height": 60,
       "data": {
@@ -64,9 +127,17 @@
         "name": "Linear_V",
         "color": "#4779c4",
         "params": {
-          "in_features": { "value": "64", "position": "top" },
-          "out_features": { "value": "64", "position": "bottom" },
-          "bias": { "value": "True" }
+          "in_features": {
+            "value": "64",
+            "position": "top"
+          },
+          "out_features": {
+            "value": "64",
+            "position": "bottom"
+          },
+          "bias": {
+            "value": "True"
+          }
         },
         "isInput": false,
         "isLoss": false
@@ -75,19 +146,29 @@
     {
       "id": "join_sdp",
       "type": "join",
-      "position": { "x": 500, "y": 125 },
+      "position": {
+        "x": 500,
+        "y": 125
+      },
       "data": {
         "stereotype": "ScaledDotProduct",
         "name": "ScaledDotProduct",
         "inputsCount": 2,
         "color": "#8a2be2",
-        "params": { "d_model": { "value": "64" } }
+        "params": {
+          "d_model": {
+            "value": "64"
+          }
+        }
       }
     },
     {
       "id": "softmax",
       "type": "custom",
-      "position": { "x": 700, "y": 125 },
+      "position": {
+        "x": 700,
+        "y": 125
+      },
       "width": 100,
       "height": 50,
       "data": {
@@ -102,7 +183,10 @@
     {
       "id": "join_matmul",
       "type": "join",
-      "position": { "x": 900, "y": 250 },
+      "position": {
+        "x": 900,
+        "y": 250
+      },
       "data": {
         "stereotype": "MatMul",
         "name": "MatMul",
@@ -114,7 +198,10 @@
     {
       "id": "lin_out",
       "type": "custom",
-      "position": { "x": 1100, "y": 250 },
+      "position": {
+        "x": 1100,
+        "y": 250
+      },
       "width": 140,
       "height": 60,
       "data": {
@@ -122,9 +209,17 @@
         "name": "Linear_out",
         "color": "#4779c4",
         "params": {
-          "in_features": { "value": "64", "position": "top" },
-          "out_features": { "value": "64", "position": "bottom" },
-          "bias": { "value": "True" }
+          "in_features": {
+            "value": "64",
+            "position": "top"
+          },
+          "out_features": {
+            "value": "64",
+            "position": "bottom"
+          },
+          "bias": {
+            "value": "True"
+          }
         },
         "isInput": false,
         "isLoss": false
@@ -133,35 +228,27 @@
     {
       "id": "loss",
       "type": "custom",
-      "position": { "x": 1300, "y": 250 },
+      "position": {
+        "x": 1300,
+        "y": 250
+      },
       "width": 140,
       "height": 60,
       "data": {
         "stereotype": "MSELoss",
         "name": "MSELoss_0",
         "color": "#cd5c5c",
-        "params": { "reduction": { "value": "mean" } },
+        "params": {
+          "reduction": {
+            "value": "mean"
+          }
+        },
         "isInput": false,
         "isLoss": true
       }
     }
   ],
   "edges": [
-    {
-      "source": "input",
-      "target": "lin_q",
-      "id": "e_input_q"
-    },
-    {
-      "source": "input",
-      "target": "lin_k",
-      "id": "e_input_k"
-    },
-    {
-      "source": "input",
-      "target": "lin_v",
-      "id": "e_input_v"
-    },
     {
       "source": "lin_q",
       "target": "join_sdp",
@@ -202,6 +289,30 @@
       "source": "lin_out",
       "target": "loss",
       "id": "e_out_loss"
+    },
+    {
+      "source": "input",
+      "target": "flatten_0",
+      "id": "xy-edge__input-flatten_0",
+      "selected": false
+    },
+    {
+      "source": "flatten_0",
+      "target": "lin_q",
+      "id": "xy-edge__flatten_0-lin_q",
+      "selected": false
+    },
+    {
+      "source": "flatten_0",
+      "target": "lin_k",
+      "id": "xy-edge__flatten_0-lin_k",
+      "selected": false
+    },
+    {
+      "source": "flatten_0",
+      "target": "lin_v",
+      "id": "xy-edge__flatten_0-lin_v",
+      "selected": false
     }
   ]
 }

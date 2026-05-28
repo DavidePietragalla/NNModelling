@@ -42,8 +42,7 @@ Today's sprint focuses on two core engineering objectives:
 
 ### Phase 2c: Sequence/Attention Data Support (NEW — blocker per Transformer)
 
-- [ ] **Fix auto-flatten in `base.py:forward`**: L'auto-flatten cerca `"Linear"` in `_target_` e appiattisce qualsiasi input 3D+ a 2D prima del Linear. Per sequence data `(batch, seq, features)` questo distrugge la dimensione temporale. Serve una logica che non appiattisca quando il tensore è già 2D (batch, features) o quando il task è sequence-based.
-- [ ] **Test 3D forward pass**: Creare un test che passa dati 3D `(2, 8, 64)` attraverso una catena Linear → Attention → Linear e verifica che le dimensioni `(batch, seq, d_model)` siano preservate.
+- [x] **Remove auto-flatten in `base.py:forward`**: Rimosso auto-flatten hardcodato. Flatten è ora uno stereotipo esplicito (Flatten.json). L'utente decide dove metterlo. Aggiornati tutti i diagrammi JSON esistenti che usavano l'auto-flatten implicito.
 
 ### Phase 3: E2E Integration & Verification (Est: 1 hr)
 

@@ -29,6 +29,37 @@
       "dragging": false
     },
     {
+      "id": "flatten_0",
+      "type": "custom",
+      "position": {
+        "x": 785,
+        "y": 87
+      },
+      "width": 100,
+      "height": 50,
+      "data": {
+        "stereotype": "Flatten",
+        "name": "Flatten_0",
+        "color": "#a9a9a9",
+        "params": {
+          "start_dim": {
+            "value": "1"
+          },
+          "end_dim": {
+            "value": "-1"
+          }
+        },
+        "isInput": false,
+        "isLoss": false
+      },
+      "measured": {
+        "width": 100,
+        "height": 50
+      },
+      "selected": false,
+      "dragging": false
+    },
+    {
       "id": "e79454bb-cb99-4681-89df-6c31fd9abfb0",
       "type": "custom",
       "position": {
@@ -315,8 +346,14 @@
   "edges": [
     {
       "source": "058e8cff-1165-43d1-a6a3-bcb3ff1f223e",
+      "target": "flatten_0",
+      "id": "xy-edge__058e8cff-1165-43d1-a6a3-bcb3ff1f223e-flatten_0",
+      "selected": false
+    },
+    {
+      "source": "flatten_0",
       "target": "e79454bb-cb99-4681-89df-6c31fd9abfb0",
-      "id": "xy-edge__058e8cff-1165-43d1-a6a3-bcb3ff1f223e-e79454bb-cb99-4681-89df-6c31fd9abfb0",
+      "id": "xy-edge__flatten_0-e79454bb-cb99-4681-89df-6c31fd9abfb0",
       "selected": false
     },
     {
