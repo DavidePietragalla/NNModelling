@@ -21,6 +21,7 @@ export function node(
     isInput?: boolean;
     isLoss?: boolean;
     parentId?: string;
+    hidden?: boolean;
   },
 ): Node {
   return {
@@ -28,6 +29,7 @@ export function node(
     type: overrides?.type ?? "custom",
     position: { x: 0, y: 0 },
     parentId: overrides?.parentId,
+    hidden: overrides?.hidden,
     data: {
       stereotype,
       name,

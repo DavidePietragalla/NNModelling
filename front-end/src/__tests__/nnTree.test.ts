@@ -990,3 +990,76 @@ describe("NNTree — subflow should be type subflow (TARGET)", () => {
     expect(subflowNode.data.nodes.lin).toBeDefined();
   });
 });
+
+// ---------------------------------------------------------------------------
+// Hidden nodes inside subflow should still be compiled
+// ---------------------------------------------------------------------------
+
+describe("NNTree — hidden nodes inside subflow are preserved", () => {
+  function hiddenSubflowFixture() {
+    const nodes: Node[] = [
+      node("input", "Input", "Input_0", { out_features: { value: "784" } }, { isInput: true, color: "#27b376" }),
+      node("sub1", "", "Sub_0", {}, { type: "subflow", color: "#9b59b6" }),
+      node("lin", "Linear", "Linear_0", { out_features: { value: "10" } }, { parentId: "sub1", color: "#4779c4" }),
+      node("tan", "Tanh", "Tanh_0", {}, { parentId: "sub1", color: "#f4a460", hidden: true }),
+      node("loss", "CrossEntropyLoss", "CrossEntropyLoss_0", {}, { color: "#cd5c5c", isLoss: true }),
+    ];
+    const edges: Edge[] = [
+      edge("e1", "input", "sub1"),
+      edge("e2", "sub1", "loss"),
+      edge("e3", "lin", "tan"),
+    ];
+    return { nodes, edges };
+  }
+
+  const { nodes, edges } = hiddenSubflowFixture();
+  const d = new Diagram();
+  d.nodes = nodes;
+  d.edges = edges;
+  const tree = new NNTree(d);
+
+  it("includes hidden internal node in subflow graph", () => {
+    const sub1 = tree.nodes.get("sub1")!;
+    expect(sub1.isSubflow()).toBe(true);
+    const sf = sub1.data as SubflowData;
+    expect(sf.nodes.tan).toBeDefined();
+    expect(sf.nodes.tan.stereotype).toBe("Tanh");
+  });
+
+  it("preserves topological order with hidden nodes", () => {
+    const sub1 = tree.nodes.get("sub1")!;
+    const sf = sub1.data as SubflowData;
+    expect(sf.entryNode).toBe("lin");
+    expect(Object.keys(sf.nodes)).toHaveLength(2);
+    expect(sf.nodes.lin.children).toContain("tan");
+    expect(sf.nodes.tan.children).toEqual([]);
+  });
+
+  it("serialized JSON includes hidden nodes", () => {
+    const json = JSON.parse(tree.toJson());
+    const subflowNode = json.nodes.sub1;
+    expect(subflowNode.data.nodes.tan).toBeDefined();
+    expect(subflowNode.data.nodes.tan.stereotype).toBe("Tanh");
+  });
+
+  it("hidden flag is UI-only, does not affect conversion", () => {
+    const d2 = new Diagram();
+    d2.nodes = [
+      node("input", "Input", "Input_0", { out_features: { value: "784" } }, { isInput: true, color: "#27b376" }),
+      node("sub1", "", "Sub_0", {}, { type: "subflow", color: "#9b59b6" }),
+      node("lin", "Linear", "Linear_0", { out_features: { value: "10" } }, { parentId: "sub1", color: "#4779c4" }),
+      node("tan", "Tanh", "Tanh_0", {}, { parentId: "sub1", color: "#f4a460" }),
+      node("loss", "CrossEntropyLoss", "CrossEntropyLoss_0", {}, { color: "#cd5c5c", isLoss: true }),
+    ];
+    d2.edges = [
+      edge("e1", "input", "sub1"),
+      edge("e2", "sub1", "loss"),
+      edge("e3", "lin", "tan"),
+    ];
+    const tree2 = new NNTree(d2);
+    const sub1 = tree2.nodes.get("sub1")!;
+    const sf = sub1.data as SubflowData;
+    expect(Object.keys(sf.nodes)).toHaveLength(2);
+    expect(sf.nodes.tan).toBeDefined();
+  });
+});
