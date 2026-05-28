@@ -1063,3 +1063,103 @@ describe("NNTree — hidden nodes inside subflow are preserved", () => {
     expect(sf.nodes.tan).toBeDefined();
   });
 });
+
+// ---------------------------------------------------------------------------
+// Fork node — passthrough with implicit fork to N children
+// ---------------------------------------------------------------------------
+
+describe("NNTree — Fork node", () => {
+  it("Fork with 2 children creates standalone module node", () => {
+    const d = new Diagram();
+    d.nodes = [
+      node("input", "Input", "Input_0", { out_features: { value: "784" } }, { isInput: true, color: "#27b376" }),
+      node("fork", "Fork", "Fork_0", {}, { color: "#95a5a6" }),
+      node("lin_a", "Linear", "Linear_a", { in_features: { value: "784" }, out_features: { value: "128" } }, { color: "#4779c4" }),
+      node("lin_b", "Linear", "Linear_b", { in_features: { value: "784" }, out_features: { value: "128" } }, { color: "#4779c4" }),
+      node("loss", "CrossEntropyLoss", "CrossEntropyLoss_0", {}, { color: "#cd5c5c", isLoss: true }),
+    ];
+    d.edges = [
+      edge("e1", "input", "fork"),
+      edge("e2", "fork", "lin_a"),
+      edge("e3", "fork", "lin_b"),
+      edge("e4", "lin_a", "loss"),
+      edge("e5", "lin_b", "loss"),
+    ];
+    const tree = new NNTree(d);
+    const forkNode = tree.nodes.get("fork")!;
+    expect(forkNode).toBeDefined();
+    expect(forkNode.isModule()).toBe(true);
+    expect(forkNode.children).toHaveLength(2);
+    expect(forkNode.children).toContain("lin_a");
+    expect(forkNode.children).toContain("lin_b");
+    // root is Input sequential, not fork
+    expect(tree.root).toBe("input");
+  });
+
+  it("Fork inside subflow creates implicit fork", () => {
+    const d = new Diagram();
+    d.nodes = [
+      node("input", "Input", "Input_0", { out_features: { value: "784" } }, { isInput: true, color: "#27b376" }),
+      node("sub1", "", "Sub_0", {}, { type: "subflow", color: "#9b59b6" }),
+      node("fork", "Fork", "Fork_0", {}, { parentId: "sub1", color: "#95a5a6" }),
+      node("lin", "Linear", "Linear_0", { in_features: { value: "10" }, out_features: { value: "5" } }, { parentId: "sub1", color: "#4779c4" }),
+      node("tan", "Tanh", "Tanh_0", {}, { parentId: "sub1", color: "#f4a460" }),
+      node("add", "Addition", "Addition", {}, { parentId: "sub1", color: "#888888" }),
+      node("loss", "CrossEntropyLoss", "CrossEntropyLoss_0", {}, { color: "#cd5c5c", isLoss: true }),
+    ];
+    d.edges = [
+      edge("e1", "input", "sub1"),
+      edge("e2", "sub1", "loss"),
+      // internal: Fork forks to Linear and directly to Addition
+      edge("e3", "fork", "lin"),
+      edge("e4", "lin", "tan"),
+      edge("e5", "tan", "add"),
+      edge("e6", "fork", "add"),
+    ];
+    const tree = new NNTree(d);
+    const sub1 = tree.nodes.get("sub1")!;
+    expect(sub1.isSubflow()).toBe(true);
+    const sf = sub1.data as SubflowData;
+    expect(sf.entryNode).toBe("fork");
+    expect(Object.keys(sf.nodes)).toHaveLength(4);
+    // Fork has 2 children inside subflow
+    expect(sf.nodes.fork.children).toHaveLength(2);
+    expect(sf.nodes.fork.children).toContain("lin");
+    expect(sf.nodes.fork.children).toContain("add");
+    // Fork has pythonClassName defined
+    expect(sf.nodes.fork.pythonClassName).toBeDefined();
+  });
+
+  it("Fork with single child stays standalone (not folded into sequential)", () => {
+    const d = new Diagram();
+    d.nodes = [
+      node("input", "Input", "Input_0", { out_features: { value: "784" } }, { isInput: true, color: "#27b376" }),
+      node("fork", "Fork", "Fork_0", {}, { color: "#95a5a6" }),
+      node("lin", "Linear", "Linear_0", { out_features: { value: "10" } }, { color: "#4779c4" }),
+      node("loss", "CrossEntropyLoss", "CrossEntropyLoss_0", {}, { color: "#cd5c5c", isLoss: true }),
+    ];
+    d.edges = [
+      edge("e1", "input", "fork"),
+      edge("e2", "fork", "lin"),
+      edge("e3", "lin", "loss"),
+    ];
+    const tree = new NNTree(d);
+    // Fork esiste come nodo separato nell'albero
+    expect(tree.nodes.has("fork")).toBe(true);
+    const forkNode = tree.nodes.get("fork")!;
+    // createSequential folda lin nei layers: [Fork_0, Linear_0]
+    expect(forkNode.isSequential()).toBe(true);
+    const fd = forkNode.data as SequentialData;
+    expect(fd.layers).toHaveLength(2);
+    expect(fd.layers[0].stereotype).toBe("Fork");
+    expect(fd.layers[1].stereotype).toBe("Linear");
+    // children vuoto perché loss è assorbito come lossNode globale
+    expect(forkNode.children).toHaveLength(0);
+    // Sequential dell'Input NON deve contenere Fork
+    const rootNode = tree.nodes.get(tree.root)!;
+    expect(rootNode.isSequential()).toBe(true);
+    const rd = rootNode.data as SequentialData;
+    const forkLayers = rd.layers.filter(l => l.stereotype === "Fork");
+    expect(forkLayers).toHaveLength(0);
+  });
+});

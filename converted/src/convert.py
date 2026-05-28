@@ -39,7 +39,7 @@ def build_layer_config(layer_data: dict[str, Any]) -> dict[str, Any]:
     stereotype = layer_data.get("stereotype", "")
     config = {"stereotype": stereotype}
 
-    if stereotype.lower() != "input":
+    if stereotype.lower() not in ("input", "fork"):
         python_class_name = layer_data.get("pythonClassName", stereotype)
         if python_class_name.startswith("nn."):
             config["_target_"] = "torch." + python_class_name

@@ -153,6 +153,9 @@ export class NNTree {
       if (this.isSubflowNode(child)) {
         break;
       }
+      if (child.data.stereotype === "Fork") {
+        break;
+      }
       visited.add(child.id);
       childs = diagram.getChilds(child.id);
       if (childs.length === 0) {

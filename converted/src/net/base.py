@@ -53,7 +53,7 @@ class Net(lit.LightningModule):
         return "loss" in name.lower()
 
     def _is_input(self, name: str) -> bool:
-        return name.lower() == "input"
+        return name.lower() in ("input", "fork")
 
     def _build_metric(self):
         loss_node = self.cfg.net.get("lossNode")
