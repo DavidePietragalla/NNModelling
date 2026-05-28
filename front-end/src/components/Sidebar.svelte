@@ -70,7 +70,7 @@
       form.color = (vnode.data.color as string) || "#9b59b6";
       form.width = vnode.width || 400;
       form.height = vnode.height || 300;
-      form.params = JSON.parse(JSON.stringify(vnode.data.params || {}));
+      form.params = {};
     } else {
       // Gestione standard per nodi Custom
       const stereotypeName = vnode.data.stereotype as string;
@@ -79,7 +79,19 @@
       form.color = (vnode.data.color as string) || "#4779c4";
       form.width = vnode.width || 140;
       form.height = vnode.height || 60;
-      form.params = JSON.parse(JSON.stringify(vnode.data.params || {}));
+      form.params = {};
+    }
+
+    // Build params from stereotype defaults, then override with stored values
+    if (selection) {
+      let merged: Record<string, any> = {};
+      for (const [key, prop] of Object.entries(selection.parameters || {})) {
+        merged[key] = { value: prop.default, position: prop.position };
+      }
+      for (const [key, val] of Object.entries(vnode.data.params || {})) {
+        merged[key] = JSON.parse(JSON.stringify(val));
+      }
+      form.params = merged;
     }
   }
 
