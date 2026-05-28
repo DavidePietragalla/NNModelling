@@ -80,6 +80,15 @@ export class NNTree {
       throw new Error("Subflow " + subflowId + " contains a cycle");
     }
 
+    // Build input ordering for joins from edge targetHandles
+    const targetInputs: Record<string, string[]> = {};
+    for (const e of internalEdges) {
+      const t = e.target;
+      const h = parseInt((e.targetHandle || "in-0").replace("in-", ""));
+      if (!targetInputs[t]) targetInputs[t] = [];
+      targetInputs[t][h] = e.source;
+    }
+
     const nodesMap: Record<string, InternalNodeData> = {};
 
     for (const id of sorted) {
@@ -109,6 +118,7 @@ export class NNTree {
           taskType: this.getTaskType(diagram, n),
           params: n.data.params,
           children,
+          ...(isJoinNode ? { inputs: targetInputs[id] || [] } : {}),
         };
       }
     }
@@ -347,6 +357,7 @@ export interface InternalNodeData {
   taskType?: string;
   params: any;
   children: string[];
+  inputs?: string[];
   entryNode?: string;
   nodes?: Record<string, InternalNodeData>;
 }

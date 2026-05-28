@@ -75,6 +75,7 @@ def _build_nested_subflow_config(data: dict[str, Any]) -> dict[str, Any]:
         int_type = int_data.get("type", "")
         if int_type in ("module", "join"):
             int_cfg = build_layer_config(int_data)
+            int_cfg["inputs"] = int_data.get("inputs", [])
         elif int_type == "subflow":
             int_cfg = _build_nested_subflow_config(int_data)
         else:
@@ -129,6 +130,7 @@ def build_hydra_configs(json_path: str, output_dir: str = "cfg", num_classes: in
             node_config["layer"] = build_layer_config(node_info["data"])
         elif node_type == "join":
             node_config["layer"] = build_layer_config(node_info["data"])
+            node_config["inputs"] = node_info["data"].get("inputs", [])
         elif node_type == "subflow":
             data = node_info["data"]
             python_class = data.get("pythonClassName", "")
@@ -143,6 +145,7 @@ def build_hydra_configs(json_path: str, output_dir: str = "cfg", num_classes: in
                 int_type = int_data.get("type", "")
                 if int_type in ("module", "join"):
                     int_cfg = build_layer_config(int_data)
+                    int_cfg["inputs"] = int_data.get("inputs", [])
                 elif int_type == "subflow":
                     int_cfg = _build_nested_subflow_config(int_data)
                 else:

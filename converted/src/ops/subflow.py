@@ -9,6 +9,11 @@ class Subflow(nn.Module):
     Receives entry_node + internal_nodes from Hydra with _recursive_: false,
     so internal_nodes is a raw DictConfig. Subflow manually instantiates
     each internal node's module and manages the DAG execution.
+
+    Join inputs are ordered by edge targetHandle ("in-0", "in-1", ...)
+    preserved from the diagram via the ``inputs`` config field, not by
+    BFS traversal order. This ensures non-commutative joins (MatMul,
+    ScaledDotProduct, etc.) receive correct argument order.
     """
 
     def __init__(self, entry_node: str, internal_nodes: dict, **kwargs):
@@ -16,6 +21,7 @@ class Subflow(nn.Module):
         self.entry_node = entry_node
         self.internal_nodes = internal_nodes
         self.module_dict = nn.ModuleDict()
+        self.input_order: dict[str, list[str]] = {}
 
         for node_id, cfg in internal_nodes.items():
             if isinstance(cfg, DictConfig):
@@ -26,6 +32,9 @@ class Subflow(nn.Module):
             layer_dict.pop("taskType", None)
             layer_dict.pop("children", None)
             layer_dict.pop("type", None)
+            inputs_list = layer_dict.pop("inputs", None)
+            if inputs_list:
+                self.input_order[node_id] = inputs_list
             if "_target_" in layer_dict:
                 self.module_dict[node_id] = instantiate(layer_dict)
 
@@ -38,7 +47,9 @@ class Subflow(nn.Module):
                 self.in_degrees[child_id] = self.in_degrees.get(child_id, 0) + 1
 
     def forward(self, x):
-        node_inputs: dict[str, list] = {self.entry_node: [x]}
+        # node_inputs[target_id] = {source_id: tensor} — dict so we can
+        # reorder join inputs by handle instead of BFS arrival order.
+        node_inputs: dict[str, dict] = {self.entry_node: {"_in": x}}
         processed: dict[str, int] = {n: 0 for n in self.in_degrees}
         queue = [self.entry_node]
         final = x
@@ -53,20 +64,25 @@ class Subflow(nn.Module):
             node_type = cfg.get("type", "") if isinstance(cfg, dict) else cfg.type
             children = cfg.get("children", []) if isinstance(cfg, dict) else cfg.get("children", [])
 
-            inputs = node_inputs.get(curr, [x])
+            inputs = node_inputs.get(curr, {"_in": x})
 
             if node_type == "join":
-                out = self.module_dict[curr](inputs) if curr in self.module_dict else inputs[0]
+                if curr in self.input_order:
+                    ordered = [inputs.get(pid) for pid in self.input_order[curr]]
+                    ordered = [t for t in ordered if t is not None]
+                else:
+                    ordered = list(inputs.values())
+                out = self.module_dict[curr](ordered) if curr in self.module_dict else ordered[0]
             else:
-                inp = inputs[0]
+                inp = next(iter(inputs.values()))
                 out = self.module_dict[curr](inp) if curr in self.module_dict else inp
 
             final = out
 
             for child_id in children:
                 if child_id not in node_inputs:
-                    node_inputs[child_id] = []
-                node_inputs[child_id].append(out)
+                    node_inputs[child_id] = {}
+                node_inputs[child_id][curr] = out
                 processed[child_id] = processed.get(child_id, 0) + 1
                 if processed[child_id] == self.in_degrees.get(child_id, 1):
                     queue.append(child_id)

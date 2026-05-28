@@ -12,6 +12,7 @@ class Net(lit.LightningModule):
         self.save_hyperparameters()
         self.cfg = cfg
         self.module_dict = nn.ModuleDict()
+        self.input_order: dict[str, list[str]] = {}
 
         def instantiate_layer(layer_config):
             layer_dict = OmegaConf.to_container(layer_config, resolve=True)
@@ -39,6 +40,9 @@ class Net(lit.LightningModule):
                         self.module_dict[node_id] = instantiate_layer(node.layer)
                 elif node.type == "join" and hasattr(node, "layer"):
                     self.module_dict[node_id] = instantiate_layer(node.layer)
+                    inputs_list = node.get("inputs", [])
+                    if inputs_list:
+                        self.input_order[node_id] = inputs_list
                 elif node.type == "subflow":
                     self.module_dict[node_id] = instantiate(node)
 
@@ -72,7 +76,9 @@ class Net(lit.LightningModule):
 
     def forward(self, x):
         root_id = self.cfg.net.root
-        node_inputs = {root_id: [x]}
+        # dict keyed by source node ID (not list) — preserves parent identity
+        # for join input ordering via self.input_order.
+        node_inputs: dict[str, dict] = {root_id: {"_in": x}}
         in_degrees = self._compute_in_degrees()
         processed_count = {node_id: 0 for node_id in in_degrees}
 
@@ -85,14 +91,19 @@ class Net(lit.LightningModule):
             inputs = node_inputs[curr_id]
 
             if curr_node.type == "join":
+                if curr_id in self.input_order:
+                    ordered = [inputs.get(pid) for pid in self.input_order[curr_id]]
+                    ordered = [t for t in ordered if t is not None]
+                else:
+                    ordered = list(inputs.values())
                 if curr_id in self.module_dict:
-                    out = self.module_dict[curr_id](inputs)
+                    out = self.module_dict[curr_id](ordered)
                 else:
                     raise NotImplementedError(
                         f"Join node {curr_id} has no instantiated module"
                     )
             else:
-                inp = inputs[0]
+                inp = next(iter(inputs.values()))
 
                 if curr_id in self.module_dict:
                     out = self.module_dict[curr_id](inp)
@@ -103,8 +114,8 @@ class Net(lit.LightningModule):
 
             for child_id in curr_node.children:
                 if child_id not in node_inputs:
-                    node_inputs[child_id] = []
-                node_inputs[child_id].append(out)
+                    node_inputs[child_id] = {}
+                node_inputs[child_id][curr_id] = out
                 processed_count[child_id] += 1
 
                 if processed_count[child_id] == in_degrees[child_id]:

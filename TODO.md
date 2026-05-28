@@ -46,6 +46,14 @@ Today's sprint focuses on two core engineering objectives:
 - [x] **PositionalEncoding Module op**: sinusoidal sin/cos PE table as non-trainable buffer. Files: `converted/src/ops/positional_encoding.py`, `Stereotypes/Modules/PositionalEncoding.json`.
 - [ ] **Add `join_type` param to HorizontalRepeat**: support `concat` (current), `add`, `mean`, `max`, `mul`. Update op, convert.py, and stereotype JSON. See `ops/horizontal_repeat.py` docstring — join is currently hardcoded to concat on dim=-1.
 
+- [x] **SequencePool Module op**: mean pooling [batch, seq, d] → [batch, d]. Files: `converted/src/ops/sequence_pool.py`, `Stereotypes/Modules/SequencePool.json`.
+- [ ] **Transformer classifier diagram**: full BERT-style model for EnronSpam. Svelte Flow JSON format.
+- [ ] **E2E training test**: run `convert.py` → `main.py` on EnronSpam to validate pipeline.
+
+### Phase 2f: Join input ordering — targetHandle preservation (DONE)
+
+- [x] **Join ordering fix**: Join inputs now ordered by `targetHandle` ("in-N") from diagram edges, not BFS arrival order. Fixes non-commutative joins (MatMul, ScaledDotProduct). Changes: nnTree.ts (add `inputs` to InternalNodeData), convert.py (preserve `inputs`), subflow.py + base.py (dict-based accumulation + ordered join dispatch).
+
 - [x] **Remove auto-flatten in `base.py:forward`**: Rimosso auto-flatten hardcodato. Flatten è ora uno stereotipo esplicito (Flatten.json). L'utente decide dove metterlo. Aggiornati tutti i diagrammi JSON esistenti che usavano l'auto-flatten implicito.
 
 ### Phase 3: E2E Integration & Verification (Est: 1 hr)

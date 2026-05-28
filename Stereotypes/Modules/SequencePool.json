@@ -1,0 +1,12 @@
+{
+  "category": "SequencePool",
+  "pythonClassName": "ops.SequencePool",
+  "params": {
+    "dim": { "type": "int", "default": "1" }
+  },
+  "view": {
+    "color": "#3498db",
+    "width": 30,
+    "height": 30
+  }
+}

@@ -28,9 +28,12 @@ class HorizontalRepeat(nn.Module):
             Subflow(entry_node=entry_node, internal_nodes=internal_nodes)
             for _ in range(n)
         ])
-        # Reference module on meta device for functional_call
-        self.base = Subflow(entry_node=entry_node, internal_nodes=internal_nodes)
-        self.base.to("meta")
+        # Reference module on meta device for functional_call.
+        # Stored as plain attribute (not registered submodule) so Lightning/.to()
+        # won't try to move meta tensors — base is structure-only, no real weights.
+        _base = Subflow(entry_node=entry_node, internal_nodes=internal_nodes)
+        _base.to("meta")
+        object.__setattr__(self, "base", _base)
 
     def forward(self, x: torch.Tensor) -> torch.Tensor:
         if self.n == 1:
