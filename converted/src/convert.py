@@ -58,6 +58,33 @@ def build_layer_config(layer_data: dict[str, Any]) -> dict[str, Any]:
     return config
 
 
+def _build_nested_subflow_config(data: dict[str, Any]) -> dict[str, Any]:
+    """Builds config for a nested subflow inside another subflow."""
+    config: dict[str, Any] = {
+        "entry_node": data["entryNode"],
+        "internal_nodes": {},
+    }
+    python_class = data.get("pythonClassName", "")
+    if python_class and python_class != "None" and "." in python_class:
+        config["_target_"] = python_class
+    else:
+        config["_target_"] = "ops.Subflow"
+    config["_recursive_"] = False
+    config.update(parse_params(data.get("params", {})))
+    for int_id, int_data in data.get("nodes", {}).items():
+        int_type = int_data.get("type", "")
+        if int_type in ("module", "join"):
+            int_cfg = build_layer_config(int_data)
+        elif int_type == "subflow":
+            int_cfg = _build_nested_subflow_config(int_data)
+        else:
+            continue
+        int_cfg["type"] = int_type
+        int_cfg["children"] = int_data.get("children", [])
+        config["internal_nodes"][int_id] = int_cfg
+    return config
+
+
 def build_hydra_configs(json_path: str, output_dir: str = "cfg", num_classes: int | None = None,
                         dataset: str = "dataset.mnist.MNISTDataset",
                         early_stop_patience: int = 3, early_stop_min_delta: float = 0.0,
@@ -102,6 +129,28 @@ def build_hydra_configs(json_path: str, output_dir: str = "cfg", num_classes: in
             node_config["layer"] = build_layer_config(node_info["data"])
         elif node_type == "join":
             node_config["layer"] = build_layer_config(node_info["data"])
+        elif node_type == "subflow":
+            data = node_info["data"]
+            python_class = data.get("pythonClassName", "")
+            if python_class and python_class != "None" and "." in python_class:
+                node_config["_target_"] = python_class
+            else:
+                node_config["_target_"] = "ops.Subflow"
+            node_config["_recursive_"] = False
+            node_config["entry_node"] = data["entryNode"]
+            node_config["internal_nodes"] = {}
+            for int_id, int_data in data.get("nodes", {}).items():
+                int_type = int_data.get("type", "")
+                if int_type in ("module", "join"):
+                    int_cfg = build_layer_config(int_data)
+                elif int_type == "subflow":
+                    int_cfg = _build_nested_subflow_config(int_data)
+                else:
+                    continue
+                int_cfg["type"] = int_type
+                int_cfg["children"] = int_data.get("children", [])
+                node_config["internal_nodes"][int_id] = int_cfg
+            node_config.update(parse_params(data.get("params", {})))
 
         net_config_dict["nodes"][node_id] = node_config
 
