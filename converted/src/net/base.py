@@ -39,6 +39,8 @@ class Net(lit.LightningModule):
                         self.module_dict[node_id] = instantiate_layer(node.layer)
                 elif node.type == "join" and hasattr(node, "layer"):
                     self.module_dict[node_id] = instantiate_layer(node.layer)
+                elif node.type == "subflow":
+                    self.module_dict[node_id] = instantiate(node)
 
         if cfg.net.get("lossNode"):
             self.loss_fn = instantiate_layer(cfg.net.lossNode)
