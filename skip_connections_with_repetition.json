@@ -29,11 +29,41 @@
       "dragging": false
     },
     {
+      "id": "subflow_1779967414160",
+      "type": "subflow",
+      "position": {
+        "x": 636.9868598464004,
+        "y": -633.7136091494676
+      },
+      "data": {
+        "label": "subflow_1779967414160",
+        "isCollapsed": false,
+        "oldWidth": 438,
+        "oldHeight": 341,
+        "name": "subflow_1779967414160",
+        "color": "#9b59b6",
+        "stereotype": "Repeat",
+        "params": {
+          "iterations": {
+            "value": "10"
+          }
+        }
+      },
+      "width": 438,
+      "height": 341,
+      "measured": {
+        "width": 438,
+        "height": 341
+      },
+      "selected": false,
+      "dragging": false
+    },
+    {
       "id": "flatten_0",
       "type": "custom",
       "position": {
-        "x": 900,
-        "y": -250
+        "x": 801.3234940989641,
+        "y": -727.3189122654762
       },
       "width": 100,
       "height": 50,
@@ -57,7 +87,8 @@
         "height": 50
       },
       "selected": false,
-      "dragging": false
+      "dragging": false,
+      "expandParent": false
     },
     {
       "id": "e79454bb-cb99-4681-89df-6c31fd9abfb0",
@@ -338,36 +369,6 @@
       "measured": {
         "width": 160,
         "height": 60
-      },
-      "selected": false,
-      "dragging": false
-    },
-    {
-      "id": "subflow_1779967414160",
-      "type": "subflow",
-      "position": {
-        "x": 636.9868598464004,
-        "y": -633.7136091494676
-      },
-      "data": {
-        "label": "subflow_1779967414160",
-        "isCollapsed": false,
-        "oldWidth": 438,
-        "oldHeight": 341,
-        "name": "subflow_1779967414160",
-        "color": "#9b59b6",
-        "stereotype": "Repeat",
-        "params": {
-          "iterations": {
-            "value": "10"
-          }
-        }
-      },
-      "width": 438,
-      "height": 341,
-      "measured": {
-        "width": 438,
-        "height": 341
       },
       "selected": false,
       "dragging": false
