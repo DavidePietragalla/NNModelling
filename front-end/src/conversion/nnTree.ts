@@ -41,11 +41,11 @@ export class NNTree {
     } as ModuleData;
   }
 
-  private compileSubflowLayers(diagram: Diagram, subflowId: string): ModuleData[] {
+  private compileSubflowGraph(diagram: Diagram, subflowId: string): SubflowGraph {
     const internalNodes = diagram.nodes.filter((n: any) => n.parentId === subflowId && !n.hidden);
     if (internalNodes.length === 0) {
       console.warn("Subflow " + subflowId + " has no internal nodes");
-      return [];
+      return { entryNode: "", nodes: {} };
     }
     const internalIds = new Set(internalNodes.map((n: any) => n.id));
     const internalEdges = diagram.edges.filter((e: any) =>
@@ -80,49 +80,44 @@ export class NNTree {
       throw new Error("Subflow " + subflowId + " contains a cycle");
     }
 
-    const result: ModuleData[] = [];
+    const nodesMap: Record<string, InternalNodeData> = {};
 
     for (const id of sorted) {
       const n = internalNodes.find((m: any) => m.id === id)!;
+      const children = adj.get(id) || [];
 
       if (this.isSubflowNode(n)) {
-        const innerLayers = this.compileSubflowLayers(diagram, n.id);
-
-        const stereo = diagram.getStereotype(n.data.stereotype as string);
-        const iterations = stereo?.isSubFlow
-          ? parseInt((n.data.params as any)?.iterations?.value ?? "1", 10)
-          : 1;
-
-        const finalInnerLayers = this.unrollLayers(iterations, innerLayers);
-
-        result.push(...finalInnerLayers);
+        const nested = this.compileSubflowGraph(diagram, n.id);
+        nodesMap[id] = {
+          type: "subflow",
+          name: n.data.name,
+          stereotype: n.data.stereotype,
+          pythonClassName: this.getPythonClassName(diagram, n),
+          params: n.data.params,
+          children,
+          entryNode: nested.entryNode,
+          nodes: nested.nodes,
+        };
       } else {
-        result.push(this.nodeToModule(n, diagram));
+        const isJoinNode = n.type === "join"
+          || diagram.getStereotype(n.data.stereotype as string)?.category === "Join";
+        nodesMap[id] = {
+          type: isJoinNode ? "join" : "module",
+          name: n.data.name,
+          stereotype: n.data.stereotype,
+          pythonClassName: this.getPythonClassName(diagram, n),
+          taskType: this.getTaskType(diagram, n),
+          params: n.data.params,
+          children,
+        };
       }
     }
 
-    return result;
-  }
-
-  private unrollLayers(iterations: number, layers: ModuleData[]): ModuleData[] {
-    if (iterations <= 1) return layers;
-    const result: ModuleData[] = [];
-    for (let i = 0; i < iterations; i++) {
-      for (const layer of layers) {
-        result.push({ ...layer });
-      }
-    }
-    return result;
+    return { entryNode: sorted[0], nodes: nodesMap };
   }
 
   private processSubflow(node: Node, diagram: Diagram, visited: Set<string>): string {
-    const layers = this.compileSubflowLayers(diagram, node.id);
-
-    const stereo = diagram.getStereotype(node.data.stereotype as string);
-    const iterations = stereo?.isSubFlow
-      ? parseInt((node.data.params as any)?.iterations?.value ?? "1", 10)
-      : 1;
-    const finalLayers = this.unrollLayers(iterations, layers);
+    const graph = this.compileSubflowGraph(diagram, node.id);
 
     const outerChilds = diagram.getChilds(node.id);
     const nextNodes: string[] = [];
@@ -134,9 +129,14 @@ export class NNTree {
     this.nodes.set(
       node.id,
       new NNTreeNode(node.id, nextNodes, {
-        type: "sequential",
-        layers: finalLayers,
-      }),
+        type: "subflow",
+        name: node.data.name,
+        stereotype: node.data.stereotype,
+        pythonClassName: this.getPythonClassName(diagram, node),
+        params: node.data.params,
+        entryNode: graph.entryNode,
+        nodes: graph.nodes,
+      } as SubflowData),
     );
     return node.id;
   }
@@ -259,9 +259,9 @@ export class NNTree {
 export class NNTreeNode {
   public id: string;
   public children: string[] = [];
-  public data: SequentialData | ModuleData | JoinData;
+  public data: SequentialData | ModuleData | JoinData | SubflowData;
 
-  constructor(id: string, children: string[], data: SequentialData | ModuleData | JoinData) {
+  constructor(id: string, children: string[], data: SequentialData | ModuleData | JoinData | SubflowData) {
     this.id = id;
     this.children = children;
     this.data = data;
@@ -293,6 +293,10 @@ export class NNTreeNode {
     return (this.data as ModuleData).type === "module";
   }
 
+  isSubflow(): boolean {
+    return (this.data as SubflowData).type === "subflow";
+  }
+
 }
 
 export interface SequentialData {
@@ -315,4 +319,31 @@ export interface ModuleData {
   pythonClassName?: string;
   taskType?: string;
   params: any;
+}
+
+export interface SubflowData {
+  type: "subflow";
+  name: string;
+  stereotype: string;
+  pythonClassName?: string;
+  params: any;
+  entryNode: string;
+  nodes: Record<string, InternalNodeData>;
+}
+
+export interface SubflowGraph {
+  entryNode: string;
+  nodes: Record<string, InternalNodeData>;
+}
+
+export interface InternalNodeData {
+  type: "module" | "join" | "subflow";
+  name: string;
+  stereotype: string;
+  pythonClassName?: string;
+  taskType?: string;
+  params: any;
+  children: string[];
+  entryNode?: string;
+  nodes?: Record<string, InternalNodeData>;
 }

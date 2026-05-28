@@ -2,7 +2,7 @@ import { describe, it, expect, vi, afterAll } from "vitest";
 import { type Node, type Edge } from "@xyflow/svelte";
 import { Diagram } from "../Diagram.svelte";
 import { NNTree } from "../conversion/nnTree";
-import type { SequentialData } from "../conversion/nnTree";
+import type { SequentialData, SubflowData } from "../conversion/nnTree";
 import { stubWindow, unstubWindow, node, edge } from "./helpers";
 
 // ---------------------------------------------------------------------------
@@ -414,14 +414,15 @@ describe("NNTree — subflow boundary mapping", () => {
     expect(tree.nodes.has("sub1")).toBe(true);
   });
 
-  it("compiles subflow internals as SequentialData with ordered layers", () => {
+  it("compiles subflow internals with entryNode and internal nodes map", () => {
     const sub1 = tree.nodes.get("sub1")!;
-    expect(sub1.isSequential()).toBe(true);
-    const seq = sub1.data as SequentialData;
-    expect(seq.layers).toHaveLength(3);
-    expect(seq.layers[0]).toMatchObject({ name: "Linear_0", stereotype: "Linear", pythonClassName: "nn.Linear" });
-    expect(seq.layers[1]).toMatchObject({ name: "Tanh_0", stereotype: "Tanh", pythonClassName: "nn.Tanh" });
-    expect(seq.layers[2]).toMatchObject({ name: "Linear_1", stereotype: "Linear", pythonClassName: "nn.Linear" });
+    expect(sub1.isSubflow()).toBe(true);
+    const sf = sub1.data as SubflowData;
+    expect(sf.entryNode).toBe("lin1");
+    expect(Object.keys(sf.nodes)).toHaveLength(3);
+    expect(sf.nodes.lin1).toMatchObject({ stereotype: "Linear", pythonClassName: "nn.Linear" });
+    expect(sf.nodes.tan1).toMatchObject({ stereotype: "Tanh", pythonClassName: "nn.Tanh" });
+    expect(sf.nodes.lin2).toMatchObject({ stereotype: "Linear", pythonClassName: "nn.Linear" });
   });
 
   it("routes Input sequential to subflow tree node", () => {
@@ -457,34 +458,41 @@ describe("NNTree — Repeat stereotype unrolling", () => {
     return { nodes, edges };
   }
 
-  it("unrolls 2 internal nodes × 3 iterations = 6 layers", () => {
+  it("preserves internal graph structure with Repeat stereotype", () => {
     const { nodes, edges } = repeatFixture("3");
     const d = new Diagram();
     d.nodes = nodes;
     d.edges = edges;
     const tree = new NNTree(d);
     const sub1 = tree.nodes.get("sub1")!;
-    expect(sub1.isSequential()).toBe(true);
-    const seq = sub1.data as SequentialData;
-    expect(seq.layers).toHaveLength(6);
-    const expected = ["Conv2d", "Tanh", "Conv2d", "Tanh", "Conv2d", "Tanh"];
-    seq.layers.forEach((layer, i) => {
-      expect(layer.stereotype).toBe(expected[i]);
-      expect(layer.type).toBe("module");
-    });
+    expect(sub1.isSubflow()).toBe(true);
+    const sf = sub1.data as SubflowData;
+    // Internal graph has 2 nodes (no compile-time unrolling)
+    expect(Object.keys(sf.nodes)).toHaveLength(2);
+    // Topological order is conv1 → tan1
+    expect(sf.entryNode).toBe("conv1");
+    expect(sf.nodes.conv1.children).toContain("tan1");
+    expect(sf.nodes.tan1.children).toEqual([]);
+    // Stereotypes preserved
+    expect(sf.nodes.conv1.stereotype).toBe("Conv2d");
+    expect(sf.nodes.tan1.stereotype).toBe("Tanh");
+    // Iterations param preserved in subflow data
+    expect(sf.params.iterations.value).toBe("3");
   });
 
-  it("iterations=1 produces single copy (no unrolling)", () => {
+  it("iterations=1 preserves internal graph structure", () => {
     const { nodes, edges } = repeatFixture("1");
     const d = new Diagram();
     d.nodes = nodes;
     d.edges = edges;
     const tree = new NNTree(d);
     const sub1 = tree.nodes.get("sub1")!;
-    const seq = sub1.data as SequentialData;
-    expect(seq.layers).toHaveLength(2);
-    expect(seq.layers[0].stereotype).toBe("Conv2d");
-    expect(seq.layers[1].stereotype).toBe("Tanh");
+    expect(sub1.isSubflow()).toBe(true);
+    const sf = sub1.data as SubflowData;
+    expect(Object.keys(sf.nodes)).toHaveLength(2);
+    expect(sf.entryNode).toBe("conv1");
+    expect(sf.nodes.conv1.stereotype).toBe("Conv2d");
+    expect(sf.nodes.tan1.stereotype).toBe("Tanh");
   });
 });
 
@@ -535,11 +543,12 @@ describe("NNTree — subflow in sequential chain", () => {
 
   it("subflow compiles internals and routes to linD", () => {
     const sub1 = tree.nodes.get("sub1")!;
-    expect(sub1.isSequential()).toBe(true);
-    const seq = sub1.data as SequentialData;
-    expect(seq.layers).toHaveLength(2);
-    expect(seq.layers[0].name).toBe("Linear_1");
-    expect(seq.layers[1].name).toBe("Tanh_2");
+    expect(sub1.isSubflow()).toBe(true);
+    const sf = sub1.data as SubflowData;
+    expect(Object.keys(sf.nodes)).toHaveLength(2);
+    expect(sf.entryNode).toBe("linB");
+    expect(sf.nodes.linB.name).toBe("Linear_1");
+    expect(sf.nodes.tanC.name).toBe("Tanh_2");
     expect(sub1.children).toEqual(["linD"]);
   });
 
@@ -575,9 +584,9 @@ describe("NNTree — subflow edge cases", () => {
     const tree = new NNTree(d);
     expect(tree.nodes.has("sub1")).toBe(true);
     const sub1 = tree.nodes.get("sub1")!;
-    expect(sub1.isSequential()).toBe(true);
-    const seq = sub1.data as SequentialData;
-    expect(seq.layers).toHaveLength(0);
+    expect(sub1.isSubflow()).toBe(true);
+    const sf = sub1.data as SubflowData;
+    expect(Object.keys(sf.nodes)).toHaveLength(0);
     expect(warnSpy).toHaveBeenCalledWith(expect.stringContaining("no internal nodes"));
     warnSpy.mockRestore();
   });
@@ -617,9 +626,10 @@ describe("NNTree — subflow edge cases", () => {
     const tree = new NNTree(d);
     expect(tree.nodes.has("sub1")).toBe(true);
     const sub1 = tree.nodes.get("sub1")!;
-    const seq = sub1.data as SequentialData;
-    expect(seq.layers).toHaveLength(1);
-    expect(seq.layers[0].stereotype).toBe("Tanh");
+    expect(sub1.isSubflow()).toBe(true);
+    const sf = sub1.data as SubflowData;
+    expect(Object.keys(sf.nodes)).toHaveLength(1);
+    expect(sf.nodes.a.stereotype).toBe("Tanh");
   });
 });
 
@@ -656,13 +666,20 @@ describe("NNTree — basic nested subflow", () => {
     expect(tree.nodes.size).toBe(2); // input + outer
   });
 
-  it("flattens inner subflow layers into outer sequential data", () => {
+  it("preserves nested subflow structure with entryNode and nodes", () => {
     const outer = tree.nodes.get("outer")!;
-    expect(outer.isSequential()).toBe(true);
-    const seq = outer.data as SequentialData;
-    expect(seq.layers).toHaveLength(2);
-    expect(seq.layers[0]).toMatchObject({ name: "Linear_0", stereotype: "Linear", pythonClassName: "nn.Linear" });
-    expect(seq.layers[1]).toMatchObject({ name: "Tanh_0", stereotype: "Tanh", pythonClassName: "nn.Tanh" });
+    expect(outer.isSubflow()).toBe(true);
+    const sf = outer.data as SubflowData;
+    // Outer subflow contains inner subflow as single internal node
+    expect(Object.keys(sf.nodes)).toHaveLength(1);
+    expect(sf.entryNode).toBe("inner");
+    // Inner subflow contains lin → tan
+    const inner = sf.nodes.inner as any;
+    expect(inner.type).toBe("subflow");
+    expect(inner.entryNode).toBe("lin");
+    expect(Object.keys(inner.nodes)).toHaveLength(2);
+    expect(inner.nodes.lin.stereotype).toBe("Linear");
+    expect(inner.nodes.tan.stereotype).toBe("Tanh");
   });
 
   it("routes Input sequential to outer subflow", () => {
@@ -709,11 +726,21 @@ describe("NNTree — nested subflow with sibling nodes", () => {
 
   it("compiles all layers in topological order", () => {
     const outer = tree.nodes.get("outer")!;
-    const seq = outer.data as SequentialData;
-    expect(seq.layers).toHaveLength(3);
-    expect(seq.layers[0].stereotype).toBe("Linear");
-    expect(seq.layers[1].stereotype).toBe("Tanh");
-    expect(seq.layers[2].stereotype).toBe("ReLU");
+    expect(outer.isSubflow()).toBe(true);
+    const sf = outer.data as SubflowData;
+    // outer contains inner (subflow) → relu in topo order
+    expect(sf.entryNode).toBe("inner");
+    expect(Object.keys(sf.nodes)).toHaveLength(2);
+    // inner is a nested subflow with lin → tan
+    const inner = sf.nodes.inner as any;
+    expect(inner.type).toBe("subflow");
+    expect(inner.entryNode).toBe("lin");
+    expect(Object.keys(inner.nodes)).toHaveLength(2);
+    expect(inner.children).toContain("relu");
+    // relu is a module sibling
+    expect(sf.nodes.relu.type).toBe("module");
+    expect(sf.nodes.relu.stereotype).toBe("ReLU");
+    expect(sf.nodes.relu.children).toEqual([]);
   });
 
   it("inner subflow does not appear as separate tree node", () => {
@@ -745,15 +772,22 @@ describe("NNTree — nested Repeat subflow", () => {
   d.edges = edges;
   const tree = new NNTree(d);
 
-  it("unrolls inner Repeat subflow inside outer subflow", () => {
+  it("preserves nested Repeat subflow structure", () => {
     const outer = tree.nodes.get("outer")!;
-    const seq = outer.data as SequentialData;
-    expect(seq.layers).toHaveLength(6);
-    const expected = ["Conv2d", "Tanh", "Conv2d", "Tanh", "Conv2d", "Tanh"];
-    seq.layers.forEach((layer, i) => {
-      expect(layer.stereotype).toBe(expected[i]);
-      expect(layer.type).toBe("module");
-    });
+    expect(outer.isSubflow()).toBe(true);
+    const sf = outer.data as SubflowData;
+    // outer contains repeat_sub as its only internal node
+    expect(sf.entryNode).toBe("repeat_sub");
+    expect(Object.keys(sf.nodes)).toHaveLength(1);
+    // repeat_sub is a nested subflow with conv → tan
+    const repeat = sf.nodes.repeat_sub as any;
+    expect(repeat.type).toBe("subflow");
+    expect(repeat.entryNode).toBe("conv");
+    expect(Object.keys(repeat.nodes)).toHaveLength(2);
+    expect(repeat.nodes.conv.stereotype).toBe("Conv2d");
+    expect(repeat.nodes.tan.stereotype).toBe("Tanh");
+    // iterations param preserved
+    expect(repeat.params.iterations.value).toBe("3");
   });
 
   it("inner repeat subflow not in tree nodes", () => {
@@ -786,12 +820,25 @@ describe("NNTree — deeply nested subflow (3 levels)", () => {
   d.edges = edges;
   const tree = new NNTree(d);
 
-  it("flattens 3 levels of nesting into single layer list", () => {
+  it("preserves 3 levels of nested subflow structure", () => {
     const l1 = tree.nodes.get("l1")!;
-    const seq = l1.data as SequentialData;
-    expect(seq.layers).toHaveLength(2);
-    expect(seq.layers[0].stereotype).toBe("Linear");
-    expect(seq.layers[1].stereotype).toBe("Tanh");
+    expect(l1.isSubflow()).toBe(true);
+    const sf = l1.data as SubflowData;
+    // l1 contains l2
+    expect(sf.entryNode).toBe("l2");
+    expect(Object.keys(sf.nodes)).toHaveLength(1);
+    // l2 contains l3
+    const l2 = sf.nodes.l2 as any;
+    expect(l2.type).toBe("subflow");
+    expect(l2.entryNode).toBe("l3");
+    expect(Object.keys(l2.nodes)).toHaveLength(1);
+    // l3 contains lin → tan
+    const l3 = l2.nodes.l3 as any;
+    expect(l3.type).toBe("subflow");
+    expect(l3.entryNode).toBe("lin");
+    expect(Object.keys(l3.nodes)).toHaveLength(2);
+    expect(l3.nodes.lin.stereotype).toBe("Linear");
+    expect(l3.nodes.tan.stereotype).toBe("Tanh");
   });
 
   it("intermediate subflows not in tree nodes", () => {
@@ -846,13 +893,20 @@ describe("NNTree — nested subflow in top-level chain", () => {
     expect(input.children).toEqual(["outer"]);
   });
 
-  it("outer subflow compiles inner nested layers", () => {
+  it("outer subflow compiles inner nested subflow", () => {
     const outer = tree.nodes.get("outer")!;
-    expect(outer.isSequential()).toBe(true);
-    const seq = outer.data as SequentialData;
-    expect(seq.layers).toHaveLength(2);
-    expect(seq.layers[0].name).toBe("Linear_Inner");
-    expect(seq.layers[1].name).toBe("Tanh_Inner");
+    expect(outer.isSubflow()).toBe(true);
+    const sf = outer.data as SubflowData;
+    // outer contains inner subflow as its only internal node
+    expect(sf.entryNode).toBe("inner");
+    expect(Object.keys(sf.nodes)).toHaveLength(1);
+    const inner = sf.nodes.inner as any;
+    expect(inner.type).toBe("subflow");
+    expect(inner.entryNode).toBe("lin_inner");
+    expect(Object.keys(inner.nodes)).toHaveLength(2);
+    expect(inner.nodes.lin_inner.name).toBe("Linear_Inner");
+    expect(inner.nodes.tan_inner.name).toBe("Tanh_Inner");
+    // outer routes to linB externally
     expect(outer.children).toEqual(["linB"]);
   });
 
