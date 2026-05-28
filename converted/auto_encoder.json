@@ -228,17 +228,6 @@
                 "value": "None"
               }
             },
-            "children": [
-              "61b02251-5c9e-4656-a594-e074292ea48f"
-            ]
-          },
-          "61b02251-5c9e-4656-a594-e074292ea48f": {
-            "type": "module",
-            "name": "Sigmoid_0",
-            "stereotype": "Sigmoid",
-            "pythonClassName": "nn.Sigmoid",
-            "taskType": "",
-            "params": {},
             "children": []
           }
         }
