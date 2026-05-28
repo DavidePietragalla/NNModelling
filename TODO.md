@@ -40,8 +40,10 @@ Today's sprint focuses on two core engineering objectives:
 - [ ] **Stereotype metadata in output**: Preserve `stereotype` and `iterations` (or other params) in the NNTreeNode data for subflow nodes, so the JSON output retains behavioral stereotype info instead of silently unrolling into plain SequentialData.
 - [ ] **Test subflow without unrolling**: Verify that a subflow with no stereotype (plain container, like `auto_encoder_submodels.json`) still skips Iterations entirely — i.e. `compileSubflowLayers` produces layers but no unrolling logic fires.
 
-### Phase 2d: HorizontalRepeat join configurability (NEW)
+### Phase 2d: New ops for Transformer — MaskedScaledDotProduct + PositionalEncoding (NEW)
 
+- [x] **MaskedScaledDotProduct Join op**: causal mask added to SDP scores. Drop-in for `ScaledDotProduct`. Files: `converted/src/ops/masked_scaled_dot_product.py`, `Stereotypes/Joins/MaskedScaledDotProduct.json`.
+- [x] **PositionalEncoding Module op**: sinusoidal sin/cos PE table as non-trainable buffer. Files: `converted/src/ops/positional_encoding.py`, `Stereotypes/Modules/PositionalEncoding.json`.
 - [ ] **Add `join_type` param to HorizontalRepeat**: support `concat` (current), `add`, `mean`, `max`, `mul`. Update op, convert.py, and stereotype JSON. See `ops/horizontal_repeat.py` docstring — join is currently hardcoded to concat on dim=-1.
 
 - [x] **Remove auto-flatten in `base.py:forward`**: Rimosso auto-flatten hardcodato. Flatten è ora uno stereotipo esplicito (Flatten.json). L'utente decide dove metterlo. Aggiornati tutti i diagrammi JSON esistenti che usavano l'auto-flatten implicito.

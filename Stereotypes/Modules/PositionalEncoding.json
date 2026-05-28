@@ -1,0 +1,13 @@
+{
+  "category": "PositionalEncoding",
+  "pythonClassName": "ops.PositionalEncoding",
+  "params": {
+    "d_model": { "type": "int", "default": "512" },
+    "max_len": { "type": "int", "default": "5000" }
+  },
+  "view": {
+    "color": "#2ecc71",
+    "width": 30,
+    "height": 30
+  }
+}

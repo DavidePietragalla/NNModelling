@@ -1,0 +1,12 @@
+{
+  "category": "Join",
+  "pythonClassName": "ops.MaskedScaledDotProduct",
+  "params": {
+    "d_model": { "type": "int", "default": "512" }
+  },
+  "view": {
+    "color": "#e74c3c",
+    "width": 30,
+    "height": 30
+  }
+}
