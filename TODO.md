@@ -40,7 +40,9 @@ Today's sprint focuses on two core engineering objectives:
 - [ ] **Stereotype metadata in output**: Preserve `stereotype` and `iterations` (or other params) in the NNTreeNode data for subflow nodes, so the JSON output retains behavioral stereotype info instead of silently unrolling into plain SequentialData.
 - [ ] **Test subflow without unrolling**: Verify that a subflow with no stereotype (plain container, like `auto_encoder_submodels.json`) still skips Iterations entirely — i.e. `compileSubflowLayers` produces layers but no unrolling logic fires.
 
-### Phase 2c: Sequence/Attention Data Support (NEW — blocker per Transformer)
+### Phase 2d: HorizontalRepeat join configurability (NEW)
+
+- [ ] **Add `join_type` param to HorizontalRepeat**: support `concat` (current), `add`, `mean`, `max`, `mul`. Update op, convert.py, and stereotype JSON. See `ops/horizontal_repeat.py` docstring — join is currently hardcoded to concat on dim=-1.
 
 - [x] **Remove auto-flatten in `base.py:forward`**: Rimosso auto-flatten hardcodato. Flatten è ora uno stereotipo esplicito (Flatten.json). L'utente decide dove metterlo. Aggiornati tutti i diagrammi JSON esistenti che usavano l'auto-flatten implicito.
 

@@ -11,9 +11,11 @@ class HorizontalRepeat(nn.Module):
     Creates N independent Subflow instances with fresh modules.
     Forward uses vmap + functional_call for batched parallel execution.
 
-    Output shape: [batch, ..., n * d_out]
-    The stacked head dimension is moved to last position and flattened,
-    effectively concatenating all head outputs along the feature dimension.
+    Join is hardcoded to **concat on dim=-1**: head outputs are stacked,
+    moved to last position, and flattened. Output shape: [batch, ..., n * d_head].
+
+    To use a different join (add, mean, max, etc.), modify forward() or create
+    a new op — HorizontalRepeat does not expose join_type as a parameter.
     """
 
     def __init__(self, entry_node: str, internal_nodes: dict, n: int = 1, **kwargs):

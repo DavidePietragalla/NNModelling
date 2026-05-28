@@ -104,6 +104,8 @@ The `Net` class (`LightningModule`) builds a `ModuleDict` dynamically from the c
 |--------|-------------|
 | `ops.Addition` | Element-wise sum of multiple branch outputs |
 | `ops.Einsum` | Tensor contraction via `torch.einsum` |
+| `ops.Concat` | Tensor concatenation along specified dim |
+| `ops.HorizontalRepeat` | N parallel subflow copies via vmap, output concat on dim=-1 (`[batch, ..., n*d]`). Join hardcoded to concat — see op docstring. |
 
 ### `dataset/` — Dataset Classes
 
