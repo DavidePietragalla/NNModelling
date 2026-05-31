@@ -1,118 +1,170 @@
 # NNModelling — Python Codegen Target
 
-This directory converts NNTree JSON diagrams (exported from the visual editor) into runnable PyTorch/Lightning models. It is the backend half of the NNModelling DSL pipeline.
-
-## Pipeline
+Converts NNTree JSON diagrams (exported from visual editor) into runnable PyTorch/Lightning models. Backend half of NNModelling DSL pipeline.
 
 ```
 Diagram → NNTree JSON → convert.py → Hydra YAML configs → main.py → training
+                                                         → infer.py  → inference
 ```
 
 ## Setup
-
-Requires Python 3.12. Install dependencies with `uv`:
 
 ```bash
 uv sync
 ```
 
+Python 3.12+. Dependencies: torch, lightning, hydra-core, wandb, omegaconf, torchmetrics, transformers, datasets.
+
 ## Usage
 
-### Step 1: Generate Configuration
+### Generate Config
 
 ```bash
-python src/convert.py [json_path] [output_dir] [options]
+uv run python src/convert.py <json_path> <output_dir> [options]
 ```
-
-**Positional arguments:**
-
-| Argument | Default | Description |
-|----------|---------|-------------|
-| `json_path` | `../converted_minst.json` | Path to NNTree JSON exported from the visual editor |
-| `output_dir` | `cfg` | Output directory for generated Hydra configs |
-
-**Optional flags:**
 
 | Flag | Default | Description |
 |------|---------|-------------|
-| `--num-classes N` | `None` | Required when the loss node has `taskType: "classification"` |
-| `--dataset D` | `dataset.mnist.MNISTDataset` | Dataset class path (e.g. `dataset.autoencoder_mnist.AutoencoderMNIST`) |
+| `json_path` | `../converted_minst.json` | Path to NNTree JSON |
+| `output_dir` | `cfg` | Output directory for Hydra configs |
+| `--num-classes N` | — | Required for classification tasks |
+| `--dataset D` | `dataset.mnist.MNISTDataset` | Dataset class path |
 | `--early-stop-patience N` | `3` | Early stopping patience |
-| `--early-stop-min-delta F` | `0.0` | Early stopping minimum delta |
-| `--max-epochs N` | `20` | Maximum training epochs |
+| `--early-stop-min-delta F` | `0.0` | Early stopping min delta |
+| `--max-epochs N` | `20` | Max training epochs |
 
-**Output structure** (created under `output_dir/`):
+**Output structure**:
 
 ```
 cfg/
 ├── base.yaml                  # Root config composing all sub-configs
 ├── net/custom_sequence.yaml   # Network architecture (from NNTree JSON)
-├── optimizer/adam.yaml        # Optimizer config (Adam, lr=0.001)
-├── trainer/default.yaml       # Trainer config (max_epochs, accelerator)
+├── optimizer/adam.yaml        # Adam, lr=0.001
+├── trainer/default.yaml       # max_epochs, accelerator
 ├── dataset/dataset.yaml       # Dataset class, batch_size, train/val split
 ├── wandb/wandb.yaml           # W&B project settings
-└── early_stopping/default.yaml # EarlyStopping parameters
+└── early_stopping/default.yaml
 ```
 
-### Step 2: Train
+### Train
 
 ```bash
-python src/main.py --config-path <dir> --config-name <name>
+uv run python src/main.py --config-path <dir> --config-name base
+```
+
+- Instantiates network dynamically from config via Hydra `instantiate()`
+- Auto-detects classification (Accuracy) vs regression (MSE) from loss node `taskType`
+- Logs to Weights & Biases (project: `NeuralNetworks`)
+- Saves trained model to `weights.pt`
+- Applies early stopping
+
+### Inference
+
+```bash
+uv run python src/infer.py --config-path <dir> --config-name base --weights <path> [options]
 ```
 
 | Flag | Default | Description |
 |------|---------|-------------|
-| `--config-path` | `../cfg` | Path to the Hydra config directory |
-| `--config-name` | `base` | Config file name (without `.yaml`) |
+| `--weights` | `weights.pt` | Path to trained model weights |
+| `--output` | — | Path to save predictions JSON |
+| `--image-dir` | — | Directory for prediction visualizations (montage + per-sample strips) |
+| `--device` | `cpu` | Device for inference |
 
-The training script:
+Supports both classification (argmax labels) and autoencoder (image reconstruction) outputs.
 
-- Instantiates the network dynamically from the generated config via Hydra's `instantiate()`
-- Auto-detects **classification** vs **regression** based on the loss node's `taskType` (Accuracy or MSE metric)
-- Logs metrics to **Weights & Biases** (project: `NeuralNetworks`)
-- Saves the trained model to `weights.pt`
-- Applies **early stopping** based on validation metric
+## Examples
 
-## End-to-End Example
-
-Train the autoencoder from the included example JSON:
+### Transformer Classifier (EnronSpam)
 
 ```bash
-# Generate configs
-python src/convert.py auto_encoder.json cfg \
-  --dataset dataset.autoencoder_mnist.AutoencoderMNIST \
-  --max-epochs 50
-
-# Train
-python src/main.py --config-path cfg --config-name base
+uv run python src/convert.py transformer_classifier.json cfg --num-classes 2 \
+  --dataset dataset.enron_spam.EnronSpamDataset
+uv run python src/main.py --config-path cfg --config-name base
 ```
+
+### Autoencoder
+
+```bash
+uv run python src/convert.py auto_encoder.json cfg \
+  --dataset dataset.autoencoder_mnist.AutoencoderMNIST --max-epochs 50
+uv run python src/main.py --config-path cfg --config-name base
+```
+
+### Skip Connections with Repeat
+
+```bash
+uv run python src/convert.py skip_connections_with_repetition.json cfg --num-classes 10
+uv run python src/main.py --config-path cfg --config-name base
+```
+
+## Pre-converted Diagrams (NNTree JSON)
+
+File in `converted/` directory, ready for `convert.py`:
+
+| File | Description |
+|------|-------------|
+| `transformer_classifier.json` | BERT-style: Embedding → PositionalEncoding → Repeat(TransformerBlock×2) → SequencePool → Linear |
+| `auto_encoder.json` | Encoder → bottleneck → skip connection → decoder |
+| `auto_encoder_nested_submodels.json` | Autoencoder with nested subflow inside subflow |
+| `skip_connections_with_repetition.json` | Two Repeat subflows ×10 with residual forks/joins |
+| `mninst_skip.json` | MNIST with skip connections |
 
 ## Architecture
 
 ### `net/base.py` — Dynamic DAG Network
 
-The `Net` class (`LightningModule`) builds a `ModuleDict` dynamically from the config. It uses a **BFS topological sort** to execute the computation graph at runtime:
+`Net(LightningModule)` builds `ModuleDict` from config at runtime. Forward pass uses BFS topological sort with in-degree tracking:
 
-1. Starts from the root (Input) node
-2. Tracks in-degree to know when all parents of a join node are ready
-3. Users explicitly place Flatten nodes for dimension adjustment
-4. Supports sequential chains, join merges (Addition, Einsum), and subflow containers
+1. Start from root (Input) node
+2. Track in-degree per node — join nodes wait for all parents
+3. Join input ordering preserved from edge targetHandle (`"in-0"`, `"in-1"`) — critical for non-commutative ops (MatMul, ScaledDotProduct)
+4. Subflow nodes delegate to `ops.Subflow` which runs its own BFS internally
+5. Flatten is explicit via Flatten stereotype (no auto-flatten heuristic)
 
-### `ops/` — Join Operations
+### `ops/` — Custom Operations
 
 | Module | Description |
 |--------|-------------|
-| `ops.Addition` | Element-wise sum of multiple branch outputs |
-| `ops.Einsum` | Tensor contraction via `torch.einsum` |
-| `ops.Concat` | Tensor concatenation along specified dim |
-| `ops.HorizontalRepeat` | N parallel subflow copies via vmap, output concat on dim=-1 (`[batch, ..., n*d]`). Join hardcoded to concat — see op docstring. |
+| `Addition` | Element-wise sum of N tensors |
+| `Concat` | `torch.cat(tensors, dim)` |
+| `Einsum` | `torch.einsum(expr, tensors)` |
+| `MatMul` | `inputs[0] @ inputs[1]` |
+| `ScaledDotProduct` | Q·K^T·sqrt(1/d) for attention scores |
+| `MaskedScaledDotProduct` | Same + causal upper-triangular -inf mask |
+| `Subflow` | BFS DAG executor for internal graph (mini `Net`) |
+| `Repeat` | N sequential Subflow copies with independent weights |
+| `HorizontalRepeat` | N parallel Subflow copies via `vmap` + `functional_call`. Output `[batch, ..., n*d]`. Join hardcoded to concat on dim=-1. |
+| `PositionalEncoding` | Sinusoidal sin/cos PE table (non-trainable buffer) |
+| `SequencePool` | Mean pool over sequence dim: `[B, L, D] → [B, D]` |
 
 ### `dataset/` — Dataset Classes
 
 | Class | Description |
 |-------|-------------|
-| `dataset.mnist.MNISTDataset` | Standard MNIST classification (28×28 images → digit labels) |
-| `dataset.autoencoder_mnist.AutoencoderMNIST` | MNIST autoencoder (image → same image as target) |
+| `dataset.mnist.MNISTDataset` | Standard MNIST (28×28 images → digit labels) |
+| `dataset.autoencoder_mnist.AutoencoderMNIST` | MNIST autoencoder (image → same image) |
+| `dataset.enron_spam.EnronSpamDataset` | Text classification (spam/ham) via HF datasets + transformers tokenizer |
+| `dataset.ds.Dataset` | Abstract base class |
+
+### `infer.py` — Inference
+
+Loads trained model, runs test set, optionally saves predictions as JSON (classification: argmax labels, regression: raw) and image montages (autoencoder: input|target|prediction strips).
+
+## Testing
+
+```bash
+uv run pytest src/tests/ -v
+```
+
+103 tests across 4 files:
+
+| File | Tests | Coverage |
+|------|-------|----------|
+| `test_convert.py` | 35 | parse_params, build_layer_config, subflow config, YAML generation with real JSONs |
+| `test_ops.py` | 36 | All 11 ops: forward pass, shapes, edge cases, input ordering |
+| `test_base.py` | 21 | Net.__init__ dispatch, BFS forward, in_degrees, join/subflow execution |
+| `test_integration.py` | 11 | Full pipeline: JSON → convert → Net.forward using real fixtures |
 
 ## Project Structure
 
@@ -121,13 +173,34 @@ converted/
 ├── src/
 │   ├── convert.py                # NNTree JSON → Hydra YAML configs
 │   ├── main.py                   # Training entry point (Hydra + Lightning)
-│   ├── net/base.py               # Dynamic DAG LightningModule
-│   ├── ops/addition.py           # Element-wise join
-│   ├── ops/einsum.py             # Einsum join
-│   ├── dataset/ds.py             # Abstract dataset base
-│   ├── dataset/mnist.py          # MNIST classification dataset
-│   └── dataset/autoencoder_mnist.py  # MNIST autoencoder dataset
-├── auto_encoder.json             # Example NNTree JSON (autoencoder)
-├── pyproject.toml                # Dependencies (hydra, lightning, torch, wandb)
+│   ├── infer.py                  # Inference: load model, run test set, save predictions/images
+│   ├── net/base.py               # Dynamic DAG LightningModule (BFS topo sort)
+│   ├── ops/                      # 11 custom nn.Module operations
+│   │   ├── addition.py
+│   │   ├── concat.py
+│   │   ├── einsum.py
+│   │   ├── mat_mul.py
+│   │   ├── scaled_dot_product.py
+│   │   ├── masked_scaled_dot_product.py
+│   │   ├── subflow.py
+│   │   ├── repeat.py
+│   │   ├── horizontal_repeat.py
+│   │   ├── positional_encoding.py
+│   │   └── sequence_pool.py
+│   ├── dataset/
+│   │   ├── ds.py                  # Abstract base
+│   │   ├── mnist.py               # MNIST classification
+│   │   ├── autoencoder_mnist.py   # MNIST autoencoder
+│   │   └── enron_spam.py          # Text classification (spam/ham)
+│   └── tests/
+│       ├── conftest.py            # JSON fixture loaders
+│       ├── test_convert.py        # 35 tests
+│       ├── test_ops.py            # 36 tests
+│       ├── test_base.py           # 21 tests
+│       └── test_integration.py    # 11 tests
+├── transformer_classifier.json    # BERT-style EnronSpam classifier (NNTree)
+├── auto_encoder.json              # Autoencoder (NNTree)
+├── skip_connections_with_repetition.json
+├── pyproject.toml                 # Dependencies
 └── README.md
 ```
