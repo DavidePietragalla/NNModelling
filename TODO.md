@@ -84,6 +84,15 @@ Legenda: `[x]` done, `[ ]` pending, `[-]` partially done
 - [ ] **CI pipeline (GitHub Actions)** — push → test frontend (vitest) + test backend (pytest). Due job separati: `frontend-ci` (node, pnpm, vitest) e `backend-ci` (python, uv, pytest). Serve anche lint (svelte-check, mypy)
 - [ ] **Vitest integration tests per convert.py** — testare la pipeline completa: Diagram → NNTree → JSON → convert.py → Hydra YAML
 
+### Training Pipeline — One-Button Train
+
+- [ ] **FastAPI server (`converted/src/server.py`)** — endpoint `POST /train`, accetta NNTree JSON + params, lancia convert.py + main.py in subprocess, streama log
+- [ ] **Redis job queue** — web server distaccato da cluster GPU. Redis come job broker (non cache). Pattern: LPUSH job, BRPOP worker, status polling via GET /status/:job_id, result in Redis
+- [ ] **Worker process** — BRPOP da Redis, esegue convert + train, scrive risultato (pesi, log, metriche) su Redis/S3
+- [ ] **Frontend "Convert & Train" button** — tasto in FlowCanvas toolbar (accanto a Save/Load/Convert). Chiama POST /train col NNTree JSON, mostra progresso (polling /status), notifica completamento
+- [ ] **Vite proxy** — configurare `vite.config.ts` server.proxy per /train verso FastAPI backend
+- [ ] **Artefatti training** — salvataggio pesi, log, metadati su S3/NFS accessibile da frontend per download
+
 ---
 
 ## Note
