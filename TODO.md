@@ -21,7 +21,7 @@ Legenda: `[x]` done, `[ ]` pending, `[-]` partially done
 
 - [x] Self-loop edge case test
 - [x] SubFlow compilation test (auto_encoder_submodels.json)
-- [ ] **convert.py integration test** — feed NNTree JSON → verify Hydra YAML structure
+- [x] **convert.py integration test** — feed NNTree JSON → verify Hydra YAML structure
 
 ### Phase 2: SubFlow Stereotype Conversion
 
@@ -54,8 +54,8 @@ Legenda: `[x]` done, `[ ]` pending, `[-]` partially done
 
 ### Phase 3: E2E Integration & Verification
 
-- [ ] **Generate Hydra Test Configs** — run convert.py su subflow JSON, verify YAML
-- [ ] **Execute Dynamic Forward Pass** — main.py con config generati
+- [-] **Generate Hydra Test Configs** — run convert.py su subflow JSON, verify YAML
+- [-] **Execute Dynamic Forward Pass** — main.py con config generati
 
 ### Phase 4: Exam Prep
 
@@ -66,11 +66,11 @@ Legenda: `[x]` done, `[ ]` pending, `[-]` partially done
 
 ## 🆕 Aggiunte (non in TODO originale)
 
-### Testing — Python side (ZERO coverage oggi)
+### Testing — Python side
 
-- [ ] **Test unit per ops Python** — `ops/addition.py`, `einsum.py`, `concat.py`, `mat_mul.py`, `scaled_dot_product.py`, `masked_scaled_dot_product.py`, `positional_encoding.py`, `sequence_pool.py`, `subflow.py`, `repeat.py`, `horizontal_repeat.py` — nessun test esiste
-- [ ] **Test convert.py** — parsing params, generazione YAML, gestione errori
-- [ ] **Test net/base.py** — forward pass, topo sort, join dispatch, subflow execution
+- [x] **Test unit per ops Python** — 36 test in test_ops.py
+- [x] **Test convert.py** — 35 test (parse_params, build_layer_config, subflow config, YAML)
+- [x] **Test net/base.py** — 21 test (in_degrees, init dispatch, forward BFS, metric)
 - [ ] **Config type checking** — mypy o pyright per converted/
 
 ### Docs & Config
@@ -81,6 +81,7 @@ Legenda: `[x]` done, `[ ]` pending, `[-]` partially done
 
 ### Infrastructure
 
+- [ ] **CI pipeline (GitHub Actions)** — push → test frontend (vitest) + test backend (pytest). Due job separati: `frontend-ci` (node, pnpm, vitest) e `backend-ci` (python, uv, pytest). Serve anche lint (svelte-check, mypy)
 - [ ] **Vitest integration tests per convert.py** — testare la pipeline completa: Diagram → NNTree → JSON → convert.py → Hydra YAML
 
 ---
@@ -89,4 +90,4 @@ Legenda: `[x]` done, `[ ]` pending, `[-]` partially done
 
 - `transformer_classifier.json` esiste (Svelte Flow format) ma mai testato E2E
 - `HorizontalRepeat` join è hardcoded a concat su dim=-1 (`ops/horizontal_repeat.py:14`)
-- `Concat` op esiste ma zero test
+- `Concat` op testata in test_ops.py
