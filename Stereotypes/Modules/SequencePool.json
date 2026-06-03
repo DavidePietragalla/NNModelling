@@ -1,5 +1,5 @@
 {
-  "category": "SequencePool",
+  "category": "Layer",
   "pythonClassName": "ops.SequencePool",
   "params": {
     "dim": { "type": "int", "default": "1" }

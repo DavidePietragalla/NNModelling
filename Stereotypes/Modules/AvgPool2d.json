@@ -1,5 +1,5 @@
 {
-  "category": "AvgPool2d",
+  "category": "Layer",
   "pythonClassName": "nn.AvgPool2d",
   "expr": "",
   "view": {

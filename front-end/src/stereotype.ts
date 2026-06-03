@@ -56,8 +56,8 @@ export class Stereotype {
     this.isInput = data.category === "Input";
 
     // Una Loss ha "Loss" nel nome della categoria (es. BCEWithLogitsLoss)
-    this.isLoss = data.category?.includes("Loss") || false;
-    this.isSubFlow = data.category === "SubFlow" || filePath.includes("/SubFlows/");
+    this.isLoss = data.category === "Loss";
+    this.isSubFlow = data.category === "Subflow" || filePath.includes("/SubFlows/");
     // Gestione sicura della view
     this.view = {
       color: data.view?.color || "#4779c4",

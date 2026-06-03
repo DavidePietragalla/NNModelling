@@ -1,5 +1,5 @@
 {
-  "category": "SubFlow",
+  "category": "Subflow",
   "pythonClassName": "ops.HorizontalRepeat",
   "expr": "",
   "view": {

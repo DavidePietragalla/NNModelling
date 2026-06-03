@@ -1,5 +1,5 @@
 {
-  "category": "BCEWithLogitsLoss",
+  "category": "Loss",
   "pythonClassName": "nn.BCEWithLogitsLoss",
   "taskType": "classification",
   "expr": "",

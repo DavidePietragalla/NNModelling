@@ -1,5 +1,5 @@
 {
-  "category": "MultiheadAttention",
+  "category": "Layer",
   "pythonClassName": "nn.MultiheadAttention",
   "expr": "",
   "view": {

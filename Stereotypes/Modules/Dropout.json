@@ -1,5 +1,5 @@
 {
-  "category": "Dropout",
+  "category": "Layer",
   "pythonClassName": "nn.Dropout",
   "expr": "",
   "view": {

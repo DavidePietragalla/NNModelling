@@ -1,5 +1,5 @@
 {
-  "category": "TransformerDecoderLayer",
+  "category": "Layer",
   "pythonClassName": "nn.TransformerDecoderLayer",
   "expr": "",
   "view": {

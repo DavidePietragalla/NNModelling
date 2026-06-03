@@ -1,5 +1,5 @@
 {
-  "category": "Tanh",
+  "category": "Layer",
   "pythonClassName": "nn.Tanh",
   "expr": "",
   "view": {

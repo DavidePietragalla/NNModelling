@@ -1,5 +1,5 @@
 {
-  "category": "Unsample",
+  "category": "Layer",
   "pythonClassName": "nn.Upsample",
   "expr": "",
   "view": {

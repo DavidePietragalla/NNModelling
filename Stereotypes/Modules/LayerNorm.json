@@ -1,5 +1,5 @@
 {
-  "category": "LayerNorm",
+  "category": "Layer",
   "pythonClassName": "nn.LayerNorm",
   "expr": "",
   "view": {

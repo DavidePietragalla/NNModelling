@@ -1,5 +1,5 @@
 {
-  "category": "ReLU",
+  "category": "Layer",
   "pythonClassName": "nn.ReLU",
   "expr": "",
   "view": {

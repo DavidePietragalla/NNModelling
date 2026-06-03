@@ -1,5 +1,5 @@
 {
-  "category": "Flatten",
+  "category": "Layer",
   "pythonClassName": "nn.Flatten",
   "expr": "",
   "view": {

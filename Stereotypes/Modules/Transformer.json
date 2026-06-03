@@ -1,5 +1,5 @@
 {
-  "category": "Transformer",
+  "category": "Layer",
   "pythonClassName": "nn.Transformer",
   "expr": "",
   "view": {

@@ -1,5 +1,5 @@
 {
-  "category": "PositionalEncoding",
+  "category": "Layer",
   "pythonClassName": "ops.PositionalEncoding",
   "params": {
     "d_model": { "type": "int", "default": "512" },

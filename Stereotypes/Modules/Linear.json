@@ -1,5 +1,5 @@
 {
-  "category": "Linear",
+  "category": "Layer",
   "pythonClassName": "nn.Linear",
   "expr": "",
   "view": {
