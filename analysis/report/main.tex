@@ -29,12 +29,12 @@
 \end{figure}
 
 \centering \rule{\textwidth}{0.5mm}
-\paragraph{\Huge \centering \textbf{Ingegneria del Software}}
+\paragraph{\Huge \centering \textbf{Advanced Software Engineering}}
 \centering \rule{\textwidth}{0.5mm}
 
 \vspace{55pt}
 
-\par {\Huge \centering \color{Sapienza} \textbf {Progetto Sky Watch}}
+\par {\Huge \centering \color{Sapienza} \textbf {NNModelling}}
 
 \vspace{35pt}
 
@@ -47,7 +47,7 @@
 \vspace{25pt}
 \par{\color{gray} \large Autori \\
 	\textit{\large Davide Pietragalla 1965270\\
-		\large Damiano Pezzillo Iacono 1892597}
+		\large Luca Sforza 2050030}
 }
 
 \newpage
@@ -58,7 +58,27 @@
 
 \section{Introduzione}
 \raggedright\par{\large{
-		Il progetto prevede l'implementazione di un sistema di sorveglianza per un'area di 6km\ap{2}, utilizzando droni gestiti da un \textbf{centro di controllo} situato al centro dell'area stessa.
+		Il progetto prevede l'implementazione di una
+		DSL (Domain Specific Language) per poter modellare reti neurali
+		usando un linguaggio diagrammatico. Una volta modellato, il nostro software
+		permette di poter istanziare la rete in pytorch e di poter fare training della rete
+		su un determinato dataset dato dall'utente.
+
+		È stato usato un approccio Model-Driven.
+
+		Prima è stata definita la sintassi della DSL
+		utilizzando un meta-modello UML. Finita la fase di Design
+		è stato implementata un applicazione front-end che permette di
+		poter disegnare i modelli.
+
+		I modelli sono salvati vengono convertiti in una configurazione compatibile
+		con il framework python "OmegaConf".
+
+		Data la configurazione, è possibile scegliere ottimizzatore, scheduler
+		e altri parametri come il seed.
+
+		Può essere effettuato il training della rete e i plot vengono creati utilizzando
+		il servizio Weight & Biases
 	}}
 \vspace{10pt}
 \raggedright\par{\large{
