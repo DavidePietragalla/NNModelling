@@ -53,8 +53,12 @@
     window.removeEventListener('mouseup', stopResize);
   }
 
-  // --- LOGICA ESISTENTE ---
+  let lastLoadedId = $state<string | null>(null);
+
   $effect(() => {
+    const id = selectedNode?.id ?? null;
+    if (id === lastLoadedId) return;
+    lastLoadedId = id;
     if (selectedNode) {
       loadExistingNode(selectedNode);
     } else {
