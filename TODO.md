@@ -2,7 +2,7 @@
 
 ## Overview
 
-Stato aggiornato al 2026-05-31. Basato su TODO.md originale + audit effettivo del codice.
+Stato aggiornato al 2026-06-14. Basato su TODO.md originale + audit codice.
 
 Legenda: `[x]` done, `[ ]` pending, `[-]` partially done
 
@@ -21,21 +21,19 @@ Legenda: `[x]` done, `[ ]` pending, `[-]` partially done
 
 - [x] Self-loop edge case test
 - [x] SubFlow compilation test (auto_encoder_submodels.json)
-- [x] **convert.py integration test** — feed NNTree JSON → verify Hydra YAML structure
+- [x] convert.py integration test — feed NNTree JSON → verify Hydra YAML structure
 
 ### Phase 2: SubFlow Stereotype Conversion
 
 - [x] Write failing SubFlow test spec (13 tests TDD)
 - [x] Extend nnTree.ts (isSubflowNode, compileSubflowLayers, unrollLayers, etc.)
-- [-] **convert.py subflow handling** — base subflow config esiste (`_build_nested_subflow_config`), ma mancano:
-  - `iterations` param per Repeat/HorizontalRepeat (stereotype comportamentale)
-  - Preservazione metadata stereotipo nei nodi subflow
+- [x] convert.py subflow handling — `_build_nested_subflow_config` funzionante
 
 ### Phase 2b: Subflow Fixes — Nested & Metadata
 
-- [ ] **Nested subflow test** — test + fix per subflow dentro subflow ricorsivo
-- [ ] **Stereotype metadata in output** — preservare `stereotype`, `iterations`, params in NNTreeNode per subflow nodes
-- [ ] **Test subflow senza unrolling** — plain container (no stereotype) skipa Iterations
+- [x] Nested subflow test (test_convert.py: TestBuildNestedSubflowConfig)
+- [x] Stereotype metadata in output (nnTree.ts preserva `stereotype`)
+- [x] Test subflow senza unrolling (test_plain_subflow in test_convert.py)
 
 ### Phase 2d: New Ops for Transformer
 
@@ -44,7 +42,7 @@ Legenda: `[x]` done, `[ ]` pending, `[-]` partially done
 - [x] SequencePool Module op
 - [x] Transformer classifier diagram (transformer_classifier.json)
 - [ ] **`join_type` param per HorizontalRepeat** — supportare concat/add/mean/max/mul
-- [ ] **E2E training test** — convert.py → main.py su EnronSpam/transformer_classifier
+- [ ] **E2E training test** — convert.py → main.py su EnronSpam/transformer_classifier (test_integration.py esiste ma non copre training loop completo)
 
 ### Phase 2f: Join Input Ordering
 
@@ -54,35 +52,19 @@ Legenda: `[x]` done, `[ ]` pending, `[-]` partially done
 
 ### Phase 3: E2E Integration & Verification
 
-- [-] **Generate Hydra Test Configs** — run convert.py su subflow JSON, verify YAML
-- [-] **Execute Dynamic Forward Pass** — main.py con config generati
-
-### Phase 4: Exam Prep
-
-- [ ] Review net/base.py line-by-line (topo sort, BFS, indice tracking)
-- [ ] Sanitize auto-flatten spiegazione (leaky abstraction defense)
+- [-] Generate Hydra Test Configs — run convert.py su subflow JSON, verify YAML
+- [-] Execute Dynamic Forward Pass — main.py con config generati
 
 ---
 
-## 🆕 Aggiunte (non in TODO originale)
+### Documentation
 
-### Testing — Python side
-
-- [x] **Test unit per ops Python** — 36 test in test_ops.py
-- [x] **Test convert.py** — 35 test (parse_params, build_layer_config, subflow config, YAML)
-- [x] **Test net/base.py** — 21 test (in_degrees, init dispatch, forward BFS, metric)
+- [ ] **FlowCanvas.svelte:48** — remove dead TODO comment (`let isNodeSelected`)
 - [ ] **Config type checking** — mypy o pyright per converted/
-
-### Docs & Config
-
-- [ ] **pnpm-workspace.yaml** — untracked (`??`), da committare o rimuovere
-- [ ] **CLAUDE.md missing stereotypes** — MaskedScaledDotProduct, PositionalEncoding, SequencePool non elencati
-- [ ] **FlowCanvas.svelte:48** — remove dead `TODO` comment (`let isNodeSelected`)
 
 ### Infrastructure
 
 - [ ] **CI pipeline (GitHub Actions)** — push → test frontend (vitest) + test backend (pytest). Due job separati: `frontend-ci` (node, pnpm, vitest) e `backend-ci` (python, uv, pytest). Serve anche lint (svelte-check, mypy)
-- [ ] **Vitest integration tests per convert.py** — testare la pipeline completa: Diagram → NNTree → JSON → convert.py → Hydra YAML
 
 ### Training Pipeline — One-Button Train
 
@@ -93,10 +75,14 @@ Legenda: `[x]` done, `[ ]` pending, `[-]` partially done
 - [ ] **Vite proxy** — configurare `vite.config.ts` server.proxy per /train verso FastAPI backend
 - [ ] **Artefatti training** — salvataggio pesi, log, metadati su S3/NFS accessibile da frontend per download
 
+### Visibility & Distribution
+
+- [ ] **HF Spaces deploy** — build front-end come static HF Space. Demo interattiva nel browser. Link a GitHub repo per stelle/contributori.
+
 ---
 
 ## Note
 
-- `transformer_classifier.json` esiste (Svelte Flow format) ma mai testato E2E
+- `transformer_classifier.json` esiste ma mai testato E2E
 - `HorizontalRepeat` join è hardcoded a concat su dim=-1 (`ops/horizontal_repeat.py:14`)
 - `Concat` op testata in test_ops.py
