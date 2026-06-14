@@ -29,6 +29,7 @@
 
   // 1. Importiamo la classe Diagram
   import { Diagram } from "./Diagram.svelte"; // Modifica il path se necessario
+  import { toPng } from "html-to-image";
 
   const nodeTypes = {
     custom: CustomNode,
@@ -55,6 +56,7 @@
   );
 
   let isSidebarOpen = $state(false);
+  let canvasRef: HTMLDivElement;
 
   // Auto-apertura quando si seleziona un nodo
   $effect(() => {
@@ -90,6 +92,25 @@
       diagram.deleteEdges(selectedEdges.map((e) => e.id));
   }
 
+  async function handleExportPng() {
+    if (!canvasRef) return;
+
+    const dataUrl = await toPng(canvasRef, {
+      backgroundColor: "#ffffff",
+      filter: (element) => {
+        return (
+          !element.classList?.contains("toolbar") &&
+          !element.classList?.contains("svelte-flow__controls")
+        );
+      },
+    });
+
+    const link = document.createElement("a");
+    link.href = dataUrl;
+    link.download = "diagram.png";
+    link.click();
+  }
+
   async function handleConversion() {
     const nnTree = new NNTree(diagram);
     const data = nnTree.toJson();
@@ -123,7 +144,7 @@
 </script>
 
 <div class="editor-layout">
-  <div class="canvas-container">
+  <div class="canvas-container" bind:this={canvasRef}>
     <SvelteFlow
       bind:nodes={diagram.nodes}
       bind:edges={diagram.edges}
@@ -159,6 +180,9 @@
         >
         <button onclick={handleConversion} class="toolbar-btn"
           >📦 Converti in Python</button
+        >
+        <button onclick={handleExportPng} class="toolbar-btn"
+          >🖼️ Esporta PNG</button
         >
         <button onclick={handleAddSubGraph} class="toolbar-btn"
           >📦 Aggiungi SubGraph</button

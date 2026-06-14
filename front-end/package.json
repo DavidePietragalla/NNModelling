@@ -22,7 +22,8 @@
     "vitest": "^4.1.7"
   },
   "dependencies": {
-    "@xyflow/svelte": "^1.5.2"
+    "@xyflow/svelte": "^1.5.2",
+    "html-to-image": "^1.11.13"
   },
   "packageManager": "pnpm@10.11.0",
   "pnpm": {
