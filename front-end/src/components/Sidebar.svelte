@@ -93,7 +93,7 @@
         merged[key] = { value: prop.default, position: prop.position };
       }
       for (const [key, val] of Object.entries(vnode.data.params || {})) {
-        merged[key] = JSON.parse(JSON.stringify(val));
+        merged[key] = { ...merged[key], ...JSON.parse(JSON.stringify(val)) };
       }
       form.params = merged;
     }

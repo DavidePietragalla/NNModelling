@@ -8,6 +8,10 @@
     "height": 300
   },
   "params": {
-    "n": { "type": "int", "default": "1" }
+    "n": {
+      "type": "int",
+      "default": "1",
+      "position": "top"
+    }
   }
 }
