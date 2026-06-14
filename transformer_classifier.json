@@ -96,7 +96,7 @@
       "width": 910,
       "height": 1550,
       "data": {
-        "label": "encoder",
+        "label": "TransformerEncoder",
         "isCollapsed": false,
         "oldWidth": 910,
         "oldHeight": 1550,
@@ -105,7 +105,8 @@
         "stereotype": "Repeat",
         "params": {
           "iterations": {
-            "value": "2"
+            "value": "2",
+            "position": "top"
           }
         }
       },
@@ -270,7 +271,7 @@
       "width": 460,
       "height": 580,
       "data": {
-        "label": "mha",
+        "label": "MultiHeadAttn",
         "isCollapsed": false,
         "oldWidth": 460,
         "oldHeight": 580,
@@ -279,7 +280,8 @@
         "stereotype": "HorizontalRepeat",
         "params": {
           "n": {
-            "value": "4"
+            "value": "4",
+            "position": "top"
           }
         }
       },
@@ -547,8 +549,8 @@
         "x": 162.2576260706287,
         "y": 224.99456615672784
       },
-      "width": 140,
-      "height": 60,
+      "width": 141,
+      "height": 89,
       "data": {
         "stereotype": "Linear",
         "name": "Linear_Q",
@@ -571,8 +573,8 @@
       },
       "parentId": "mha",
       "measured": {
-        "width": 140,
-        "height": 60
+        "width": 141,
+        "height": 89
       },
       "selected": false,
       "dragging": false,
@@ -586,7 +588,7 @@
         "y": 222.60812976652915
       },
       "width": 140,
-      "height": 60,
+      "height": 90,
       "data": {
         "stereotype": "Linear",
         "name": "Linear_K",
@@ -610,7 +612,7 @@
       "parentId": "mha",
       "measured": {
         "width": 140,
-        "height": 60
+        "height": 90
       },
       "selected": false,
       "dragging": false,
@@ -624,7 +626,7 @@
         "y": 225.55040577321824
       },
       "width": 140,
-      "height": 60,
+      "height": 89,
       "data": {
         "stereotype": "Linear",
         "name": "Linear_V",
@@ -648,7 +650,7 @@
       "parentId": "mha",
       "measured": {
         "width": 140,
-        "height": 60
+        "height": 89
       },
       "selected": false,
       "dragging": false,
