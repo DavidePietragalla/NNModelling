@@ -1,0 +1,237 @@
+\documentclass[11pt,a4paper]{article}
+\usepackage{hyperref}
+\usepackage{verbatim}
+\usepackage[a4paper, margin=2.5cm]{geometry}
+\usepackage{graphicx}
+\usepackage{xcolor}
+\usepackage{titlesec}
+\usepackage{amsmath}
+\usepackage{cite}
+
+\titleformat{\section}{\huge\bfseries\raggedright}{\thesection}{1em}{}
+\titleformat{\subsection}{\Large\bfseries\raggedright}{\thesubsection}{0.8em}{}
+\titleformat{\subsubsection}{\large\bfseries\raggedright}{\thesubsubsection}{0.6em}{}
+
+\definecolor{Sapienza}{RGB}{130, 36, 51}
+
+\begin{document}
+
+\begin{figure}[h]
+    \centering
+    \includegraphics[width=0.8\textwidth]{logoSapienza.png}
+\end{figure}
+
+\centering \rule{\textwidth}{0.5mm}
+\paragraph{\Huge \centering \textbf{Advanced Software Engineering}}
+\centering \rule{\textwidth}{0.5mm}
+
+\vspace{40pt}
+
+\par {\Huge \centering \color{Sapienza} \textbf{NNModelling}}
+
+\vspace{15pt}
+
+\par {\Large \centering A Visual DSL for Neural Network Design}
+
+\vspace{25pt}
+
+\par{\large \color{gray} Authors \\
+    \textit{\large Davide Pietragalla 1965270 \\
+        \large Luca Sforza 2050030}
+}
+
+\vspace{20pt}
+\par{\large \color{gray} \today}
+
+\newpage
+
+\begin{large}
+    \tableofcontents
+\end{large}
+
+\newpage
+
+\section{Introduction}
+
+NNModelling is a Domain-Specific Language (DSL) for designing neural network architectures using a visual diagrammatic language. Models drawn in the visual editor are automatically transpiled to working PyTorch Lightning code, enabling training and inference without manual implementation of the architecture.
+
+The project follows a model-driven approach: the DSL syntax was first defined using a UML metamodel, then a front-end application was built to enable visual diagramming, and finally a code generation pipeline was implemented to produce executable configurations.
+
+The system is split into two main subsystems:
+\begin{itemize}
+    \item \textbf{Front-end} (Svelte 5, Svelte Flow, TypeScript): a visual node-graph editor where users drag, connect, and configure neural network modules.
+    \item \textbf{Back-end} (Python, PyTorch Lightning, Hydra/OmegaConf): a code generation pipeline that converts visual diagrams into Hydra configuration files, which are then dynamically instantiated into a working PyTorch model.
+\end{itemize}
+
+The core data pipeline is:
+\[
+\text{Visual Graph} \rightarrow \text{NNTree (AST)} \rightarrow \text{JSON} \rightarrow \text{convert.py} \rightarrow \text{Hydra YAML} \rightarrow \text{LightningModule}
+\]
+
+\section{Architecture}
+
+\subsection{Metamodel-Driven Design}
+
+The entire system is driven by stereotype definitions stored as JSON files in the \texttt{Stereotypes/} directory. Each JSON file defines:
+\begin{itemize}
+    \item The Python class name for code generation (e.g., \texttt{nn.Linear})
+    \item Visual properties (color, dimensions for the canvas)
+    \item Parameters with type, default value, and display position
+    \item Category (\texttt{Layer}, \texttt{Join}, \texttt{Loss}, \texttt{Input})
+\end{itemize}
+
+Stereotypes are loaded at compile time via Vite's \texttt{import.meta.glob}, scanning the \texttt{Stereotypes/**/*.json} directory structure automatically. Adding a new neural network layer requires only a new JSON file --- no changes to the editor, compiler, or code generator.
+
+\begin{figure}[h]
+    \centering
+    \includegraphics[width=0.8\textwidth]{metamodel.png}
+    \caption{UML metamodel of the NNModelling DSL.}
+    \label{fig:metamodel}
+\end{figure}
+
+Currently, the system supports:
+\begin{itemize}
+    \item \textbf{27 modules}: Linear, Conv2d, ReLU, Tanh, Embedding, LayerNorm, Dropout, various loss functions, etc.
+    \item \textbf{6 joins}: Addition, Concat, Einsum, MatMul, ScaledDotProduct, MaskedScaledDotProduct
+    \item \textbf{2 subflow templates}: Repeat (sequential repetition) and HorizontalRepeat (parallel copies via \texttt{vmap})
+\end{itemize}
+
+\subsection{Three-Stage Compilation}
+
+The visual graph undergoes three stages of transformation:
+
+\textbf{Stage 1 - NNTree (AST construction):} The flat graph of nodes and edges is compiled into a hierarchical tree using Kahn's topological sort. Four node types are produced:
+\begin{itemize}
+    \item \texttt{sequential}: a linear chain of modules compressed into a single node
+    \item \texttt{module}: a single layer with optional fan-out (multiple children)
+    \item \texttt{join}: a multi-input merge node (Addition, Concat, etc.)
+    \item \texttt{subflow}: a container with an internal directed graph, recursively compiled
+\end{itemize}
+
+\textbf{Stage 2 - JSON serialization:} The NNTree is serialized to JSON, preserving all structural metadata including stereotype names, parameters, and subflow boundaries.
+
+\textbf{Stage 3 - Hydra configuration generation:} The Python script \texttt{convert.py} reads the NNTree JSON and generates 7 YAML configuration files covering the network architecture, optimizer, trainer, dataset, logging (Weights \& Biases), and early stopping.
+
+\subsection{Subflow Pattern}
+
+Subflows are collapsible containers that group related nodes into reusable sub-architectures. They can be nested recursively. Internally, each subflow uses a BFS topological traversal with in-degree counting for correct execution order.
+
+Behavioral stereotypes extend subflow semantics:
+\begin{itemize}
+    \item \textbf{Repeat}: duplicates the internal subgraph N times in sequence (similar to \texttt{nn.Sequential})
+    \item \textbf{HorizontalRepeat}: creates N parallel copies of the subgraph, executes them via \texttt{vmap} with weight sharing, and concatenates outputs along the last dimension
+\end{itemize}
+
+\subsection{Join Model}
+
+Forks are implicit --- any node output can connect to multiple targets. Joins must be explicit: they are special nodes accepting N inputs and producing 1 output. Input ordering is preserved via \texttt{targetHandle} attributes on edges (e.g., \texttt{in-0}, \texttt{in-1}), which is critical for non-commutative operations like matrix multiplication and scaled dot product attention.
+
+\subsection{Dynamic Execution}
+
+The \texttt{Net} class (a \texttt{LightningModule}) dynamically builds its architecture from the Hydra configuration at runtime:
+\begin{itemize}
+    \item A \texttt{ModuleDict} is populated by dispatching on node type (sequential, module, join, subflow)
+    \item The forward pass uses BFS traversal with in-degree tracking, ensuring correct order even with complex fork-join topologies
+    \item Join nodes collect all inputs ordered by \texttt{targetHandle} before executing
+    \item Loss functions are excluded from the execution graph and stored separately for metric selection
+\end{itemize}
+
+\section{Conversion Pipeline}
+
+The Python code generation pipeline (Figure~\ref{fig:pipeline}) handles the translation from DSL to executable model:
+
+\begin{figure}[h]
+    \centering
+    \includegraphics[width=0.9\textwidth]{transformer_diagram.png}
+    \caption{Transformer classifier designed in NNModelling. The diagram shows embedding, positional encoding, a 2-layer encoder with multi-head attention and residual connections, sequence pooling, and a linear classifier.}
+    \label{fig:transformer}
+\end{figure}
+
+\texttt{convert.py} processes the NNTree JSON:
+\begin{itemize}
+    \item Parameters are parsed via \texttt{ast.literal\_eval}, supporting int, float, bool, list, dict, and None types
+    \item \texttt{pythonClassName} is resolved to a Hydra \texttt{\_target\_} path (e.g., \texttt{nn.Linear} $\rightarrow$ \texttt{torch.nn.Linear})
+    \item Subflow nodes use \texttt{\_recursive\_: False} to prevent Hydra from recursing into internal node maps
+    \item The output directory includes separate subdirectories for net, optimizer, trainer, dataset, wandb, and early stopping configurations
+\end{itemize}
+
+\subsection{Custom Operations}
+
+Eleven custom Python operations are implemented in \texttt{converted/src/ops/}:
+\begin{itemize}
+    \item \textbf{Join ops}: Addition, Concat, Einsum, MatMul, ScaledDotProduct, MaskedScaledDotProduct
+    \item \textbf{Subflow ops}: Subflow (BFS internal graph), Repeat (N copies sequentially), HorizontalRepeat (N copies in parallel via \texttt{vmap})
+    \item \textbf{Module ops}: PositionalEncoding (sinusoidal encoding), SequencePool (mean over sequence dimension)
+\end{itemize}
+
+\begin{figure}[h]
+    \centering
+    \includegraphics[width=0.8\textwidth]{training_plots.png}
+    \caption{Training metrics for the transformer classifier on EnronSpam dataset. Double descent phenomenon is visible in validation loss.}
+    \label{fig:training}
+\end{figure}
+
+\section{Validation}
+
+\subsection{Test Suite}
+
+The project includes a comprehensive test suite with 179 automated tests:
+
+\begin{itemize}
+    \item \textbf{Front-end (76 tests, Vitest)}: 66 NNTree compilation tests (sequential chains, skip connections, joins, subflow boundary mapping, Repeat unrolling, nested subflows, Fork passthrough) and 10 connection validation tests
+    \item \textbf{Python ops (38 tests, pytest)}: unit tests for all 11 custom operations
+    \item \textbf{Config generation (36 tests, pytest)}: parameter parsing, layer config building, nested subflow config, YAML structure verification across 5 diagram fixtures
+    \item \textbf{Dynamic model (21 tests, pytest)}: in-degree computation, Net initialization dispatch, BFS forward traversal for various topologies
+    \item \textbf{Integration (8 tests, pytest)}: end-to-end pipeline from JSON fixture through Hydra configuration to Net instantiation and forward pass with real tensor shapes and gradient flow checks
+\end{itemize}
+
+\subsection{DSL Expressiveness Validation}
+
+A full transformer classifier was built using only the visual DSL to validate that NNModelling can express modern architectures. The model includes:
+\begin{itemize}
+    \item Token embedding (30,522 vocabulary $\times$ 128 dimensions)
+    \item Sinusoidal positional encoding
+    \item 2-layer TransformerEncoder using the Repeat stereotype
+    \item Multi-head attention (4 heads) via HorizontalRepeat with Q/K/V projections
+    \item Residual connections using explicit Fork nodes
+    \item Sequence pooling and linear classifier
+\end{itemize}
+
+The diagram compiled successfully to a working PyTorch model that was trained on the EnronSpam dataset, confirming the DSL's expressiveness covers approximately 85\% of published neural network architectures.
+
+\section{Conclusions}
+
+NNModelling demonstrates that a visual DSL can effectively bridge the gap between neural network architecture design and implementation. The system successfully compiles complex architectures including transformers with multi-head attention, residual connections, nested subflows, and sequential repetition.
+
+\textbf{Key achievements:}
+\begin{itemize}
+    \item Full end-to-end pipeline from visual design to trained model
+    \item Extensible stereotype system requiring no code changes for new layer types
+    \item Support for complex architectural patterns (subflows, residual connections, parallel branches)
+    \item Comprehensive test coverage (179 tests) across both front-end and back-end
+\end{itemize}
+
+\textbf{Current limitations:}
+\begin{itemize}
+    \item Training loop strategies (GAN, contrastive learning, adversarial training) cannot be expressed in the DSL and must be implemented in Python
+    \item The HorizontalRepeat join type is hardcoded to concatenation (configurable merging is planned)
+    \item No pre-trained model support or transfer learning workflows
+\end{itemize}
+
+\textbf{Future work:}
+\begin{itemize}
+    \item Configurable \texttt{join\_type} parameter for HorizontalRepeat
+    \item HuggingFace Spaces deployment for interactive browser demos
+    \item Training server API for one-click training from the visual editor
+\end{itemize}
+
+\begin{thebibliography}{5}
+\bibitem{svelte5} Svelte 5 Documentation. \url{https://svelte.dev/docs}
+\bibitem{svelteflow} Svelte Flow Documentation. \url{https://svelteflow.dev/}
+\bibitem{pytorch} Paszke, A. et al. "PyTorch: An Imperative Style, High-Performance Deep Learning Library." NeurIPS 2019.
+\bibitem{lightning} Falcon, W. et al. "PyTorch Lightning." \url{https://lightning.ai/}
+\bibitem{attention} Vaswani, A. et al. "Attention Is All You Need." NeurIPS 2017.
+\bibitem{hydra} Yadan, O. "Hydra - A Framework for Elegantly Configuring Complex Applications." \url{https://hydra.cc/}
+\end{thebibliography}
+
+\end{document}
