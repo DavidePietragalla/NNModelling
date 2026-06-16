@@ -179,7 +179,6 @@ Subflows are collapsible containers that group related nodes into reusable sub-a
 \begin{itemize}
 	\item Subflows can be nested recursively (subflows inside subflows).
 	\item Internally, each subflow uses BFS topological traversal with in-degree counting for correct execution order.
-	\item Collapsed subflows hide their internal nodes visually, but the compiler still processes them --- collapsed subflow internals are not filtered from compilation.
 	\item The \texttt{Fork} stereotype enables passthrough nodes for explicit fork points, enabling skip connections inside subflows (e.g., residual blocks with Repeat).
 	\item Behavioral stereotypes extend subflow semantics (see below).
 \end{itemize}
@@ -200,6 +199,8 @@ The data pipeline transforms visual diagrams into executable models through thes
 \[
 	\text{Visual Graph} \xrightarrow{\text{NNTree}} \text{JSON} \xrightarrow{\text{Pipeline}} \text{Hydra YAML} \xrightarrow{\text{Hydra}} \text{LightningModule}
 \]
+
+\pagebreak
 
 \section{Implementation}
 
@@ -270,7 +271,6 @@ The \texttt{Net} class, a \texttt{LightningModule}, dynamically builds its archi
 	\item The forward pass uses BFS traversal with in-degree tracking to ensure correct execution order through complex fork-join topologies.
 	\item Join nodes collect all inputs ordered by \texttt{targetHandle} before executing the merge operation.
 	\item Loss functions are excluded from the execution graph and stored separately for metric selection. Although the DSL models loss nodes as regular layers with a scalar tensor output, the runtime does not wire this value into the optimizer --- loss nodes remain terminal.
-	\item Flatten is explicit via the Flatten stereotype --- no auto-flatten heuristic.
 \end{itemize}
 
 \subsubsection{Custom Operations}
@@ -309,9 +309,9 @@ Several limitations remain. Training loop strategies such as GANs, contrastive l
 Several directions for future development are planned:
 
 \begin{itemize}
-	\item \textbf{Network Communication}: The current file-based exchange between front-end and back-end will be replaced with a network communication layer. A training server API is planned to enable one-click training directly from the visual editor, with the front-end sending diagrams to the back-end over HTTP or WebSocket. This will eliminate the manual file export--import workflow and enable real-time training progress monitoring from the editor.
+	\item \textbf{Network Communication}: The current file-based exchange between front-end and back-end will be replaced with a network communication layer. A training server API is needed to enable one-click training directly from the visual editor, with the front-end sending diagrams to the back-end over HTTP or WebSocket. This will eliminate the manual file export--import workflow and enable real-time training progress monitoring from the editor.
 	\item \textbf{Configurable Join Type}: The HorizontalRepeat's hardcoded concatenation join will be replaced with a configurable \texttt{join\_type} parameter supporting sum, mean, product, or custom aggregation strategies.
-	\item \textbf{Parallel Graph Execution}: The single-threaded topological iteration will be replaced with a concurrent CUDA stream dispatcher for arbitrary fork-join topologies, enabling true parallel execution of independent branches on separate GPU streams.
+	\item \textbf{Parallel Graph Execution}: The single-threaded topological iteration can be replaced with a concurrent CUDA stream dispatcher for arbitrary fork-join topologies, enabling true parallel execution of independent branches on separate GPU streams.
 	\item \textbf{Subflow Persistence}: Users shall be able to save and load individual subflows to and from disk independently.
 	\item \textbf{Interactive Deployment}: HuggingFace Spaces deployment is planned for interactive browser demos, allowing users to test NNModelling without local installation.
 	\item \textbf{Pre-trained Model Support}: Integration of transfer learning workflows with support for loading pre-trained weights into DSL-defined architectures, enabling fine-tuning scenarios.
