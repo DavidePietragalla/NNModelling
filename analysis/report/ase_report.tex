@@ -91,7 +91,7 @@ ScaledDotProduct, MaskedScaledDotProduct), and 2 subflow behavioral templates
 	\item \textbf{Implicit Forks}: Any node output may connect to multiple downstream nodes without requiring a special fork node.
 	\item \textbf{Explicit Joins}: Joins shall be explicit special nodes that accept multiple inputs and produce a single output. Each join has an expression defining the merge operation (addition, concatenation, matrix multiplication, etc.).
 	\item \textbf{Stereotype System}: The system shall support stereotype definitions stored as JSON files that define module behavior including Python class name, visual properties (color, dimensions), typed parameters with defaults, and category.
-	\item \textbf{Extensible Module Registry}: Adding a new neural network layer shall require only a new JSON stereotype file, with no changes to the editor, compiler, or code generator.
+	\item \textbf{Extensible Module Registry}: Adding a new neural network layer shall require only a new JSON stereotype file, with no changes to the editor, compiler, or config generator.
 	\item \textbf{Subflow Containers}: The system shall support hierarchical subflow containers that group related nodes into reusable sub-architectures.
 	\item \textbf{Behavioral Stereotypes}: Subflows shall support behavioral stereotypes including \texttt{Repeat} (duplicates internal subgraph N times in sequence) and \texttt{HorizontalRepeat} (creates N parallel copies with independent weights executed via \texttt{vmap}).
 	\item \textbf{Parameter Configuration}: Each node shall support typed parameters (int, float, bool, list, dict, None) configurable through the visual editor.
@@ -157,20 +157,20 @@ The DSL operates on a directed graph where nodes represent computational units a
 	\item \textbf{Join}: A special multi-input node that accepts N incoming connections and produces a single output. Joins are explicit because modules accept only one input. Input ordering is preserved via \texttt{targetHandle} attributes on edges (e.g., \texttt{in-0}, \texttt{in-1}), which is critical for non-commutative operations.
 \end{itemize}
 
-% TODO: mettere qua
+Loss nodes are treated as regular layers in the DSL: they appear on the canvas, accept a single input, and produce a loss value as output (a scalar tensor of size 1). Categories ending in \texttt{Loss} (BCELoss, CrossEntropyLoss, MSELoss, etc.) automatically determine the model's task type for metric selection. This uniform treatment --- loss as a layer with a tensor output --- was a deliberate design choice to keep the DSL graph homogeneous. However, the runtime pipeline does not wire this loss value back into the training optimizer; in practice, loss nodes act as terminal nodes whose output is consumed only for metric computation.
 
 \subsubsection{Stereotype System}
 
 The stereotype system is the backbone of the DSL's extensibility. Stereotypes are stored as JSON files organized by category (\texttt{Modules/}, \texttt{Joins/}, \texttt{SubFlows/}). Each JSON file defines:
 
 \begin{itemize}
-	\item \texttt{pythonClassName}: The Python class for code generation (e.g., \texttt{nn.Linear} resolves to \texttt{torch.nn.Linear}).
+	\item \texttt{pythonClassName}: The Python class for confing generation (e.g., \texttt{nn.Linear} resolves to \texttt{torch.nn.Linear}).
 	\item \texttt{view}: Visual properties including color and dimensions for the canvas rendering.
 	\item \texttt{params}: Typed parameters with defaults, types, and display positions on the node.
 	\item \texttt{category}: Determines node behavior --- standard module, join, input, loss, or subflow.
 \end{itemize}
 
-Stereotypes are loaded at compile time via Vite's \texttt{import.meta.glob}, scanning the \texttt{Stereotypes/**/*.json} directory structure automatically. This design ensures that adding a new neural network layer requires only a new JSON file --- no changes to the editor, compiler, or code generator. Currently 35 stereotypes are defined across the three categories.
+Stereotypes are loaded at compile time, scanning the \texttt{Stereotypes/**/*.json} directory structure automatically. This design ensures that adding a new neural network layer requires only a new JSON file --- no changes to the editor, compiler, or code generator. Currently 35 stereotypes are defined across the three categories.
 
 \subsubsection{Subflow Pattern}
 
@@ -269,7 +269,7 @@ The \texttt{Net} class, a \texttt{LightningModule}, dynamically builds its archi
 	\item A \texttt{ModuleDict} is populated by dispatching on node type: \texttt{sequential} chains are wrapped in \texttt{nn.Sequential}; \texttt{module} nodes are instantiated individually via Hydra's \texttt{instantiate}; \texttt{join} nodes reference custom operation classes; and \texttt{subflow} nodes reference Subflow, Repeat, or HorizontalRepeat operation classes.
 	\item The forward pass uses BFS traversal with in-degree tracking to ensure correct execution order through complex fork-join topologies.
 	\item Join nodes collect all inputs ordered by \texttt{targetHandle} before executing the merge operation.
-	\item Loss functions are excluded from the execution graph and stored separately for metric selection.
+	\item Loss functions are excluded from the execution graph and stored separately for metric selection. Although the DSL models loss nodes as regular layers with a scalar tensor output, the runtime does not wire this value into the optimizer --- loss nodes remain terminal.
 	\item Flatten is explicit via the Flatten stereotype --- no auto-flatten heuristic.
 \end{itemize}
 
