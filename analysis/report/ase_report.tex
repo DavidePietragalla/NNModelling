@@ -93,23 +93,17 @@ ScaledDotProduct, MaskedScaledDotProduct), and 2 subflow behavioral templates
 	\item \textbf{Stereotype System}: The system shall support stereotype definitions stored as JSON files that define module behavior including Python class name, visual properties (color, dimensions), typed parameters with defaults, and category.
 	\item \textbf{Extensible Module Registry}: Adding a new neural network layer shall require only a new JSON stereotype file, with no changes to the editor, compiler, or code generator.
 	\item \textbf{Subflow Containers}: The system shall support hierarchical subflow containers that group related nodes into reusable sub-architectures.
-	\item \textbf{Recursive Nesting}: Subflows shall be nestable inside other subflows to any depth.
 	\item \textbf{Behavioral Stereotypes}: Subflows shall support behavioral stereotypes including \texttt{Repeat} (duplicates internal subgraph N times in sequence) and \texttt{HorizontalRepeat} (creates N parallel copies with independent weights executed via \texttt{vmap}).
-	\item \textbf{Subflow Persistence}: Users shall be able to save and load individual subflows to and from disk independently.
 	\item \textbf{Parameter Configuration}: Each node shall support typed parameters (int, float, bool, list, dict, None) configurable through the visual editor.
 	\item \textbf{Graph Compilation}: The system shall compile the flat visual graph into a hierarchical tree representation (NNTree) using topological sorting.
-	\item \textbf{Code Generation}: The system shall generate executable Hydra configuration files from the compiled tree representation.
+	\item \textbf{Config Generation}: The system shall generate executable Hydra configuration files from the compiled tree representation.
 	\item \textbf{Dynamic Model Instantiation}: The back-end shall dynamically build a PyTorch Lightning module from the generated configuration at runtime.
-	\item \textbf{Save/Load Diagrams}: Users shall be able to save diagrams as JSON files and reload them for editing.
 	\item \textbf{Training Pipeline}: The system shall support training the generated model with configurable optimizer, trainer, dataset, and logging parameters.
-	\item \textbf{Inference}: The system shall support inference on trained models with output export including predictions JSON and image montages.
 \end{itemize}
 
 \subsection{Non-Functional Requirements}
 
 \begin{itemize}
-	\item \textbf{Extensibility}: The stereotype-driven architecture shall allow adding new module types via JSON files without any code modification to the editor or back-end pipeline.
-	\item \textbf{Platform Independence}: The front-end shall run in any modern web browser with no server-side dependencies.
 	\item \textbf{Separation of Concerns}: The front-end shall handle only DSL logic (visual editing, graph compilation, stereotype management). The back-end shall handle only network instantiation, training, and inference. The two subsystems communicate via a well-defined JSON interchange format.
 	\item \textbf{Test Coverage}: The system shall maintain comprehensive test coverage across both front-end and back-end components.
 	\item \textbf{Expressiveness}: The DSL shall be capable of expressing modern neural network architectures including transformers with multi-head attention, residual connections, and sequential repetition.
@@ -120,7 +114,9 @@ ScaledDotProduct, MaskedScaledDotProduct), and 2 subflow behavioral templates
 
 \subsection{UML Metamodel}
 
-The DSL syntax was formally defined using a UML metamodel designed in Visual Paradigm. The metamodel captures the core abstractions of the language and their relationships. Three focused views are presented below.
+The DSL syntax was formally defined using a UML metamodel designed in Visual Paradigm.
+The metamodel captures the core abstractions of the language and their relationships.
+Three focused views are presented below.
 
 \begin{figure}[h]
 	\centering
@@ -158,9 +154,10 @@ The DSL operates on a directed graph where nodes represent computational units a
 \begin{itemize}
 	\item \textbf{Module}: The fundamental building block. Each module receives exactly one input connection and can output to any number of downstream nodes. Every module is associated with a stereotype that defines its operation (e.g., \texttt{nn.Linear}, \texttt{nn.Conv2d}), visual properties, and configurable parameters.
 	\item \textbf{Input}: A special node with no input handle and only outgoing connections. The input node defines the entry point of the data flow graph. It is auto-spawned when a new diagram is created.
-	\item \textbf{Loss/Output}: Output nodes representing loss functions (e.g., CrossEntropyLoss, MSELoss) or undefined outputs. They have no output handle and determine the model's task type for metric selection.
 	\item \textbf{Join}: A special multi-input node that accepts N incoming connections and produces a single output. Joins are explicit because modules accept only one input. Input ordering is preserved via \texttt{targetHandle} attributes on edges (e.g., \texttt{in-0}, \texttt{in-1}), which is critical for non-commutative operations.
 \end{itemize}
+
+% TODO: mettere qua
 
 \subsubsection{Stereotype System}
 
@@ -286,36 +283,6 @@ Eleven custom Python operations are implemented in the back-end, spanning three 
 	\item \textbf{Module operations (2)}: PositionalEncoding computes sinusoidal positional encodings; SequencePool computes mean pooling over the sequence dimension.
 \end{itemize}
 
-\section{Validation}
-
-\subsection{Test Suite}
-
-The project includes 179 automated tests across both front-end and back-end:
-
-\begin{itemize}
-	\item \textbf{Front-end (76 tests, Vitest)}: Covers NNTree compilation including sequential chains, skip connections, joins, subflow boundary mapping, Repeat unrolling (3 copies), nested subflows, collapsed nodes, Fork passthrough, and error handling (empty graph, cycles, missing stereotypes). An additional 10 tests cover connection validation rules.
-	\item \textbf{Custom operations (38 tests, pytest)}: Unit tests for all 11 custom Python operations, covering forward pass correctness, tensor shape validation, and edge cases.
-	\item \textbf{Config generation (36 tests, pytest)}: Parameter parsing via \texttt{ast.literal\_eval}, layer config building, nested subflow config with \texttt{\_recursive\_: False}, and YAML structure verification across 5 diagram fixtures.
-	\item \textbf{Dynamic model (21 tests, pytest)}: In-degree computation, Net initialization, ModuleDict population, BFS forward traversal for various topologies (sequential, fork-join, nested subflows).
-	\item \textbf{Integration (8 tests, pytest)}: End-to-end pipeline from JSON fixture through Hydra configuration to Net instantiation and forward pass with real tensor shapes and gradient flow checks.
-\end{itemize}
-
-\subsection{DSL Expressiveness Validation}
-
-To validate that NNModelling can express modern architectures, a full transformer classifier was built entirely within the visual DSL. The model includes:
-
-\begin{itemize}
-	\item Token embedding layer (30,522 vocabulary $\times$ 128 dimensions).
-	\item Sinusoidal positional encoding.
-	\item A 2-layer TransformerEncoder constructed via the \texttt{Repeat} stereotype (\texttt{iterations=2}).
-	\item Multi-head attention with 4 heads, implemented via \texttt{HorizontalRepeat} (\texttt{n=4}) wrapping a single-head attention subflow with Q/K/V linear projections.
-	\item Residual connections via explicit \texttt{Fork} nodes and \texttt{Addition} joins.
-	\item Sequence pooling via \texttt{SequencePool} (mean over sequence dimension).
-	\item Linear classifier head with 2 output classes.
-\end{itemize}
-
-The diagram compiled successfully to a working PyTorch model that was trained on the EnronSpam text classification dataset. Training metrics confirmed correct gradient flow and convergence, validating the DSL's expressiveness for feedforward, convolutional, and encoder-only transformer architectures.
-
 \section{Conclusions}
 
 \subsection{Achievements}
@@ -345,6 +312,7 @@ Several directions for future development are planned:
 	\item \textbf{Network Communication}: The current file-based exchange between front-end and back-end will be replaced with a network communication layer. A training server API is planned to enable one-click training directly from the visual editor, with the front-end sending diagrams to the back-end over HTTP or WebSocket. This will eliminate the manual file export--import workflow and enable real-time training progress monitoring from the editor.
 	\item \textbf{Configurable Join Type}: The HorizontalRepeat's hardcoded concatenation join will be replaced with a configurable \texttt{join\_type} parameter supporting sum, mean, product, or custom aggregation strategies.
 	\item \textbf{Parallel Graph Execution}: The single-threaded topological iteration will be replaced with a concurrent CUDA stream dispatcher for arbitrary fork-join topologies, enabling true parallel execution of independent branches on separate GPU streams.
+	\item \textbf{Subflow Persistence}: Users shall be able to save and load individual subflows to and from disk independently.
 	\item \textbf{Interactive Deployment}: HuggingFace Spaces deployment is planned for interactive browser demos, allowing users to test NNModelling without local installation.
 	\item \textbf{Pre-trained Model Support}: Integration of transfer learning workflows with support for loading pre-trained weights into DSL-defined architectures, enabling fine-tuning scenarios.
 \end{itemize}
