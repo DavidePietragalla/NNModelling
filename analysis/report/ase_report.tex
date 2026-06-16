@@ -170,7 +170,7 @@ The stereotype system is the backbone of the DSL's extensibility. Stereotypes ar
 	\item \texttt{category}: Determines node behavior --- standard module, join, input, loss, or subflow.
 \end{itemize}
 
-Stereotypes are loaded at compile time, scanning the \texttt{Stereotypes/**/*.json} directory structure automatically. This design ensures that adding a new neural network layer requires only a new JSON file --- no changes to the editor, compiler, or code generator. Currently 35 stereotypes are defined across the three categories.
+Stereotypes are loaded at compile time, scanning the \texttt{Stereotypes/**/*.json} directory structure automatically. This design ensures that adding a new neural network layer requires only a new JSON file --- no changes to the editor, compiler, or config generator. Currently 35 stereotypes are defined across the three categories.
 
 \subsubsection{Subflow Pattern}
 
@@ -294,7 +294,7 @@ Key achievements include:
 	\item A full end-to-end pipeline from visual design to trained model.
 	\item An extensible stereotype system requiring no code changes for new layer types --- 27 modules, 6 joins, and 2 subflow templates are currently supported.
 	\item Support for complex architectural patterns: subflows with recursive nesting, residual connections, parallel branches via \texttt{vmap}-based HorizontalRepeat, and sequential repetition via Repeat.
-	\item Comprehensive test coverage (179 tests) across both front-end and back-end, ensuring reliability of the compilation and code generation pipeline.
+	\item Comprehensive test coverage (179 tests) across both front-end and back-end, ensuring reliability of the compilation and config generation pipeline.
 	\item A model-driven approach with a formal UML metamodel, ensuring the DSL syntax is well-defined and verifiable.
 	\item Clean separation of concerns: the front-end handles all DSL logic (visual editing, graph compilation, stereotype management), while the back-end handles network instantiation, training, and inference. This decoupling enables independent development and testing of each subsystem.
 	\item A dynamic model instantiation system that builds PyTorch Lightning modules from configuration at runtime, enabling rapid experimentation without code changes.
