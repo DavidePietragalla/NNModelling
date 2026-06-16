@@ -7,6 +7,8 @@
 \usepackage{titlesec}
 \usepackage{amsmath}
 \usepackage{cite}
+\usepackage{subcaption}
+\usepackage{placeins}
 
 \titleformat{\section}{\huge\bfseries\raggedright}{\thesection}{1em}{}
 \titleformat{\subsection}{\Large\bfseries\raggedright}{\thesubsection}{0.8em}{}
@@ -125,7 +127,7 @@ Three focused views are presented below.
 	\label{fig:node-hierarchy}
 \end{figure}
 
-The first view (\autoref{fig:node-hierarchy}) illustrates the node type hierarchy. \texttt{Node} is an abstract base class with concrete subtypes including \texttt{Module} (standard neural network layers such as Linear and Conv2d), \texttt{Layer}, \texttt{Input}, \texttt{Join}, \texttt{Subflow}, \texttt{ExternalConnection}, and \texttt{LayerConnection}. The composition relationship \texttt{Subflow "1" --> "0..*" Node : mod\_lay} enables recursive containment --- a Subflow may contain any Node type, including other Subflows. The \texttt{Input "0..1" --> "0..*" Layer : ini\_lay} association allows optional input connections to layers for initialization dependencies.
+The first view (\autoref{fig:node-hierarchy}) illustrates the node type hierarchy. \texttt{Node} is an abstract base class with concrete subtypes including \texttt{Module} (standard neural network layers such as Linear and Conv2d), \texttt{Layer}, \texttt{Input}, \texttt{Join}, \texttt{Subflow}, \texttt{ExternalConnection}, and \texttt{LayerConnection}. The composition relationship \texttt{Subflow "1" --> "0..*" Node : mod\_lay} enables recursive containment --- a Subflow may contain any Node type, including other Subflows.
 
 \begin{figure}[h]
 	\centering
@@ -300,10 +302,50 @@ Key achievements include:
 	\item A dynamic model instantiation system that builds PyTorch Lightning modules from configuration at runtime, enabling rapid experimentation without code changes.
 \end{itemize}
 
-\subsection{Limitations}
+\subsection{Example: Transformer Classifier}
 
-Several limitations remain. Training loop strategies such as GANs, contrastive learning, and adversarial training cannot be expressed in the DSL and must be implemented in Python outside the framework. The HorizontalRepeat join type is hardcoded to concatenation on the last dimension and is not user-configurable. The forward pass executes nodes sequentially in a single-threaded Python queue loop, even when the DAG contains independent fork-join branches that could run concurrently on separate CUDA streams --- though HorizontalRepeat's \texttt{vmap}-based execution is an exception, vectorizing N independent copies into a single batched GPU kernel and achieving true parallel execution at the subflow level. Additionally, there is no support for pre-trained models or transfer learning workflows.
+To illustrate a complete DSL model in practice, the transformer classifier diagram \ref{fig:transformer-diagram}
+defines a hierarchical DAG spanning three abstraction levels: a top-level pipeline
+(Input $\rightarrow$ Embedding $\rightarrow$ PositionalEncoding $\rightarrow$ TransformerEncoder $\rightarrow$ SequencePool $\rightarrow$ Linear $\rightarrow$ CrossEntropyLoss),
+a \texttt{Repeat} encoder subflow with residual blocks and FFN,
+and a \texttt{HorizontalRepeat} multi-head attention subflow with Q/K/V projections and scaled dot-product.
 
+This transformer is trained on the EnronSpam dataset to classify emails as Spam or Ham. On the test set, the model correctly classifies 98.4\% of emails.
+
+\begin{figure}[t]
+	\centering
+	\includegraphics[width=0.85\textwidth]{transformer_classifier_diagram.png}
+	\caption{Full transformer classifier graph as rendered in the NNModelling visual editor.}
+	\label{fig:transformer-diagram}
+\end{figure}
+
+\begin{figure}[h]
+	\centering
+	\begin{minipage}{0.3\textwidth}
+		\centering
+		\includegraphics[width=\textwidth]{train_loss.png}
+		\caption{Training loss.}
+		\label{fig:train-loss}
+	\end{minipage}
+	\hfill
+	\begin{minipage}{0.3\textwidth}
+		\centering
+		\includegraphics[width=\textwidth]{val_loss.png}
+		\caption{Validation loss.}
+		\label{fig:val-loss}
+	\end{minipage}
+	\hfill
+	\begin{minipage}{0.3\textwidth}
+		\centering
+		\includegraphics[width=\textwidth]{val_metric.png}
+		\caption{Validation accuracy.}
+		\label{fig:val-metric}
+	\end{minipage}
+	\caption{Training metrics for the transformer classifier on the EnronSpam dataset.}
+	\label{fig:training-metrics}
+\end{figure}
+
+\FloatBarrier
 \subsection{Future Work}
 
 Several directions for future development are planned:
