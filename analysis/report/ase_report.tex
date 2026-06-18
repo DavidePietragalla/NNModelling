@@ -115,39 +115,45 @@ ScaledDotProduct, MaskedScaledDotProduct), and 2 subflow behavioral templates
 
 \section{Design}
 
+
 \subsection{UML Metamodel}
 
-The DSL syntax was formally defined using a UML metamodel designed in Visual Paradigm.
-The metamodel captures the core abstractions of the language and their relationships.
-Three focused views are presented below.
+The abstract syntax of NNModelling is formally specified through a UML metamodel designed in Visual Paradigm. The metamodel defines the fundamental concepts of the DSL and the relationships among them. For clarity, it is presented through three complementary views: the node hierarchy, the connection model, and the stereotype system.
 
 \begin{figure}[h]
 	\centering
 	\includegraphics[width=0.85\textwidth]{ModellazioneModules_Layer_Subflow.png}
-	\caption{UML metamodel view showing the node type hierarchy: Module, Layer, Subflow, Input, and their relationships.}
+	\caption{UML metamodel view showing the node hierarchy.}
 	\label{fig:node-hierarchy}
 \end{figure}
 
-The first view (\autoref{fig:node-hierarchy}) illustrates the node type hierarchy. \texttt{Node} is an abstract base class with concrete subtypes including \texttt{Module} (standard neural network layers such as Linear and Conv2d), \texttt{Layer}, \texttt{Input}, \texttt{Join}, \texttt{Subflow}, \texttt{ExternalConnection}, and \texttt{LayerConnection}. The composition relationship \texttt{Subflow "1" --> "0..*" Node : mod\_lay} enables recursive containment --- a Subflow may contain any Node type, including other Subflows.
+The first view (\autoref{fig:node-hierarchy}) defines the modelling elements available to users when constructing a neural network architecture. The central concept is \texttt{Node}, an abstract element representing a computational unit within the graph. Specialized node types capture different architectural roles: \texttt{Module} represents standard neural-network layers, \texttt{Input} identifies graph entry points, \texttt{Join} merges multiple data flows, and \texttt{Subflow} groups nodes into hierarchical subgraphs.
+
+A key design decision is the introduction of recursive subflows. Through the composition relationship between \texttt{Subflow} and \texttt{Node}, a subflow may contain any node type, including other subflows. This enables hierarchical modelling and allows complex architectures to be decomposed into reusable and manageable building blocks.
 
 \begin{figure}[h]
 	\centering
 	\includegraphics[width=0.85\textwidth]{ModellazioneHandle_E_Node.png}
-	\caption{UML metamodel view showing the handle and connection system: SourceHandle, TargetHandle, Connection, and their association with Node.}
+	\caption{UML metamodel view showing the connection model.}
 	\label{fig:handle-connection}
 \end{figure}
 
-The second view (\autoref{fig:handle-connection}) models the connection system. Each \texttt{Node} is associated with zero or more \texttt{Handle} instances via the \texttt{nod\_han} relationship. \texttt{SourceHandle} and \texttt{TargetHandle} specialize \texttt{Handle}. A \texttt{Connection} links a \texttt{SourceHandle} to a \texttt{TargetHandle}, representing a directed edge in the visual graph. This design supports the implicit fork model: a SourceHandle may participate in multiple Connections, enabling one-to-many fan-out, while each TargetHandle accepts exactly one Connection, enforcing single-input semantics.
+The second view (\autoref{fig:handle-connection}) specifies how nodes are interconnected. Rather than connecting nodes directly, the metamodel introduces \texttt{Handle} elements as explicit connection endpoints. \texttt{SourceHandle} and \texttt{TargetHandle} specialize the generic \texttt{Handle} concept, while a \texttt{Connection} links a source handle to a target handle, forming a directed edge in the graph.
+
+This design supports one of the key semantic choices of the DSL: implicit forks and explicit joins. A source handle may participate in multiple connections, allowing a node output to feed multiple downstream nodes without requiring dedicated fork elements. Conversely, merging multiple flows requires an explicit \texttt{Join} node, making data aggregation operations visible in the model.
 
 \begin{figure}[h]
 	\centering
 	\includegraphics[width=0.85\textwidth]{ModellazioneStereotype_StereotypeIstance_ParameterIstance.png}
-	\caption{UML metamodel view showing the stereotype system: Stereotype, Parameters, StereotypeApplication, and ParameterInstance.}
+	\caption{UML metamodel view showing the stereotype system.}
 	\label{fig:stereotype}
 \end{figure}
 
-The third view (\autoref{fig:stereotype}) captures the stereotype system. A \texttt{Stereotype} defines a module template and is associated with zero or more \texttt{Parameters} via \texttt{par\_ster}. A \texttt{StereotypeApplication} links a Stereotype to a Module instance (\texttt{ster\_mod}) and carries concrete \texttt{ParameterInstance} values (\texttt{ster\_par\_istance}). Each ParameterInstance references a Parameters definition (\texttt{istance\_par}). This separation between definition (Stereotype + Parameters) and instance (StereotypeApplication + ParameterInstance) allows the same module type to be instantiated with different parameter values across multiple nodes.
+The third view (\autoref{fig:stereotype}) defines the extensibility mechanism of the DSL. Instead of hardcoding neural-network layer types into the language, NNModelling uses stereotypes to describe module semantics, visual properties, and configurable parameters.
 
+A \texttt{Stereotype} acts as a reusable layer definition and is associated with a set of \texttt{Parameters}. Concrete nodes do not reference stereotypes directly; instead, a \texttt{StereotypeApplication} associates a stereotype with a specific module instance and stores the corresponding \texttt{ParameterInstance} values. This separation between definition and instantiation allows the same layer type to be reused multiple times with different configurations.
+
+Together, these three views define the abstract syntax of the DSL. The \textbf{node hierarchy} specifies the available modelling constructs, the \textbf{connection model} defines graph topology and data-flow semantics, and the \textbf{stereotype system} provides extensibility through configurable layer definitions. The implementation presented in the next section is directly derived from this metamodel.
 \subsection{DSL Concepts}
 
 \subsubsection{Nodes and Edges}
