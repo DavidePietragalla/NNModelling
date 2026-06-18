@@ -9,6 +9,7 @@
 \usepackage{cite}
 \usepackage{subcaption}
 \usepackage{placeins}
+\usepackage{float}
 
 \titleformat{\section}{\huge\bfseries\raggedright}{\thesection}{1em}{}
 \titleformat{\subsection}{\Large\bfseries\raggedright}{\thesubsection}{0.8em}{}
@@ -194,13 +195,6 @@ Two behavioral stereotype templates ship with the system:
 	\item \textbf{HorizontalRepeat}: Creates N parallel copies of the subgraph, executes them via \texttt{vmap} with independent weights using \texttt{functional.call} and \texttt{stack\_module\_state}, and concatenates outputs along the last dimension. The number of copies is controlled by the \texttt{n} parameter. The join operation is currently hardcoded to concatenation on \texttt{dim=-1}.
 \end{itemize}
 
-\subsection{Pipeline Overview}
-
-The data pipeline transforms visual diagrams into executable models through these stages:
-
-\[
-	\text{Visual Graph} \xrightarrow{\text{NNTree}} \text{JSON} \xrightarrow{\text{Pipeline}} \text{Hydra YAML} \xrightarrow{\text{Hydra}} \text{LightningModule}
-\]
 
 \pagebreak
 
@@ -304,48 +298,41 @@ Key achievements include:
 
 \subsection{Example: Transformer Classifier}
 
-To illustrate a complete DSL model in practice, the transformer classifier diagram \ref{fig:transformer-diagram}
+To illustrate a complete DSL model in practice, the transformer classifier architecture
+(shown in Appendix~\ref{app:transformer-architecture}, Figure~\ref{fig:transformer-architecture})
 defines a hierarchical DAG spanning three abstraction levels: a top-level pipeline
 (Input $\rightarrow$ Embedding $\rightarrow$ PositionalEncoding $\rightarrow$ TransformerEncoder $\rightarrow$ SequencePool $\rightarrow$ Linear $\rightarrow$ CrossEntropyLoss),
 a \texttt{Repeat} encoder subflow with residual blocks and FFN,
 and a \texttt{HorizontalRepeat} multi-head attention subflow with Q/K/V projections and scaled dot-product.
 
 This transformer is trained on the EnronSpam dataset to classify emails as Spam or Ham. On the test set, the model correctly classifies 98.4\% of emails.
-
-\begin{figure}[t]
+ 
+\begin{figure}[H]
 	\centering
-	\includegraphics[width=0.85\textwidth]{transformer_classifier_diagram.png}
-	\caption{Full transformer classifier graph as rendered in the NNModelling visual editor.}
-	\label{fig:transformer-diagram}
-\end{figure}
-
-\begin{figure}[h]
-	\centering
-	\begin{minipage}{0.3\textwidth}
+	\begin{subfigure}{0.3\textwidth}
 		\centering
 		\includegraphics[width=\textwidth]{train_loss.png}
 		\caption{Training loss.}
 		\label{fig:train-loss}
-	\end{minipage}
+	\end{subfigure}
 	\hfill
-	\begin{minipage}{0.3\textwidth}
+	\begin{subfigure}{0.3\textwidth}
 		\centering
 		\includegraphics[width=\textwidth]{val_loss.png}
 		\caption{Validation loss.}
 		\label{fig:val-loss}
-	\end{minipage}
+	\end{subfigure}
 	\hfill
-	\begin{minipage}{0.3\textwidth}
+	\begin{subfigure}{0.3\textwidth}
 		\centering
 		\includegraphics[width=\textwidth]{val_metric.png}
 		\caption{Validation accuracy.}
 		\label{fig:val-metric}
-	\end{minipage}
+	\end{subfigure}
 	\caption{Training metrics for the transformer classifier on the EnronSpam dataset.}
-	\label{fig:training-metrics}
+	\label{fig:transformer-results}
 \end{figure}
 
-\FloatBarrier
 \subsection{Future Work}
 
 Several directions for future development are planned:
@@ -358,6 +345,21 @@ Several directions for future development are planned:
 	\item \textbf{Interactive Deployment}: HuggingFace Spaces deployment is planned for interactive browser demos, allowing users to test NNModelling without local installation.
 	\item \textbf{Pre-trained Model Support}: Integration of transfer learning workflows with support for loading pre-trained weights into DSL-defined architectures, enabling fine-tuning scenarios.
 \end{itemize}
+
+\appendix
+\section{Transformer Architecture Diagram}
+\label{app:transformer-architecture}
+
+\begin{figure}[H]
+	\centering
+	\includegraphics[
+		width=\textwidth,
+		height=0.9\textheight,
+		keepaspectratio
+	]{transformer_classifier_diagram.png}
+	\caption{Full transformer classifier graph as rendered in the NNModelling visual editor.}
+	\label{fig:transformer-architecture}
+\end{figure}
 
 \begin{thebibliography}{5}
 	\bibitem{svelte5} Svelte 5 Documentation. \url{https://svelte.dev/docs}
