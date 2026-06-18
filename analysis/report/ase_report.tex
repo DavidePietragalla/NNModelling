@@ -12,6 +12,7 @@
 \usepackage{float}
 
 \usepackage[ruled,vlined]{algorithm2e}
+\SetKwProg{Fn}{Function}{}{}
 
 \titleformat{\section}{\huge\bfseries\raggedright}{\thesection}{1em}{}
 \titleformat{\subsection}{\Large\bfseries\raggedright}{\thesubsection}{0.8em}{}
@@ -78,7 +79,7 @@ Hydra configuration files and dynamically instantiates them into a working PyTor
 
 The core data pipeline is:
 \[
-	\text{Visual Graph} \rightarrow \text{NNTree (AST)} \rightarrow \text{JSON} \rightarrow \text{Pipeline} \rightarrow \text{Hydra YAML} \rightarrow \text{LightningModule}
+	\text{Visual Graph} \rightarrow \text{NNTree (Intermediate Representation)} \rightarrow \text{JSON} \rightarrow \text{Pipeline} \rightarrow \text{Hydra YAML} \rightarrow \text{LightningModule}
 \]
 
 Currently the system supports 27 modules (Linear, Conv2d, ReLU, Tanh, Embedding, LayerNorm,
@@ -418,6 +419,16 @@ The graph-to-NNTree compilation semantics described in Section~3.1.2 are impleme
 The compiler operates directly on the visual graph stored by the \texttt{Diagram} class and
 produces a hierarchical intermediate representation that can be serialized as JSON and consumed
 by the back-end pipeline.
+
+In model-driven engineering terms, the compiler realizes the model-to-model transformation
+
+\[
+G=(V,E)
+\rightarrow
+T=(N,C)
+\]
+
+defined by the DSL semantics. The resulting NNTree serves as the executable intermediate representation used by all subsequent stages of the pipeline.
 
 Compilation starts from the unique Input node and performs a recursive traversal of the graph.
 The implementation closely follows Algorithm~\ref{alg:nntree-compilation}. During traversal,
