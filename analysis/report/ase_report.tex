@@ -154,53 +154,179 @@ The third view (\autoref{fig:stereotype}) defines the extensibility mechanism of
 A \texttt{Stereotype} acts as a reusable layer definition and is associated with a set of \texttt{Parameters}. Concrete nodes do not reference stereotypes directly; instead, a \texttt{StereotypeApplication} associates a stereotype with a specific module instance and stores the corresponding \texttt{ParameterInstance} values. This separation between definition and instantiation allows the same layer type to be reused multiple times with different configurations.
 
 Together, these three views define the abstract syntax of the DSL. The \textbf{node hierarchy} specifies the available modelling constructs, the \textbf{connection model} defines graph topology and data-flow semantics, and the \textbf{stereotype system} provides extensibility through configurable layer definitions. The implementation presented in the next section is directly derived from this metamodel.
-\subsection{DSL Concepts}
 
-\subsubsection{Nodes and Edges}
+\subsubsection{Design Principles and Requirement Satisfaction}
 
-The DSL operates on a directed graph where nodes represent computational units and edges represent data flow. There are four main node categories:
+The metamodel was designed to satisfy the functional requirements identified in Section~2 while maintaining a compact and extensible DSL.
 
-\begin{itemize}
-	\item \textbf{Module}: The fundamental building block. Each module receives exactly one input connection and can output to any number of downstream nodes. Every module is associated with a stereotype that defines its operation (e.g., \texttt{nn.Linear}, \texttt{nn.Conv2d}), visual properties, and configurable parameters.
-	\item \textbf{Input}: A special node with no input handle and only outgoing connections. The input node defines the entry point of the data flow graph. It is auto-spawned when a new diagram is created.
-	\item \textbf{Join}: A special multi-input node that accepts N incoming connections and produces a single output. Joins are explicit because modules accept only one input. Input ordering is preserved via \texttt{targetHandle} attributes on edges (e.g., \texttt{in-0}, \texttt{in-1}), which is critical for non-commutative operations.
-\end{itemize}
+First, neural network architectures are represented as directed graphs, where nodes denote computational elements and edges represent tensor flow. This design directly addresses the requirement of modelling arbitrary network topologies, including sequential pipelines, branching structures, residual connections, and attention mechanisms. The adoption of implicit forks and explicit joins reduces visual complexity while preserving the semantics of data aggregation and multi-input operations.
 
-Loss nodes are treated as regular layers in the DSL: they appear on the canvas, accept a single input, and produce a loss value as output (a scalar tensor of size 1). Categories ending in \texttt{Loss} (BCELoss, CrossEntropyLoss, MSELoss, etc.) automatically determine the model's task type for metric selection. This uniform treatment --- loss as a layer with a tensor output --- was a deliberate design choice to keep the DSL graph homogeneous. However, the runtime pipeline does not wire this loss value back into the training optimizer; in practice, loss nodes act as terminal nodes whose output is consumed only for metric computation.
+Second, the metamodel supports extensibility through the stereotype mechanism. Rather than hardcoding layer types into the language, neural-network operations are described through configurable stereotypes containing semantic, visual, and parameter information. This design satisfies the requirement of supporting a wide range of neural-network components while enabling future extensions without modifications to the editor, compiler, or execution pipeline.
 
-\subsubsection{Stereotype System}
+Third, hierarchical modelling is achieved through recursive subflows. By allowing subflows to contain arbitrary nodes, including other subflows, the metamodel supports the construction of large architectures from reusable building blocks. This directly addresses the requirement of modelling complex architectures while maintaining readability and reducing diagram complexity.
 
-The stereotype system is the backbone of the DSL's extensibility. Stereotypes are stored as JSON files organized by category (\texttt{Modules/}, \texttt{Joins/}, \texttt{SubFlows/}). Each JSON file defines:
+Finally, the separation between stereotype definitions and their concrete applications enables the same neural-network component to be instantiated multiple times with different parameter values. Together with the graph-based representation and hierarchical subflows, this provides the flexibility required to model both simple feed-forward networks and more sophisticated architectures such as residual networks and transformers.
 
-\begin{itemize}
-	\item \texttt{pythonClassName}: The Python class for confing generation (e.g., \texttt{nn.Linear} resolves to \texttt{torch.nn.Linear}).
-	\item \texttt{view}: Visual properties including color and dimensions for the canvas rendering.
-	\item \texttt{params}: Typed parameters with defaults, types, and display positions on the node.
-	\item \texttt{category}: Determines node behavior --- standard module, join, input, loss, or subflow.
-\end{itemize}
+Overall, the metamodel serves as the formal foundation of the DSL, ensuring that the identified functional requirements are reflected directly in the language structure and can be consistently enforced throughout the implementation.
 
-Stereotypes are loaded at compile time, scanning the \texttt{Stereotypes/**/*.json} directory structure automatically. This design ensures that adding a new neural network layer requires only a new JSON file --- no changes to the editor, compiler, or config generator. Currently 35 stereotypes are defined across the three categories.
+\subsection{Graph-to-NNTree Compilation Semantics}
 
-\subsubsection{Subflow Pattern}
+The visual editor allows users to model neural network architectures as directed acyclic graphs
+(DAGs). While this representation is intuitive for design purposes, it is not directly suitable for
+runtime instantiation. The graph is therefore transformed into an intermediate hierarchical
+representation called \textit{NNTree}, which captures the execution semantics of the DSL while
+remaining easily translatable into Hydra configuration files and PyTorch modules.
 
-Subflows are collapsible containers that group related nodes into reusable sub-architectures. Key characteristics:
+Formally, a model is represented as a directed acyclic graph
 
-\begin{itemize}
-	\item Subflows can be nested recursively (subflows inside subflows).
-	\item Internally, each subflow uses BFS topological traversal with in-degree counting for correct execution order.
-	\item The \texttt{Fork} stereotype enables passthrough nodes for explicit fork points, enabling skip connections inside subflows (e.g., residual blocks with Repeat).
-	\item Behavioral stereotypes extend subflow semantics (see below).
-\end{itemize}
+\[
+	G = (V,E)
+\]
 
-\paragraph{Behavioral Stereotypes}
+where \(V\) is the set of nodes and \(E\) is the set of directed connections.
 
-Two behavioral stereotype templates ship with the system:
+Each node belongs to one of the DSL categories
 
-\begin{itemize}
-	\item \textbf{Repeat}: Duplicates the internal subgraph N times in sequence, similar to \texttt{nn.Sequential}. The number of repetitions is controlled by the \texttt{iterations} parameter. Each copy maintains independent weights.
-	\item \textbf{HorizontalRepeat}: Creates N parallel copies of the subgraph, executes them via \texttt{vmap} with independent weights using \texttt{functional.call} and \texttt{stack\_module\_state}, and concatenates outputs along the last dimension. The number of copies is controlled by the \texttt{n} parameter. The join operation is currently hardcoded to concatenation on \texttt{dim=-1}.
-\end{itemize}
+\[
+	type(v) \in
+	\{
+	Input,
+	Module,
+	Join,
+	Subflow,
+	Loss
+	\}.
+\]
 
+The compilation process transforms \(G\) into a hierarchical execution structure
+
+\[
+	T = (N,C)
+\]
+
+where each element of \(N\) belongs to one of the following categories:
+
+\[
+	type(n) \in
+	\{
+	Sequential,
+	Module,
+	Join,
+	Subflow
+	\}.
+\]
+
+The transformation preserves the execution semantics of the original graph while reducing
+structural complexity and making the architecture directly executable.
+
+\paragraph{Sequential Compression}
+
+A maximal linear path
+
+\[
+	v_1 \rightarrow v_2 \rightarrow \cdots \rightarrow v_k
+\]
+
+such that
+
+\[
+	indegree(v_i)=1
+	\quad\text{and}\quad
+	outdegree(v_i)=1
+\]
+
+for every internal node is compressed into a single \texttt{Sequential} element.
+
+The resulting node represents the function composition
+
+\[
+	f(x)
+	=
+	f_k
+	\circ
+	f_{k-1}
+	\circ
+	\cdots
+	\circ
+	f_1(x),
+\]
+
+which can be instantiated directly as a PyTorch \texttt{nn.Sequential} module.
+
+\paragraph{Join Semantics}
+
+Whenever a node receives multiple incoming connections
+
+\[
+	indegree(v) > 1,
+\]
+
+the node is interpreted as a join operation.
+
+A join represents a tensor merge operator
+
+\[
+	J :
+	T_1 \times T_2 \times \cdots \times T_n
+	\rightarrow T,
+\]
+
+where the concrete implementation depends on the selected stereotype (e.g. Addition,
+Concat, MatMul, Einsum, or ScaledDotProduct).
+
+Input ordering is preserved through handle identifiers associated with incoming edges,
+ensuring deterministic execution.
+
+\paragraph{Subflow Semantics}
+
+A subflow represents a hierarchical graph encapsulation.
+
+Formally, a subflow is itself a DAG
+
+\[
+	S=(V_S,E_S)
+\]
+
+with
+
+\[
+	V_S \subseteq V.
+\]
+
+The compilation process is recursively applied to every subflow, producing an independent
+NNTree representation for each nested graph.
+
+This recursive definition enables arbitrary hierarchical structures while preserving the
+semantics of the original model.
+
+\paragraph{Loss Nodes}
+
+Loss nodes are treated as terminal elements of the graph.
+
+Although represented visually as standard nodes, they are excluded from the execution graph
+and stored separately. Their purpose is to define the optimization objective
+
+\[
+	L(\hat{y},y),
+\]
+
+used during training.
+
+\paragraph{Compilation Algorithm}
+
+Compilation starts from the unique input node and recursively traverses the graph.
+The algorithm applies four transformations:
+
+\begin{enumerate}
+	\item maximal linear chains are compressed into \texttt{Sequential} nodes;
+	\item merge points are converted into \texttt{Join} nodes;
+	\item subflows are recursively compiled;
+	\item terminal loss nodes are extracted and stored separately.
+\end{enumerate}
+
+The resulting NNTree constitutes an execution-oriented representation of the DSL that is
+independent of any specific deep learning framework while remaining directly translatable
+into Hydra configurations and PyTorch modules.
 
 \pagebreak
 
@@ -287,6 +413,8 @@ Eleven custom Python operations are implemented in the back-end, spanning three 
 	\item \textbf{Module operations (2)}: PositionalEncoding computes sinusoidal positional encodings; SequencePool computes mean pooling over the sequence dimension.
 \end{itemize}
 
+\pagebreak
+
 \section{Conclusions}
 
 \subsection{Achievements}
@@ -314,6 +442,8 @@ a \texttt{Repeat} encoder subflow with residual blocks and FFN,
 and a \texttt{HorizontalRepeat} multi-head attention subflow with Q/K/V projections and scaled dot-product.
 
 This transformer is trained on the EnronSpam dataset to classify emails as Spam or Ham. On the test set, the model correctly classifies 98.4\% of emails.
+
+This experiment demonstrates that the DSL is expressive enough to model a non-trivial modern architecture involving hierarchical subflows, residual connections, attention mechanisms, and repeated structures.
 
 \begin{figure}[H]
 	\centering
