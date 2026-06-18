@@ -208,9 +208,11 @@ The front-end is built with Svelte~5, Svelte Flow (\texttt{@xyflow/svelte}), and
 
 \subsubsection{Core Architecture}
 
-The central state manager is the \texttt{Diagram} class (Svelte~5 \texttt{\$state.raw} reactive arrays), which holds all nodes and edges. It provides methods for adding modules, joins, and subflows; deleting nodes; importing and exporting JSON; and toggling subflow collapse state. All state is reactive --- changes to the diagram automatically propagate to the UI.
+The central state manager is the \texttt{Diagram} class, implemented using Svelte~5 reactive \texttt{\$state.raw} arrays. It stores the complete graph representation and exposes operations for manipulating nodes, edges, and subflows. The reactive programming model ensures that changes to the internal state are immediately propagated to the visual editor.
 
-Stereotypes are loaded via Vite's \texttt{import.meta.glob} from the \texttt{Stereotypes/**/*.json} directory structure. The \texttt{Stereotype} class (stereotype.ts) provides helper accessors (\texttt{isJoin}, \texttt{isInput}, \texttt{isLoss}, \texttt{isSubFlow}) derived from each stereotype's \texttt{category} field, enabling type-safe node behavior without hardcoded type checks.
+The stereotype mechanism provides the bridge between the UML metamodel and the executable DSL. Each stereotype is stored as a JSON artifact that instantiates the concepts defined in the metamodel, specifying visual attributes, semantic category, and configurable parameters. At startup, all stereotype definitions are discovered and loaded from the \texttt{Stereotypes/**/*.json} directory.
+
+To simplify their use within the editor, the \texttt{Stereotype} class (\texttt{stereotype.ts}) wraps the raw JSON representation and exposes derived predicates such as \texttt{isJoin}, \texttt{isInput}, \texttt{isLoss}, and \texttt{isSubFlow}. This approach provides a type-safe interface and supports extensibility without requiring modifications to the compilation or rendering logic.
 
 \subsubsection{Node Rendering}
 
@@ -306,7 +308,7 @@ a \texttt{Repeat} encoder subflow with residual blocks and FFN,
 and a \texttt{HorizontalRepeat} multi-head attention subflow with Q/K/V projections and scaled dot-product.
 
 This transformer is trained on the EnronSpam dataset to classify emails as Spam or Ham. On the test set, the model correctly classifies 98.4\% of emails.
- 
+
 \begin{figure}[H]
 	\centering
 	\begin{subfigure}{0.3\textwidth}
