@@ -11,6 +11,8 @@
 \usepackage{placeins}
 \usepackage{float}
 
+\usepackage[ruled,vlined]{algorithm2e}
+
 \titleformat{\section}{\huge\bfseries\raggedright}{\thesection}{1em}{}
 \titleformat{\subsection}{\Large\bfseries\raggedright}{\thesubsection}{0.8em}{}
 \titleformat{\subsubsection}{\large\bfseries\raggedright}{\thesubsubsection}{0.6em}{}
@@ -98,7 +100,7 @@ ScaledDotProduct, MaskedScaledDotProduct), and 2 subflow behavioral templates
 	\item \textbf{Subflow Containers}: The system shall support hierarchical subflow containers that group related nodes into reusable sub-architectures.
 	\item \textbf{Behavioral Stereotypes}: Subflows shall support behavioral stereotypes including \texttt{Repeat} (duplicates internal subgraph N times in sequence) and \texttt{HorizontalRepeat} (creates N parallel copies with independent weights executed via \texttt{vmap}).
 	\item \textbf{Parameter Configuration}: Each node shall support typed parameters (int, float, bool, list, dict, None) configurable through the visual editor.
-	\item \textbf{Graph Compilation}: The system shall compile the flat visual graph into a hierarchical tree representation (NNTree) using topological sorting.
+	\item \textbf{Graph Compilation}: The system shall transform a visual neural-network DAG into an execution-oriented hierarchical representation (NNTree) preserving graph semantics.
 	\item \textbf{Config Generation}: The system shall generate executable Hydra configuration files from the compiled tree representation.
 	\item \textbf{Dynamic Model Instantiation}: The back-end shall dynamically build a PyTorch Lightning module from the generated configuration at runtime.
 	\item \textbf{Training Pipeline}: The system shall support training the generated model with configurable optimizer, trainer, dataset, and logging parameters.
@@ -328,6 +330,54 @@ The resulting NNTree constitutes an execution-oriented representation of the DSL
 independent of any specific deep learning framework while remaining directly translatable
 into Hydra configurations and PyTorch modules.
 
+\begin{algorithm}[H]
+	\caption{Graph-to-NNTree Compilation}
+	\label{alg:nntree-compilation}
+
+	\KwIn{Directed acyclic graph \(G=(V,E)\)}
+	\KwOut{Hierarchical execution tree \(T\)}
+
+	\Fn{Compile(\(v\))}{
+
+		\If{\(v\) is a Subflow}{
+			\Return CompileSubflow(\(v\))
+		}
+
+		\If{\(indegree(v) > 1\)}{
+			\Return CreateJoin(\(v\))
+		}
+
+		\If{\(v\) belongs to a maximal linear chain}{
+			\Return CompressSequential(\(v\))
+		}
+
+		\If{\(v\) is a Loss node}{
+			StoreAsLoss(\(v\))\;
+			\Return null
+		}
+
+		\Return CreateModule(\(v\))
+	}
+
+	\Fn{CompileSubflow(\(S\))}{
+
+		\(order \leftarrow TopologicalSort(S)\)\;
+
+		\ForEach{\(v \in order\)}{
+			Compile(\(v\))
+		}
+
+		\Return SubflowTree
+	}
+
+	\(root \leftarrow\) unique Input node\;
+
+	\(T \leftarrow Compile(root)\)\;
+
+	\Return \(T\)
+
+\end{algorithm}
+
 \pagebreak
 
 \section{Implementation}
@@ -356,18 +406,38 @@ Three Svelte components render different node types on the canvas:
 	\item \texttt{SubflowNode.svelte}: Collapsible container nodes with a colored header bar. When collapsed, internal nodes are hidden but still participate in compilation. When expanded, internal nodes are rendered as children of the subflow group.
 \end{itemize}
 
-\subsubsection{Graph Compilation (NNTree)}
+\subsubsection{NNTree Compiler Implementation}
 
-The \texttt{NNTree} class (conversion/nnTree.ts) converts the flat visual graph into a hierarchical tree representation using Kahn's topological sort. It produces four node types:
+The graph-to-NNTree compilation semantics described in Section~3.1.2 are implemented by the
+\texttt{NNTree} class located in
 
-\begin{itemize}
-	\item \texttt{sequential}: Consecutive single-input--single-output nodes compressed into a linear chain.
-	\item \texttt{module}: Individual module nodes with no fan-out merging, preserving their stereotype and parameters.
-	\item \texttt{join}: Merge nodes with multiple ordered inputs. Input ordering is preserved from edge \texttt{targetHandle} attributes.
-	\item \texttt{subflow}: Container nodes with an \texttt{entryNode} reference and an internal nodes map preserving full topology. Compiled recursively via \texttt{compileSubflowGraph}. Nested subflows are supported through this recursive mechanism.
-\end{itemize}
+\begin{center}
+	\texttt{frontend/src/lib/conversion/nnTree.ts}
+\end{center}
 
-Subflow compilation includes three phases: first, boundary detection identifies which nodes belong to which subflow based on parent-child relationships; second, Kahn's topological sort orders the internal graph; third, Repeat stereotype unrolling expands the subgraph.
+The compiler operates directly on the visual graph stored by the \texttt{Diagram} class and
+produces a hierarchical intermediate representation that can be serialized as JSON and consumed
+by the back-end pipeline.
+
+Compilation starts from the unique Input node and performs a recursive traversal of the graph.
+The implementation closely follows Algorithm~\ref{alg:nntree-compilation}. During traversal,
+the compiler identifies the structural patterns defined by the DSL semantics and creates the
+corresponding NNTree nodes.
+
+Linear chains are detected and compressed into \texttt{Sequential} nodes through the
+\texttt{createSequential()} routine. Join nodes are recognized whenever a node has multiple
+incoming edges and are processed through \texttt{handleJoin()}. Subflows are recursively compiled
+through \texttt{processSubflow()} and \texttt{compileSubflowGraph()}, which build independent
+hierarchical representations for nested graphs.
+
+The implementation uses Kahn's topological sorting algorithm to validate and order the internal
+contents of subflows before compilation. Cyclic subflow definitions are rejected and reported as
+errors, ensuring that all compiled structures remain valid DAGs.
+
+The resulting NNTree structure is stored as a collection of \texttt{NNTreeNode} objects and can
+be exported through the \texttt{toJson()} method. This serialized representation forms the
+interface between the front-end DSL environment and the back-end execution pipeline.
+
 
 \subsubsection{Connection Validation}
 
