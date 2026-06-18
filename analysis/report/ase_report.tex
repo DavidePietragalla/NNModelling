@@ -407,6 +407,8 @@ Three Svelte components render different node types on the canvas:
 	\item \texttt{SubflowNode.svelte}: Collapsible container nodes with a colored header bar. When collapsed, internal nodes are hidden but still participate in compilation. When expanded, internal nodes are rendered as children of the subflow group.
 \end{itemize}
 
+\pagebreak
+
 \subsubsection{NNTree Compiler Implementation}
 
 The graph-to-NNTree compilation semantics described in Section~3.1.2 are implemented by the
@@ -423,9 +425,9 @@ by the back-end pipeline.
 In model-driven engineering terms, the compiler realizes the model-to-model transformation
 
 \[
-G=(V,E)
-\rightarrow
-T=(N,C)
+	G=(V,E)
+	\rightarrow
+	T=(N,C)
 \]
 
 defined by the DSL semantics. The resulting NNTree serves as the executable intermediate representation used by all subsequent stages of the pipeline.
@@ -512,6 +514,8 @@ Key achievements include:
 	\item Clean separation of concerns: the front-end handles all DSL logic (visual editing, graph compilation, stereotype management), while the back-end handles network instantiation, training, and inference. This decoupling enables independent development and testing of each subsystem.
 	\item A dynamic model instantiation system that builds PyTorch Lightning modules from configuration at runtime, enabling rapid experimentation without code changes.
 \end{itemize}
+
+\pagebreak
 
 \subsection{Example: Transformer Classifier}
 
