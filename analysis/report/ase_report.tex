@@ -79,7 +79,7 @@ Hydra configuration files and dynamically instantiates them into a working PyTor
 
 The core data pipeline is:
 \[
-	\text{Visual Graph} \rightarrow \text{NNTree (Intermediate Representation)} \rightarrow \text{JSON} \rightarrow \text{Pipeline} \rightarrow \text{Hydra YAML} \rightarrow \text{LightningModule}
+	\text{Visual Graph} \rightarrow \text{NNTree (Intermediate Representation)} \rightarrow \text{JSON} \rightarrow \text{Hydra YAML} \rightarrow \text{LightningModule}
 \]
 
 Currently the system supports 27 modules (Linear, Conv2d, ReLU, Tanh, Embedding, LayerNorm,
@@ -158,19 +158,7 @@ A \texttt{Stereotype} acts as a reusable layer definition and is associated with
 
 Together, these three views define the abstract syntax of the DSL. The \textbf{node hierarchy} specifies the available modelling constructs, the \textbf{connection model} defines graph topology and data-flow semantics, and the \textbf{stereotype system} provides extensibility through configurable layer definitions. The implementation presented in the next section is directly derived from this metamodel.
 
-\subsubsection{Design Principles and Requirement Satisfaction}
-
-The metamodel was designed to satisfy the functional requirements identified in Section~2 while maintaining a compact and extensible DSL.
-
-First, neural network architectures are represented as directed graphs, where nodes denote computational elements and edges represent tensor flow. This design directly addresses the requirement of modelling arbitrary network topologies, including sequential pipelines, branching structures, residual connections, and attention mechanisms. The adoption of implicit forks and explicit joins reduces visual complexity while preserving the semantics of data aggregation and multi-input operations.
-
-Second, the metamodel supports extensibility through the stereotype mechanism. Rather than hardcoding layer types into the language, neural-network operations are described through configurable stereotypes containing semantic, visual, and parameter information. This design satisfies the requirement of supporting a wide range of neural-network components while enabling future extensions without modifications to the editor, compiler, or execution pipeline.
-
-Third, hierarchical modelling is achieved through recursive subflows. By allowing subflows to contain arbitrary nodes, including other subflows, the metamodel supports the construction of large architectures from reusable building blocks. This directly addresses the requirement of modelling complex architectures while maintaining readability and reducing diagram complexity.
-
-Finally, the separation between stereotype definitions and their concrete applications enables the same neural-network component to be instantiated multiple times with different parameter values. Together with the graph-based representation and hierarchical subflows, this provides the flexibility required to model both simple feed-forward networks and more sophisticated architectures such as residual networks and transformers.
-
-Overall, the metamodel serves as the formal foundation of the DSL, ensuring that the identified functional requirements are reflected directly in the language structure and can be consistently enforced throughout the implementation.
+\pagebreak
 
 \subsection{Graph-to-NNTree Compilation Semantics}
 
