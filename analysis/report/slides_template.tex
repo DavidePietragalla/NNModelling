@@ -141,16 +141,28 @@
 
 \section{Design}
 
-\begin{frame}{UML Metamodel}
-	Three complementary views:
-	\begin{enumerate}
-		\item \alert{Node Hierarchy} -- modelling elements (Module, Input, Join, Subflow)
-		\item \alert{Connection Model} -- Handle-based connection with implicit forks / explicit joins
-		\item \alert{Stereotype System} -- extensible layer definitions via JSON stereotypes
-	\end{enumerate}
+\begin{frame}{UML Metamodel -- Node Hierarchy}
+	\begin{figure}
+		\centering
+		\includegraphics[width=0.85\textwidth]{ModellazioneModules_Layer_Subflow.png}
+		\caption{Node hierarchy: Module, Input, Join, Subflow with recursive composition.}
+	\end{figure}
+\end{frame}
 
-	\vspace{10pt}
-	Key design: \alert{recursive subflows} enable hierarchical decomposition
+\begin{frame}{UML Metamodel -- Connection Model}
+	\begin{figure}
+		\centering
+		\includegraphics[width=0.85\textwidth]{ModellazioneHandle_E_Node.png}
+		\caption{Handle-based connections: implicit forks and explicit joins.}
+	\end{figure}
+\end{frame}
+
+\begin{frame}{UML Metamodel -- Stereotype System}
+	\begin{figure}
+		\centering
+		\includegraphics[width=0.85\textwidth]{ModellazioneStereotype_StereotypeIstance_ParameterIstance.png}
+		\caption{Stereotype system: separation between definition and instantiation.}
+	\end{figure}
 \end{frame}
 
 \begin{frame}{Graph-to-NNTree Compilation}
@@ -218,16 +230,20 @@
 \section{Validation}
 
 \begin{frame}{Example: Transformer Classifier}
-	\centering
-	Hierarchical DAG spanning three levels:
+
+	\alert{Example: Transformer Classifier}
+
+	Three-level Flow for Building the Encoder:
+
 	\begin{itemize}
 		\item \small Top-level: Input $\rightarrow$ Embedding $\rightarrow$ PosEnc $\rightarrow$ Transformer $\rightarrow$ Pool $\rightarrow$ Linear $\rightarrow$ Loss
 		\item \small Repeat encoder with residual blocks and FFN
 		\item \small HorizontalRepeat multi-head attention with Q/K/V projections
 	\end{itemize}
+	The architecture is taken from "Attention Is All You Need" paper.
 
 	\vspace{10pt}
-	\textbf{Result}: 98.4\% accuracy on EnronSpam dataset
+	\textbf{Result}: 98.4\% accuracy on EnronSpam test set.
 \end{frame}
 
 \begin{frame}{Training Metrics}
