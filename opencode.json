@@ -4,5 +4,11 @@
     "explore": {
       "disable": true
     }
+  },
+  "mcp": {
+    "glimpse": {
+      "type": "local",
+      "command": ["npx", "-y", "glimpse-mcp"]
+    }
   }
 }
