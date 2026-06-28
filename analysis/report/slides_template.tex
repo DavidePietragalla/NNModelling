@@ -216,15 +216,14 @@
 \end{frame}
 
 \begin{frame}{Dynamic Model Execution}
+	\alert{Dynamic Model Execution}
 	\begin{itemize}
-		\item \texttt{LightningModule} builds architecture from Hydra config at runtime
-		\item Forward pass uses \alert{BFS traversal with in-degree tracking}
+		\item The \texttt{Net} class extend \texttt{LightningModule} and it build the architecture from a Hydra config at runtime.
+		\item \texttt{forward} method is implemented as a \alert{BFS traversal of the network with in-degree tracking}
 		\item Join nodes collect all inputs ordered by \texttt{targetHandle}
 		\item Custom operations: Subflow, Repeat, HorizontalRepeat
 	\end{itemize}
-
 	\vspace{10pt}
-	Result: \alert{179 tests} across front-end and back-end
 \end{frame}
 
 \section{Validation}
@@ -249,17 +248,19 @@
 \begin{frame}{Training Metrics}
 	\begin{figure}
 		\centering
-		\begin{subfigure}{0.3\textwidth}
+		\begin{subfigure}{0.45\textwidth}
 			\includegraphics[width=\textwidth]{train_loss.png}
 			\caption{Training loss}
 		\end{subfigure}
 		\hfill
-		\begin{subfigure}{0.3\textwidth}
+		\begin{subfigure}{0.45\textwidth}
 			\includegraphics[width=\textwidth]{val_loss.png}
 			\caption{Validation loss}
 		\end{subfigure}
-		\hfill
-		\begin{subfigure}{0.3\textwidth}
+
+		\vspace{10pt}
+
+		\begin{subfigure}{0.45\textwidth}
 			\includegraphics[width=\textwidth]{val_metric.png}
 			\caption{Validation accuracy}
 		\end{subfigure}
@@ -268,18 +269,23 @@
 
 \section{Conclusions}
 
+
 \begin{frame}{Achievements}
+
+	\alert{Achievements}
 	\begin{itemize}
 		\item Full \alert{end-to-end pipeline} from visual design to trained model
 		\item Extensible \alert{stereotype system} -- no code changes for new layers
 		\item Complex architectures: transformers, residual nets, subflows
 		\item \alert{179 tests} ensuring reliability
-		\item Model-driven approach with formal UML metamodel
+		\item Model-driven approach for the develoment process
 		\item Clean \alert{separation of concerns}
 	\end{itemize}
 \end{frame}
 
 \begin{frame}{Future Work}
+
+	\alert{Future Work}
 	\begin{itemize}
 		\item \alert{Network Communication}: replace file exchange with HTTP/WebSocket API
 		\item \alert{Configurable Join}: parameterize HorizontalRepeat merge strategy
