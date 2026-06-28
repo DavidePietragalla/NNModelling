@@ -1,0 +1,80 @@
+{
+  "diagrams": {
+    "mninst": {
+      "format": "svelte-flow",
+      "inputShape": [1, 1, 28, 28],
+      "numClasses": 10,
+      "taskType": "classification",
+      "trainable": true,
+      "description": "Simple MNIST MLP classifier"
+    },
+    "mnist_skips": {
+      "format": "svelte-flow",
+      "inputShape": [1, 1, 28, 28],
+      "numClasses": 10,
+      "taskType": "classification",
+      "trainable": true,
+      "description": "Skip connections with Addition joins"
+    },
+    "autoencoder_mnist": {
+      "format": "svelte-flow",
+      "inputShape": [1, 1, 28, 28],
+      "taskType": "regression",
+      "trainable": true,
+      "description": "Convolutional autoencoder"
+    },
+    "auto_encoder_submodels": {
+      "format": "svelte-flow",
+      "inputShape": [1, 1, 28, 28],
+      "taskType": "regression",
+      "trainable": true,
+      "description": "Autoencoder with SubFlows"
+    },
+    "auto_encoder_submodels_with_submodels": {
+      "format": "svelte-flow",
+      "inputShape": [1, 1, 28, 28],
+      "taskType": "regression",
+      "trainable": true,
+      "description": "Nested SubFlows"
+    },
+    "single_head_attention": {
+      "format": "svelte-flow",
+      "inputShape": [2, 16, 64],
+      "taskType": "regression",
+      "trainable": false,
+      "description": "Single-head attention from primitives"
+    },
+    "multihead_attention": {
+      "format": "svelte-flow",
+      "inputShape": [2, 16, 64],
+      "taskType": "regression",
+      "trainable": false,
+      "description": "4-head attention via Concat join"
+    },
+    "horizontal_multihead_attention": {
+      "format": "svelte-flow",
+      "inputShape": [2, 16, 64],
+      "taskType": "regression",
+      "trainable": false,
+      "description": "4-head attention via HorizontalRepeat"
+    },
+    "skip_connections_with_repetition": {
+      "format": "svelte-flow",
+      "inputShape": [1, 1, 28, 28],
+      "numClasses": 10,
+      "taskType": "classification",
+      "trainable": true,
+      "description": "Residual + Repeat SubFlow"
+    },
+    "transformer_classifier": {
+      "format": "svelte-flow",
+      "inputShape": [2, 16],
+      "inputType": "int",
+      "numClasses": 2,
+      "taskType": "classification",
+      "trainable": true,
+      "description": "Full transformer: embed, posenc, encoder\u00d72, pool, linear classifier"
+    }
+  },
+  "nntrees": {}
+}
