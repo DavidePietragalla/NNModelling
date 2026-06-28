@@ -17,6 +17,7 @@ Two main parts:
 - **Build**: pnpm v10
 - **Python**: PyTorch, Lightning (LightningModule), Hydra (config), wandb (logging)
 - **Vitest** (front-end unit tests, configured in `vitest.config.ts`)
+- **pytest** (Python unit tests, in `converted/src/tests/`)
 
 ### Workflow
 
@@ -34,8 +35,17 @@ npm run dev       # Start Vite dev server
 npm run build     # Production build
 npm run preview   # Preview built app
 npm run check     # Type-check Svelte/TS (svelte-check)
-npm run test      # Run vitest (single run)
-npm run test:watch  # Run vitest (watch mode)
+npm run test      # Run unit tests (vitest, single run)
+npm run test:watch  # Run unit tests (vitest, watch mode)
+npm run test:integration           # Run integration tests (all tiers)
+npm run test:integration:smoke     # Tier 0: NNTree compilation only
+npm run test:integration:convert   # Tier 1: convert.py YAML generation
+npm run test:integration:forward   # Tier 2: Net.forward() pass tests
+npm run test:integration:train     # Tier 3: main.py training smoke (slow, CPU/GPU)
+npm run test:integration:infer     # Tier 4: infer.py output validation
+npm run test:integration:all       # All integration tiers
+NNM_DIAGRAM=mninst npm run test:example  # Single diagram through all tiers
+NNM_DEVICE=gpu NNM_DIAGRAM=mninst npm run test:integration:train  # GPU training
 ```
 
 ```bash
@@ -53,7 +63,14 @@ NNModelling/
 │   ├── __tests__/              # Vitest test suites
 │   │   ├── helpers.ts          # Test factories (stubWindow, node, edge)
 │   │   ├── nnTree.test.ts      # NNTree regression tests
-│   │   └── utils.test.ts       # checkValidConnection tests
+│   │   ├── utils.test.ts       # checkValidConnection tests
+│   │   └── integration/        # Integration test suite (tiered, Python pipeline)
+│   │       ├── helpers.ts      # Shared helpers (manifest, uvRun, pipeline stages)
+│   │       ├── smoke.test.ts   # Tier 0: nnTree compilation
+│   │       ├── convert.test.ts # Tier 1: convert.py YAML generation
+│   │       ├── forward.test.ts # Tier 2: Net.forward() pass
+│   │       ├── train.test.ts   # Tier 3: main.py training smoke
+│   │       └── infer.test.ts   # Tier 4: infer.py output validation
 │   ├── nodes/
 │   │   ├── CustomNode.svelte   # Standard NN module node
 │   │   ├── JoinNode.svelte     # Merge node (multi-input)
@@ -74,6 +91,10 @@ NNModelling/
 │   ├── Modules/                # 27 layers (Input, Linear, Conv2d, ReLU, etc.)
 │   ├── Joins/                  # Addition, Concat, Einsum, MatMul, ScaledDotProduct, MaskedScaledDotProduct
 │   └── SubFlows/               # Repeat, HorizontalRepeat templates
+├── examples/                   # Test fixtures for integration tests
+│   ├── manifest.json           # Diagram metadata (input shapes, task type, trainable flags)
+│   ├── diagrams/               # Svelte Flow format source diagrams
+│   └── nntrees/                # Pre-compiled NNTree JSON files
 ├── converted/src/              # Python codegen target
 │   ├── net/base.py             # LightningModule: dynamic ModuleDict + topo sort
 │   ├── ops/                    # Custom operations
@@ -94,7 +115,14 @@ NNModelling/
 │   ├── dataset/enron_spam.py   # EnronSpam text classification dataset (HF datasets + transformers)
 │   ├── convert.py              # NNTree JSON → Hydra config dir
 │   ├── main.py                 # Training entry point (Hydra + Lightning)
-│   └── infer.py                # Inference on trained model (--output, --image-dir)
+│   ├── infer.py                # Inference on trained model (--output, --image-dir)
+│   └── tests/                  # Python test suite (pytest)
+│       ├── test_ops.py         # 36 ops unit tests
+│       ├── test_convert.py     # 35 convert.py unit tests
+│       ├── test_base.py        # 21 Net/base unit tests
+│       ├── test_integration.py # 11 end-to-end integration tests
+│       ├── test_main.py        # 2 training smoke tests
+│       └── test_infer.py       # 4 inference validation tests
 ├── analysis/
 │   ├── requirements/reqs.md    # DSL requirements specification
 │   └── uml/nn.vpp              # UML model (Visual Paradigm)
@@ -113,14 +141,37 @@ NNModelling/
 
 ## Architecture
 
-### Testing
+### Testing — Front-end (Vitest Unit Tests)
 
 - **Framework**: Vitest (v4), configured in `vitest.config.ts`
 - **Pattern**: Pure TS unit tests, no DOM/browser
 - **Real Diagram**: Tests use real `Diagram` class (Svelte `$state.raw` compiled by Vite plugin). Stub `globalThis.window` before construction.
 - **Helpers**: `node(id, stereo, name, params, overrides?)` and `edge(id, source, target, handles?)` for concise fixtures.
-- **Commands**: `pnpm test` (run), `pnpm test:watch` (watch)
-- **Coverage**: 76 tests — sequential chain, skip/joins, autoencoder, subflow compilation, nested subflows, hidden nodes, error handling, connection validation, Fork node, Python ops (36), convert.py (35), net/base.py (21), integration
+- **Coverage**: **76 tests** — sequential chain, skip/joins, autoencoder, subflow compilation, nested subflows, hidden nodes, error handling, connection validation, Fork node
+
+### Testing — Integration (Vitest + Python Pipeline)
+
+- **Config**: `vitest.integration.config.ts` (separate from unit tests), uses `pool: "forks"` for isolation, 10min timeout
+- **Pattern**: TypeScript orchestration via Node.js `child_process` spawning `uv run python ...` commands
+- **Manifest**: `examples/manifest.json` drives which diagrams to test — defines `inputShape`, `taskType`, `trainable` flags for each diagram
+- **Tiered execution**: Controlled via `NNM_TIER` env var; tests skip when tier doesn't match
+
+| Tier | Env Value | Test File | What It Validates |
+|------|-----------|-----------|-------------------|
+| 0 | `smoke` | `smoke.test.ts` | NNTree compilation from Svelte Flow JSON |
+| 1 | `convert` | `convert.test.ts` | `convert.py` YAML generation (expected files, config structure) |
+| 2 | `forward` | `forward.test.ts` | `Net.forward()` pass — loads config, runs forward with mock tensors |
+| 3 | `train` | `train.test.ts` | `main.py` training smoke test (1 epoch, validated by exit code + checkpoint) |
+| 4 | `infer` | `infer.test.ts` | `infer.py` output validation (JSON predictions, image output) |
+
+- **Env vars**: `NNM_DIAGRAM` (single diagram), `NNM_DEVICE` (cpu/gpu), `NNM_TIER` (tier filter), `NNM_WANDB_MODE` (disable by default), `NNM_KEEP_TEMP` (preserve temp dirs for debugging)
+
+### Testing — Python (pytest)
+
+- **Framework**: pytest (via `uv run pytest`)
+- **Files**: `converted/src/tests/` — pure Python tests (no TS/Vitest dependency)
+- **Coverage**: **103 Python unit tests** across `test_ops.py` (36), `test_convert.py` (35), `test_base.py` (21), `test_integration.py` (11); **6 Python pipeline tests** in `test_main.py` (2) and `test_infer.py` (4)
+- **Fixtures**: NNTree JSON files from `examples/nntrees/` — shared between Python and Vitest integration tests
 
 ### Front-end Data Flow
 
@@ -315,3 +366,14 @@ New stereotypes and refactoring:
 | `converted/src/dataset/enron_spam.py` | EnronSpam text classification dataset (HF datasets + transformers) |
 | `horizontal_multihead_attention.json` | 4-head attention via HorizontalRepeat subflow + Concat |
 | `transformer_classifier.json` | Full transformer: embed, posenc, encoder×2, pool, linear classifier |
+| `front-end/vitest.integration.config.ts` | Integration test vitest config (tier filtering, Python pool) |
+| `front-end/src/__tests__/integration/helpers.ts` | Shared integration helpers (manifest, uvRun, pipeline stages) |
+| `front-end/src/__tests__/integration/smoke.test.ts` | Tier 0: nnTree compilation smoke tests |
+| `front-end/src/__tests__/integration/convert.test.ts` | Tier 1: convert.py YAML generation tests |
+| `front-end/src/__tests__/integration/forward.test.ts` | Tier 2: Net.forward() pass tests |
+| `front-end/src/__tests__/integration/train.test.ts` | Tier 3: main.py training smoke tests (slow, CPU/GPU) |
+| `front-end/src/__tests__/integration/infer.test.ts` | Tier 4: infer.py output validation tests |
+| `converted/src/tests/test_main.py` | Python training smoke tests (autoencoder + MNIST) |
+| `converted/src/tests/test_infer.py` | Python inference validation tests |
+| `converted/src/tests/test_integration.py` | Python integration tests (convert → Net forward end-to-end) |
+| `examples/manifest.json` | Manifest of example diagrams/nntrees (input shapes, task types, trainable flags) |
