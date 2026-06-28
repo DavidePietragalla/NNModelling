@@ -249,28 +249,19 @@ export function runTraining(
   const device = options?.device || process.env.NNM_DEVICE || "cpu";
   const overrides: string[] = [
     `trainer.accelerator=${device}`,
-    "trainer.enable_progress_bar=false",
-    `wandb.mode=${process.env.NNM_WANDB_MODE || "disabled"}`,
+    `trainer.devices=${device === "gpu" ? "auto" : "1"}`,
+    `+trainer.enable_progress_bar=false`,
+    `+wandb.mode=${process.env.NNM_WANDB_MODE || "disabled"}`,
   ];
 
-  // Build safe override list — skip keys not in OmegaConf struct
-  const safeOverrides: string[] = [];
-  for (const o of overrides) {
-    const key = o.split("=")[0];
-    if (key === "trainer.enable_progress_bar" || key === "wandb.mode") {
-      continue; // Skip — key doesn't exist in base config
-    }
-    safeOverrides.push(o);
-  }
-
   if (options?.fastDevRun) {
-    safeOverrides.push("trainer.fast_dev_run=true");
+    overrides.push("trainer.fast_dev_run=true");
   } else if (options?.maxEpochs) {
-    safeOverrides.push(`trainer.max_epochs=${options.maxEpochs}`);
+    overrides.push(`trainer.max_epochs=${options.maxEpochs}`);
   }
 
   if (options?.dataset) {
-    safeOverrides.push(`dataset=${options.dataset}`);
+    overrides.push(`dataset=${options.dataset}`);
   }
 
   const args = [
@@ -278,14 +269,16 @@ export function runTraining(
     "src/main.py",
     `--config-dir=${cfgDir}`,
     "--config-name=base",
-    ...safeOverrides,
+    ...overrides,
   ];
 
   const result = uvRun(args, { timeout: options?.timeout ?? 600_000 });
 
+  // Training saves weights.pt to CWD (the directory uv is run from)
+  const ckptDir = CONVERTED_DIR;
   return {
     exitCode: result.exitCode,
-    ckptDir: cfgDir, // Training outputs go to CWD or config dir
+    ckptDir,
     stdout: result.stdout,
     stderr: result.stderr,
   };
@@ -343,9 +336,9 @@ export function isPythonAvailable(): boolean {
  */
 export function findCheckpoint(dir: string): string {
   const files = readdirSync(dir, { recursive: true });
-  const ckpt = files.find((f: string) => f.endsWith(".ckpt"));
+  const ckpt = files.find((f) => f.toString().endsWith(".ckpt"));
   if (!ckpt) {
     throw new Error(`No checkpoint file found in ${dir}`);
   }
-  return resolve(dir, ckpt);
+  return resolve(dir, ckpt.toString());
 }

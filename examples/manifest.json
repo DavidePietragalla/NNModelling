@@ -76,5 +76,53 @@
       "description": "Full transformer: embed, posenc, encoder\u00d72, pool, linear classifier"
     }
   },
-  "nntrees": {}
+  "nntrees": {
+    "auto_encoder": {
+      "inputShape": [1, 1, 28, 28],
+      "taskType": "regression",
+      "trainable": true,
+      "format": "nntree",
+      "description": "Autoencoder NNTree"
+    },
+    "auto_encoder_nested_submodels": {
+      "inputShape": [1, 1, 28, 28],
+      "taskType": "regression",
+      "trainable": true,
+      "format": "nntree",
+      "description": "Nested submodels autoencoder NNTree"
+    },
+    "mninst_skip": {
+      "inputShape": [1, 1, 28, 28],
+      "numClasses": 10,
+      "taskType": "classification",
+      "trainable": true,
+      "format": "nntree",
+      "description": "MNIST with skip connections NNTree"
+    },
+    "skip_connections_with_repetition": {
+      "inputShape": [1, 1, 28, 28],
+      "numClasses": 10,
+      "taskType": "classification",
+      "trainable": true,
+      "format": "nntree",
+      "description": "Residual + Repeat NNTree"
+    },
+    "skip_connections_without_repetition": {
+      "inputShape": [1, 1, 28, 28],
+      "numClasses": 10,
+      "taskType": "classification",
+      "trainable": true,
+      "format": "nntree",
+      "description": "Skip connections without repetition NNTree"
+    },
+    "transformer_classifier": {
+      "inputShape": [2, 16],
+      "inputType": "int",
+      "numClasses": 2,
+      "taskType": "classification",
+      "trainable": true,
+      "format": "nntree",
+      "description": "Transformer classifier NNTree"
+    }
+  }
 }

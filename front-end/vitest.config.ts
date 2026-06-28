@@ -9,6 +9,7 @@ export default defineConfig({
   ],
   test: {
     include: ["src/__tests__/**/*.test.ts"],
+    exclude: ["src/__tests__/integration/**"],
     globals: true,
   },
   optimizeDeps: {

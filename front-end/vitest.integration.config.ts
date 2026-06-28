@@ -16,6 +16,7 @@ export default defineConfig({
     },
     env: {
       NNM_DEVICE: process.env.NNM_DEVICE || "cpu",
+      NNM_DEVICE_COUNT: process.env.NNM_DEVICE_COUNT || "1",
       NNM_DIAGRAM: process.env.NNM_DIAGRAM || "",
       NNM_TIER: process.env.NNM_TIER || "all",
       NNM_WANDB_MODE: process.env.NNM_WANDB_MODE || "disabled",

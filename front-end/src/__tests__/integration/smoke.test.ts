@@ -13,6 +13,11 @@ import {
   type NamedEntry,
 } from "./helpers";
 
+interface ParsedNode {
+  data?: { type?: string; children?: string[]; [key: string]: unknown };
+  children?: string[];
+}
+
 // ---------------------------------------------------------------------------
 // Setup
 // ---------------------------------------------------------------------------
@@ -80,11 +85,11 @@ if (shouldRun) {
       const tree = parseTree(jsonStr);
 
       for (const [id, node] of Object.entries(
-        tree.nodes as Record<string, any>,
+        tree.nodes as Record<string, ParsedNode>,
       )) {
         const data = node.data;
         if (data && data.type === "sequential") {
-          for (const childId of node.children) {
+          for (const childId of node.children ?? []) {
             expect(tree.nodes[childId]).toBeDefined();
           }
         }
@@ -113,22 +118,22 @@ if (shouldRun) {
       const tree = parseTree(jsonStr);
 
       for (const [id, node] of Object.entries(
-        tree.nodes as Record<string, any>,
+        tree.nodes as Record<string, ParsedNode>,
       )) {
         const data = node.data;
         if (data) {
           if (data.type === "sequential") {
-            for (const childId of node.children) {
+            for (const childId of node.children ?? []) {
               expect(tree.nodes[childId]).toBeDefined();
             }
           }
           if (data.type === "subflow") {
             // Subflow children are references to the tree-level children
-            for (const childId of node.children) {
+            for (const childId of node.children ?? []) {
               expect(tree.nodes[childId]).toBeDefined();
             }
             // Internal nodes in subflow's own graph should have valid child refs
-            const sfData = data as SubflowData;
+            const sfData = data as unknown as SubflowData;
             if (sfData.nodes) {
               for (const [intId, intNode] of Object.entries(sfData.nodes)) {
                 for (const childId of intNode.children) {
