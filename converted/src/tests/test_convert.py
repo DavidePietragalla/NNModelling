@@ -11,7 +11,7 @@ from convert import (
     build_hydra_configs,
 )
 
-FIXTURES_DIR = Path(__file__).resolve().parent.parent.parent
+FIXTURES_DIR = Path(__file__).resolve().parent.parent.parent.parent / "examples" / "nntrees"
 
 
 # -- parse_params -------------------------------------------------------------------

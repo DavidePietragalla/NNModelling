@@ -25,7 +25,7 @@ uv run python src/convert.py <json_path> <output_dir> [options]
 
 | Flag | Default | Description |
 |------|---------|-------------|
-| `json_path` | `../converted_minst.json` | Path to NNTree JSON |
+| `json_path` | (required) | Path to NNTree JSON (e.g. `../examples/nntrees/transformer_classifier.json`) |
 | `output_dir` | `cfg` | Output directory for Hydra configs |
 | `--num-classes N` | — | Required for classification tasks |
 | `--dataset D` | `dataset.mnist.MNISTDataset` | Dataset class path |
@@ -78,7 +78,7 @@ Supports both classification (argmax labels) and autoencoder (image reconstructi
 ### Transformer Classifier (EnronSpam)
 
 ```bash
-uv run python src/convert.py transformer_classifier.json cfg --num-classes 2 \
+uv run python src/convert.py ../examples/nntrees/transformer_classifier.json cfg --num-classes 2 \
   --dataset dataset.enron_spam.EnronSpamDataset
 uv run python src/main.py --config-path cfg --config-name base
 ```
@@ -86,7 +86,7 @@ uv run python src/main.py --config-path cfg --config-name base
 ### Autoencoder
 
 ```bash
-uv run python src/convert.py auto_encoder.json cfg \
+uv run python src/convert.py ../examples/nntrees/auto_encoder.json cfg \
   --dataset dataset.autoencoder_mnist.AutoencoderMNIST --max-epochs 50
 uv run python src/main.py --config-path cfg --config-name base
 ```
@@ -94,13 +94,13 @@ uv run python src/main.py --config-path cfg --config-name base
 ### Skip Connections with Repeat
 
 ```bash
-uv run python src/convert.py skip_connections_with_repetition.json cfg --num-classes 10
+uv run python src/convert.py ../examples/nntrees/skip_connections_with_repetition.json cfg --num-classes 10
 uv run python src/main.py --config-path cfg --config-name base
 ```
 
 ## Pre-converted Diagrams (NNTree JSON)
 
-File in `converted/` directory, ready for `convert.py`:
+Files in `../examples/nntrees/` directory, ready for `convert.py`:
 
 | File | Description |
 |------|-------------|
@@ -198,9 +198,6 @@ converted/
 │       ├── test_ops.py            # 36 tests
 │       ├── test_base.py           # 21 tests
 │       └── test_integration.py    # 11 tests
-├── transformer_classifier.json    # BERT-style EnronSpam classifier (NNTree)
-├── auto_encoder.json              # Autoencoder (NNTree)
-├── skip_connections_with_repetition.json
 ├── pyproject.toml                 # Dependencies
 └── README.md
 ```

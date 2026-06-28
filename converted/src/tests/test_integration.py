@@ -8,7 +8,7 @@ from hydra import compose, initialize_config_dir
 from convert import build_hydra_configs
 from net.base import Net
 
-FIXTURES_DIR = Path(__file__).resolve().parent.parent.parent
+FIXTURES_DIR = Path(__file__).resolve().parent.parent.parent.parent / "examples" / "nntrees"
 
 
 class TestTransformerClassifierPipeline:

@@ -3,7 +3,7 @@ from pathlib import Path
 import pytest
 
 
-FIXTURES_DIR = Path(__file__).resolve().parent.parent.parent  # converted/
+FIXTURES_DIR = Path(__file__).resolve().parent.parent.parent.parent / "examples" / "nntrees"
 
 
 def load_json(name: str) -> dict:
