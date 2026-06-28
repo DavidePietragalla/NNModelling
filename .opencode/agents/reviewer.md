@@ -3,7 +3,6 @@ description: Quality gatekeeper. Reviews frontend (Svelte/TS) and backend (Pytho
 mode: subagent
 model: deepseek/deepseek-v4-flash
 permission:
-  edit: deny
   bash: deny
   skill:
     code-reviewer: allow
