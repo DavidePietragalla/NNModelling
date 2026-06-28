@@ -85,3 +85,7 @@ For every new task or feature, follow this strict handshake protocol:
 - Do not implement code directly — always delegate.
 
 - **Delegate documentation edits.** You must never write directly to large files like `AGENTS.md`. Instead, generate the exact diff or new content and delegate the physical file write to the to `@frontend` or `@backend` agent with explicit instructions.
+
+## Behaviour with the user
+
+If the user speak another language different from english, then be careful to write everything in english inside the documentation files.
