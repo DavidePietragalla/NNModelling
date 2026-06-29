@@ -168,7 +168,77 @@ The JSON should describe **what** the module expects, not **how** inference is c
 
 ---
 
-## Phase 5 — Type Engine
+## Phase 5 — Type System & Inference Rules
+
+Before designing the JSON schema or implementing the `TypeEngine`, formally define the semantics of the DSL type system.
+
+Model the type system using typing judgements and inference rules, similarly to programming language type systems.
+
+For example, define the tensor type as:
+
+\[
+\tau ::= Tensor(\sigma,\delta)
+\]
+
+where:
+
+* \(\sigma\) is the tensor shape
+* \(\delta\) is the tensor dtype
+
+and each shape dimension may be:
+
+\[
+d ::= c \mid x \mid p \mid *
+\]
+
+where:
+
+* \(c\) is a constant dimension
+* \(x\) is a symbolic dimension (e.g. \(B, T, H, W\))
+* \(p\) is a parameter reference (e.g. `in_features`)
+* \(*\) represents a wildcard or arbitrary sequence of dimensions.
+
+Then describe the typing rules of the first supported modules using formal inference rules.
+
+For example, `Linear` should be described similarly to:
+
+\[
+\frac{
+\Gamma \vdash x :
+Tensor((B,\alpha,F),\delta)
+\qquad
+F = in\_features
+}{
+\Gamma \vdash
+Linear(in\_features,out\_features)(x)
+:
+Tensor((B,\alpha,out\_features),\delta)
+}
+\]
+
+and `ReLU` as:
+
+\[
+\frac{
+\Gamma \vdash x :
+Tensor(\sigma,\delta)
+}{
+\Gamma \vdash
+ReLU(x)
+:
+Tensor(\sigma,\delta)
+}
+\]
+
+The implementation should be based on **constraint generation and constraint solving**, where each module contributes symbolic constraints that are solved by a generic inference engine.
+
+The `TypeEngine` should therefore implement a generic constraint solver rather than module-specific inference logic.\
+
+Please add this mathematical definition not only on the design paper for the sourgeons (backend/frontend agents), but also write in the report of the project: `analysis/report/ase_report.tex`
+
+---
+
+## Phase 6 — Type Engine
 
 Create:
 
@@ -203,7 +273,7 @@ Design the architecture so that future modules (e.g. `Conv2d`, `Flatten`, `Conca
 
 ---
 
-## Phase 6 — Unit Tests
+## Phase 7 — Unit Tests
 
 Create:
 
