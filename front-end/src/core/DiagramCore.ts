@@ -21,8 +21,8 @@ export class DiagramCore {
   // Diagram.svelte.ts overrides them with $state.raw reactive arrays.
   // Using `!` (definite assignment assertion) tells TS they'll be set
   // before use (by the Diagram constructor chain calling initStereotypes).
-  public nodes!: Node[];
-  public edges!: Edge[];
+  declare public nodes: Node[];
+  declare public edges: Edge[];
 
   constructor() {
     // NOTE: nodes and edges are NOT initialized here.
