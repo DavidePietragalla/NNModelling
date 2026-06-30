@@ -101,6 +101,10 @@ export type ShapePattern = ShapeDimPattern[];
  *   and subflows; an array of `ShapePattern` for joins (one per input handle).
  * - `output`: shape pattern the node produces.
  * - `dtype`: optional dtype constraints on inputs and/or output.
+ * - `constraints`: additional constraints on the type relationship between inputs.
+ *   Currently supports:
+ *   - `concat`: for Concat joins, specifies which dimension is concatenated.
+ *     `dim` is a string like `"params.dim"` resolving to a parameter on the node.
  */
 export interface TypeSignature {
   /** 'module' | 'join' | 'subflow' */
@@ -116,6 +120,11 @@ export interface TypeSignature {
   dtype?: {
     input?: DType;
     output?: DType;
+  };
+
+  /** Optional additional constraints (e.g. concat dimension). */
+  constraints?: {
+    concat?: { dim: string };
   };
 }
 

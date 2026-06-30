@@ -6,5 +6,13 @@
     "width": 80,
     "height": 60
   },
-  "params": {}
+  "params": {},
+  "type_signature": {
+    "kind": "join",
+    "input": [
+      [{ "kind": "wildcard" }],
+      [{ "kind": "wildcard" }]
+    ],
+    "output": [{ "kind": "wildcard" }]
+  }
 }

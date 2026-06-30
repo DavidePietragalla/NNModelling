@@ -117,7 +117,13 @@ export class TypeEngine {
         // Join nodes have multiple inputs — collect them
         const collected: TensorType[] = [];
         let allFound = true;
-        for (const e of incomingEdges) {
+        // Sort by targetHandle for deterministic ordering (in-0, in-1, …)
+        const sortedEdges = [...incomingEdges].sort((a, b) => {
+          const ha = a.targetHandle ?? "in-0";
+          const hb = b.targetHandle ?? "in-0";
+          return ha.localeCompare(hb);
+        });
+        for (const e of sortedEdges) {
           const srcAnn = annotations.get(e.source);
           if (srcAnn) {
             collected.push(srcAnn.outputType);
@@ -134,7 +140,7 @@ export class TypeEngine {
           continue;
         }
         inputTypes = collected.length > 0 ? collected : undefined;
-        // For Phase 1, join inference is a TODO; pass undefined to inferNode
+        // Pass inputTypes to inferNode for join processing
         inputType = undefined;
       } else if (incomingEdges.length === 0) {
         // No predecessor and not Input — floating node, skip silently
@@ -181,6 +187,7 @@ export class TypeEngine {
         stereotype,
         params,
         env,
+        inputTypes,
       );
 
       // ── Steps f/g: Handle result ─────────────────────────────────
@@ -231,6 +238,7 @@ export class TypeEngine {
     stereotype: Stereotype,
     params: Record<string, unknown>,
     env: TypeEnvironment,
+    inputTypes?: TensorType[],
   ): TensorType | TypeError {
     // Safety check: type signature must exist
     const sig = stereotype.typeSignature;
@@ -297,10 +305,134 @@ export class TypeEngine {
         return { shape: outputDims, dtype } satisfies TensorType;
       }
 
-      // ── Join kind (Phase 3 TODO) ──────────────────────────────
+      // ── Join kind — Phase 3 ──────────────────────────────────
       case "join": {
-        // TODO: implement join type inference (Phase 3)
-        return { shape: [], dtype: "unknown" } satisfies TensorType;
+        const inputPatterns = sig.input as ShapePattern[];
+
+        if (!inputTypes || inputTypes.length === 0) {
+          return {
+            nodeId: "",
+            message: `Join node "${stereotype.name}" has no inputs`,
+            severity: "error",
+          } satisfies TypeError;
+        }
+
+        if (inputPatterns.length !== inputTypes.length) {
+          return {
+            nodeId: "",
+            message: `Join node "${stereotype.name}" expects ${inputPatterns.length} inputs but got ${inputTypes.length}`,
+            severity: "error",
+          } satisfies TypeError;
+        }
+
+        // Step 1: Match each input pattern against corresponding input type
+        const allBindings: TypeEnvironment[] = [];
+        const allCaptured: ShapeDimension[][] = [];
+
+        for (let k = 0; k < inputPatterns.length; k++) {
+          const pat = inputPatterns[k];
+          const inp = inputTypes[k];
+          if (!inp) continue;
+
+          const matchResult = this.patternMatch(inp.shape, pat, params, env);
+          if (isTypeError(matchResult)) {
+            return {
+              nodeId: "",
+              message: `Input ${k} mismatch: ${matchResult.message}`,
+              severity: matchResult.severity,
+            } satisfies TypeError;
+          }
+
+          allCaptured.push(matchResult.captured);
+          allBindings.push(matchResult.bindings);
+        }
+
+        // ── Verify all inputs have compatible shapes (captured dims match) ──
+        // For joins with wildcard patterns (e.g. Addition, element-wise ops),
+        // all inputs must have identical shapes.  We verify by comparing captured
+        // dims across inputs: same length and equal dimension values.
+        // This check is SKIPPED for concat joins (where the concat dim differs).
+        if (allCaptured.length >= 2 && !sig.constraints?.concat) {
+          const first = allCaptured[0];
+          for (let k = 1; k < allCaptured.length; k++) {
+            const other = allCaptured[k];
+            if (first.length !== other.length) {
+              return {
+                nodeId: "",
+                message: `Input ${k} shape length mismatch: expected ${first.length} dims, got ${other.length}`,
+                severity: "error",
+              } satisfies TypeError;
+            }
+            for (let d = 0; d < first.length; d++) {
+              if (!dimEqual(first[d], other[d])) {
+                return {
+                  nodeId: "",
+                  message: `Input ${k} dimension ${d} mismatch: ${this.describeDim(first[d])} vs ${this.describeDim(other[d])}`,
+                  severity: "error",
+                } satisfies TypeError;
+              }
+            }
+          }
+        }
+
+        // Step 2: Merge symbolic bindings across all inputs (unification)
+        const mergedEnv: TypeEnvironment = new Map(env);
+        for (const bindings of allBindings) {
+          for (const [name, dim] of bindings) {
+            const existing = mergedEnv.get(name);
+            if (existing !== undefined) {
+              if (!dimEqual(existing, dim)) {
+                return {
+                  nodeId: "",
+                  message: `Symbolic $${name} bound to conflicting values: ${this.describeDim(existing)} vs ${this.describeDim(dim)}`,
+                  severity: "error",
+                } satisfies TypeError;
+              }
+            } else {
+              mergedEnv.set(name, dim);
+            }
+          }
+        }
+
+        // Merge mergedEnv into env for downstream use
+        for (const [key, value] of mergedEnv) {
+          env.set(key, value);
+        }
+
+        // Step 3: Compute output shape
+        let outputDims: ShapeDimension[];
+
+        if (sig.constraints?.concat) {
+          // Concat join: sum dims on the concat axis
+          const concatDim = this.resolveConcatDim(
+            sig.constraints.concat.dim,
+            params,
+            inputTypes,
+          );
+          if (concatDim === undefined) {
+            return {
+              nodeId: "",
+              message: `Invalid concat dim "${sig.constraints.concat.dim}" for "${stereotype.name}"`,
+              severity: "error",
+            } satisfies TypeError;
+          }
+          outputDims = this.resolveConcatOutput(inputTypes, concatDim);
+        } else {
+          // Standard join: resolve output pattern with merged env
+          // Use only the first input's captured dims for output resolution;
+          // other inputs are for verification only.
+          const outputCaptured = allCaptured.length > 0 ? allCaptured[0] : [];
+          outputDims = this.resolvePattern(
+            sig.output,
+            params,
+            mergedEnv,
+            outputCaptured,
+          );
+        }
+
+        const dtype = sig.dtype?.output ?? inputTypes[0].dtype;
+
+        return { shape: outputDims, dtype } satisfies TensorType;
       }
 
       // ── Subflow kind (Phase 4 TODO) ───────────────────────────
@@ -351,6 +483,66 @@ export class TypeEngine {
       default:
         return undefined;
     }
+  }
+
+  /**
+   * Resolve the concatenation dimension from a constraint like "params.dim".
+   * Handles negative dims by wrapping from the end of the first input shape.
+   */
+  private static resolveConcatDim(
+    dimSpec: string,
+    params: Record<string, unknown>,
+    inputTypes: TensorType[],
+  ): number | undefined {
+    const parts = dimSpec.split(".");
+    if (parts.length === 2 && parts[0] === "params") {
+      const dim = this.resolveParamRef(parts[1], params);
+      if (dim === undefined) return undefined;
+      if (dim < 0 && inputTypes.length > 0) {
+        // Wrap negative dim (e.g. -1 → last dim)
+        return inputTypes[0].shape.length + dim;
+      }
+      return dim;
+    }
+    // Direct number
+    const parsed = Number(dimSpec);
+    if (!isNaN(parsed)) return parsed;
+    return undefined;
+  }
+
+  /**
+   * Compute the output shape for a Concat join.
+   * Uses the first input's shape as a template and sums values on concatDim.
+   * If any input's concat dim is non-const, falls back to the template.
+   */
+  private static resolveConcatOutput(
+    inputTypes: TensorType[],
+    concatDim: number,
+  ): ShapeDimension[] {
+    if (inputTypes.length === 0) return [];
+    const template = inputTypes[0];
+    if (concatDim < 0 || concatDim >= template.shape.length) {
+      return template.shape.map((d) => ({ ...d }));
+    }
+
+    // Sum const values on concat dim across all inputs
+    let total = 0;
+    let allConst = true;
+    for (const inp of inputTypes) {
+      const dim = inp.shape[concatDim];
+      if (dim.kind === "const") {
+        total += dim.value;
+      } else {
+        allConst = false;
+        break;
+      }
+    }
+
+    const shape = template.shape.map((d) => ({ ...d }));
+    if (allConst) {
+      shape[concatDim] = { kind: "const" as const, value: total };
+    }
+    return shape;
   }
 
   /**

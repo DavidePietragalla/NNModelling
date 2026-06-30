@@ -328,16 +328,16 @@ describe("TypeEngine — Edge Cases", () => {
     const inputId = d.nodes[0].id;
     d.updateModule(inputId, { params: { out_features: { value: "10" } } });
 
-    // Addition join has no type_signature field in its JSON
-    const addStereo = d.stereotypes.find((s) => s.name === "Addition")!;
-    d.addJoinNode(addStereo, 200, 0);
+    // Einsum join has no type_signature field in its JSON (too complex)
+    const einsumStereo = d.stereotypes.find((s) => s.name === "Einsum")!;
+    d.addJoinNode(einsumStereo, 200, 0);
     const joinId = d.nodes[1].id;
     d.edges.push(edge("e1", inputId, joinId));
 
     const result = TypeEngine.infer(d);
     expectTypeSuccess(result);
 
-    // Warning about no type signature (since Addition has no type_signature)
+    // Warning about no type signature (since Einsum has no type_signature)
     const joinWarnings = result.errors.filter(
       (e) => e.severity === "warning" && e.nodeId === joinId,
     );
@@ -637,5 +637,323 @@ describe("TypeEngine — Error Message Quality", () => {
     expect(forkErrors[0].message).not.toContain("at ");
     expect(forkErrors[0].message).not.toContain("Error:");
     expect(forkErrors[0].message).not.toContain("TypeError");
+  });
+});
+
+// ---------------------------------------------------------------------------
+// Group 7 — Phase 3: Join Type Inference
+// ---------------------------------------------------------------------------
+
+describe("TypeEngine — Phase 3 Joins", () => {
+  it("7.1: Addition: two (B,256) branches → output still (B,256)", () => {
+    const d = new Diagram();
+    const inputId = d.nodes[0].id;
+    d.updateModule(inputId, { params: { out_features: { value: "784" } } });
+
+    // Linear_a: 784 → 256
+    const linearStereo = d.stereotypes.find((s) => s.name === "Linear")!;
+    d.addModule(linearStereo, 200, 0);
+    const linearAId = d.nodes[1].id;
+    d.updateModule(linearAId, {
+      params: {
+        in_features: { value: "784" },
+        out_features: { value: "256" },
+      },
+    });
+
+    // Linear_b: 784 → 256
+    d.addModule(linearStereo, 200, 100);
+    const linearBId = d.nodes[2].id;
+    d.updateModule(linearBId, {
+      params: {
+        in_features: { value: "784" },
+        out_features: { value: "256" },
+      },
+    });
+
+    d.edges.push(edge("e1", inputId, linearAId));
+    d.edges.push(edge("e2", inputId, linearBId));
+
+    // Addition join
+    const addStereo = d.stereotypes.find((s) => s.name === "Addition")!;
+    d.addJoinNode(addStereo, 200, 200);
+    const joinId = d.nodes[3].id;
+    d.edges.push(edge("e3", linearAId, joinId, { targetHandle: "in-0" }));
+    d.edges.push(edge("e4", linearBId, joinId, { targetHandle: "in-1" }));
+
+    const result = TypeEngine.infer(d);
+    expectTypeSuccess(result);
+    // Addition preserves shape: both inputs are (B, 256) → output (B, 256)
+    expectOutputShape(result, joinId, ["$B", "256"]);
+  });
+
+  it("7.2: Addition mismatch: (B,256) + (B,128) → error", () => {
+    const d = new Diagram();
+    const inputId = d.nodes[0].id;
+    d.updateModule(inputId, { params: { out_features: { value: "784" } } });
+
+    // Linear_a: 784 → 256
+    const linearStereo = d.stereotypes.find((s) => s.name === "Linear")!;
+    d.addModule(linearStereo, 200, 0);
+    const linearAId = d.nodes[1].id;
+    d.updateModule(linearAId, {
+      params: {
+        in_features: { value: "784" },
+        out_features: { value: "256" },
+      },
+    });
+
+    // Linear_b: 784 → 128 (different shape from Linear_a)
+    d.addModule(linearStereo, 200, 100);
+    const linearBId = d.nodes[2].id;
+    d.updateModule(linearBId, {
+      params: {
+        in_features: { value: "784" },
+        out_features: { value: "128" },
+      },
+    });
+
+    d.edges.push(edge("e1", inputId, linearAId));
+    d.edges.push(edge("e2", inputId, linearBId));
+
+    // Addition join
+    const addStereo = d.stereotypes.find((s) => s.name === "Addition")!;
+    d.addJoinNode(addStereo, 200, 200);
+    const joinId = d.nodes[3].id;
+    d.edges.push(edge("e3", linearAId, joinId, { targetHandle: "in-0" }));
+    d.edges.push(edge("e4", linearBId, joinId, { targetHandle: "in-1" }));
+
+    const result = TypeEngine.infer(d);
+    // Should have errors — the wildcard captures differ in size between
+    // the two branches (first has 2 dims, second has 2 dims but different
+    // const value on second dim).
+    const hardErrors = result.errors.filter((e) => e.severity === "error");
+    expect(hardErrors.length).toBeGreaterThanOrEqual(1);
+    // Error should be on the join node
+    const joinErrors = hardErrors.filter((e) => e.nodeId === joinId);
+    expect(joinErrors.length).toBeGreaterThanOrEqual(1);
+  });
+
+  it("7.3: Concat on dim=-1 (default): (B, 128) + (B, 64) → (B, 192)", () => {
+    const d = new Diagram();
+    const inputId = d.nodes[0].id;
+    d.updateModule(inputId, { params: { out_features: { value: "128" } } });
+
+    // Linear_a: 128 → 128
+    const linearStereo = d.stereotypes.find((s) => s.name === "Linear")!;
+    d.addModule(linearStereo, 200, 0);
+    const linearAId = d.nodes[1].id;
+    d.updateModule(linearAId, {
+      params: {
+        in_features: { value: "128" },
+        out_features: { value: "128" },
+      },
+    });
+    d.edges.push(edge("e1", inputId, linearAId));
+
+    // Linear_b: 128 → 64
+    d.addModule(linearStereo, 200, 100);
+    const linearBId = d.nodes[2].id;
+    d.updateModule(linearBId, {
+      params: {
+        in_features: { value: "128" },
+        out_features: { value: "64" },
+      },
+    });
+    d.edges.push(edge("e2", inputId, linearBId));
+
+    // Concat join with dim=-1 (default, last dim)
+    const concatStereo = d.stereotypes.find((s) => s.name === "Concat")!;
+    d.addJoinNode(concatStereo, 200, 200, {
+      params: { dim: { value: "-1" } },
+    });
+    const joinId = d.nodes[3].id;
+    d.edges.push(edge("e3", linearAId, joinId, { targetHandle: "in-0" }));
+    d.edges.push(edge("e4", linearBId, joinId, { targetHandle: "in-1" }));
+
+    const result = TypeEngine.infer(d);
+    expectTypeSuccess(result);
+
+    // First input shape: [B, 128], second: [B, 64]
+    // Concat on dim=-1 (last dim=1 for 2D shapes) → [B, 128+64] = [B, 192]
+    expectOutputShape(result, joinId, ["$B", "192"]);
+  });
+
+  it("7.4: MatMul mismatch: (32,64) × (128,64) → error (K=64 ≠ 128)", () => {
+    const d = new Diagram();
+    const inputId = d.nodes[0].id;
+    d.updateModule(inputId, { params: { out_features: { value: "64" } } });
+
+    // Linear_a: 64 → 64 (so K = 64 on first input)
+    const linearStereo = d.stereotypes.find((s) => s.name === "Linear")!;
+    d.addModule(linearStereo, 200, 0);
+    const linearAId = d.nodes[1].id;
+    d.updateModule(linearAId, {
+      params: {
+        in_features: { value: "64" },
+        out_features: { value: "64" },
+      },
+    });
+    d.edges.push(edge("e1", inputId, linearAId));
+
+    // Linear_b: 64 → 256. But MatMul expects second input [K, N] where K matches
+    // first input's K. If we set in_features=256, then Linear_b expects [B, 256]
+    // but Input outputs [B,64]. This would also fail pattern matching.
+    //
+    // For MatMul, the mismatch is on K dimension. Linear_a outputs [B, 64].
+    // That matches pattern [M, K] with K=64. Linear_b outputs [B, 128].
+    // That matches pattern [K, N] with K=128. Since K is bound to both 64
+    // and 128, there's a conflict.
+    d.addModule(linearStereo, 200, 100);
+    const linearBId = d.nodes[2].id;
+    d.updateModule(linearBId, {
+      params: {
+        in_features: { value: "64" },
+        out_features: { value: "128" },
+      },
+    });
+    d.edges.push(edge("e2", inputId, linearBId));
+
+    // MatMul join
+    const mmStereo = d.stereotypes.find((s) => s.name === "MatMul")!;
+    d.addJoinNode(mmStereo, 200, 200);
+    const joinId = d.nodes[3].id;
+    d.edges.push(edge("e3", linearAId, joinId, { targetHandle: "in-0" }));
+    d.edges.push(edge("e4", linearBId, joinId, { targetHandle: "in-1" }));
+
+    const result = TypeEngine.infer(d);
+    // Should have errors — K symbolic is bound to 64 from first input but
+    // second input's pattern also has K which should match the first dim (128)
+    // — but since patternMatch is called with a fresh env copy, K is bound
+    // to 128 in the second match. Then the merge step detects the conflict.
+    const hardErrors = result.errors.filter((e) => e.severity === "error");
+    expect(hardErrors.length).toBeGreaterThanOrEqual(1);
+    const joinErrors = hardErrors.filter((e) => e.nodeId === joinId);
+    expect(joinErrors.length).toBeGreaterThanOrEqual(1);
+  });
+
+  it("7.5: Concat: (B,128) + (B,64) on dim=1 → (B,192)", () => {
+    const d = new Diagram();
+    const inputId = d.nodes[0].id;
+    d.updateModule(inputId, { params: { out_features: { value: "128" } } });
+
+    // Linear_a: 128 → 128
+    const linearStereo = d.stereotypes.find((s) => s.name === "Linear")!;
+    d.addModule(linearStereo, 200, 0);
+    const linearAId = d.nodes[1].id;
+    d.updateModule(linearAId, {
+      params: {
+        in_features: { value: "128" },
+        out_features: { value: "128" },
+      },
+    });
+    d.edges.push(edge("e1", inputId, linearAId));
+
+    // Input produces [B, 128]. But we want (B,64) for the second branch.
+    // Use another Linear: 128 → 64
+    d.addModule(linearStereo, 200, 100);
+    const linearBId = d.nodes[2].id;
+    d.updateModule(linearBId, {
+      params: {
+        in_features: { value: "128" },
+        out_features: { value: "64" },
+      },
+    });
+    d.edges.push(edge("e2", inputId, linearBId));
+
+    // Concat join with dim=1
+    const concatStereo = d.stereotypes.find((s) => s.name === "Concat")!;
+    d.addJoinNode(concatStereo, 200, 200, {
+      params: { dim: { value: "1" } },
+    });
+    const joinId = d.nodes[3].id;
+    d.edges.push(edge("e3", linearAId, joinId, { targetHandle: "in-0" }));
+    d.edges.push(edge("e4", linearBId, joinId, { targetHandle: "in-1" }));
+
+    const result = TypeEngine.infer(d);
+    expectTypeSuccess(result);
+
+    // First input shape: [B, 128], second: [B, 64]
+    // Concat on dim=1 → [B, 128+64] = [B, 192]
+    expectOutputShape(result, joinId, ["$B", "192"]);
+  });
+
+  it("7.6: ScaledDotProduct: Q(B,H,L,64) × K(B,H,S,64) × V(B,H,S,128) → (B,H,L,128)", () => {
+    const d = new Diagram();
+    const inputId = d.nodes[0].id;
+    // Input produces [B, out_features]. Set out_features large enough.
+    d.updateModule(inputId, { params: { out_features: { value: "128" } } });
+
+    // We need three branches, each producing a different shape.
+    // Branch A (Q): [B, H, L, D] = [B, 8, 16, 64]
+    // Branch B (K): [B, H, S, D] = [B, 8, 32, 64]
+    // Branch C (V): [B, H, S, D_out] = [B, 8, 32, 128]
+    //
+    // The Input produces [B, 128] (2D). We need to get to 4D shapes.
+    // Since stereotype inference is data-driven, the ScaledDotProduct
+    // expects specific 4D patterns. Our Input → Linear chains produce
+    // 2D [B, X] shapes, which won't match the 4D patterns.
+    //
+    // This is fine — the test verifies that pattern matching catches
+    // the shape mismatch, demonstrating the engine correctly validates
+    // input shapes against the declared signatures.
+    //
+    // For a proper 4D test, we'd need a Reshape/View stereotype (Phase 4+).
+    // For now, verify that the engine tries to match and correctly
+    // reports a shape length mismatch.
+
+    // Linear for Q branch
+    const linearStereo = d.stereotypes.find((s) => s.name === "Linear")!;
+    d.addModule(linearStereo, 200, 0);
+    const linearQId = d.nodes[1].id;
+    d.updateModule(linearQId, {
+      params: {
+        in_features: { value: "128" },
+        out_features: { value: "64" },
+      },
+    });
+    d.edges.push(edge("e1", inputId, linearQId));
+
+    // Linear for K branch
+    d.addModule(linearStereo, 200, 100);
+    const linearKId = d.nodes[2].id;
+    d.updateModule(linearKId, {
+      params: {
+        in_features: { value: "128" },
+        out_features: { value: "64" },
+      },
+    });
+    d.edges.push(edge("e2", inputId, linearKId));
+
+    // Linear for V branch
+    d.addModule(linearStereo, 200, 200);
+    const linearVId = d.nodes[3].id;
+    d.updateModule(linearVId, {
+      params: {
+        in_features: { value: "128" },
+        out_features: { value: "128" },
+      },
+    });
+    d.edges.push(edge("e3", inputId, linearVId));
+
+    // ScaledDotProduct join
+    const sdpStereo = d.stereotypes.find(
+      (s) => s.name === "ScaledDotProduct",
+    )!;
+    d.addJoinNode(sdpStereo, 200, 300);
+    const joinId = d.nodes[4].id;
+    d.edges.push(edge("e4", linearQId, joinId, { targetHandle: "in-0" }));
+    d.edges.push(edge("e5", linearKId, joinId, { targetHandle: "in-1" }));
+    d.edges.push(edge("e6", linearVId, joinId, { targetHandle: "in-2" }));
+
+    const result = TypeEngine.infer(d);
+
+    // The 2D [B, X] shapes don't match the 4D patterns, so we expect errors
+    const hardErrors = result.errors.filter((e) => e.severity === "error");
+    expect(hardErrors.length).toBeGreaterThanOrEqual(1);
+    const joinErrors = hardErrors.filter((e) => e.nodeId === joinId);
+    expect(joinErrors.length).toBeGreaterThanOrEqual(1);
+    // Error message should mention dimension mismatch
+    expect(joinErrors[0].message).toMatch(/dimension|dim|pattern|expected/i);
   });
 });

@@ -12,5 +12,34 @@
       "default": "512",
       "position": "top"
     }
+  },
+  "type_signature": {
+    "kind": "join",
+    "input": [
+      [
+        { "kind": "symbolic", "name": "$B" },
+        { "kind": "symbolic", "name": "$H" },
+        { "kind": "symbolic", "name": "$L" },
+        { "kind": "symbolic", "name": "$D" }
+      ],
+      [
+        { "kind": "symbolic", "name": "$B" },
+        { "kind": "symbolic", "name": "$H" },
+        { "kind": "symbolic", "name": "$S" },
+        { "kind": "symbolic", "name": "$D" }
+      ],
+      [
+        { "kind": "symbolic", "name": "$B" },
+        { "kind": "symbolic", "name": "$H" },
+        { "kind": "symbolic", "name": "$S" },
+        { "kind": "symbolic", "name": "$D_out" }
+      ]
+    ],
+    "output": [
+      { "kind": "symbolic", "name": "$B" },
+      { "kind": "symbolic", "name": "$H" },
+      { "kind": "symbolic", "name": "$L" },
+      { "kind": "symbolic", "name": "$D_out" }
+    ]
   }
 }

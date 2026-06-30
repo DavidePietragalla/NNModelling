@@ -101,6 +101,7 @@ export class Stereotype {
       input,
       output: stripPattern(raw.output),
       dtype: raw.dtype ? { ...raw.dtype } : undefined,
+      constraints: raw.constraints ? { ...raw.constraints } : undefined,
     };
   }
 
