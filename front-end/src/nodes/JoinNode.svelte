@@ -20,6 +20,13 @@
     }));
   }
 
+  let nodeErrors = $derived.by(() => {
+    if (!diagram?.typeResult) return null;
+    const errs = diagram.typeResult.errors.filter(e => e.nodeId === id);
+    if (errs.length === 0) return null;
+    return { severity: errs.some(e => e.severity === 'error') ? 'error' : 'warning', message: errs[0].message };
+  });
+
   function increase(e: Event) {
     e.stopPropagation();
     updateNodeData(id, { inputsCount: inputsCount + 1 });
@@ -59,6 +66,10 @@
   <div class="join-label" title={name}>
     {name.length > 8 ? name.slice(0, 8) + '...' : name}
   </div>
+
+  {#if nodeErrors}
+    <div class="node-indicator {nodeErrors.severity}" title={nodeErrors.message}>!</div>
+  {/if}
 </div>
 
 <style>

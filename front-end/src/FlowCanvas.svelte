@@ -26,6 +26,7 @@
   } from "./utils";
 
   import { NNTree } from "./conversion/nnTree";
+  import { TypeEngine } from "./conversion/typeEngine";
 
   // 1. Importiamo la classe Diagram
   import { Diagram, DIAGRAM_CONTEXT_KEY } from "./Diagram.svelte"; // Modifica il path se necessario
@@ -166,10 +167,10 @@
         if (newNodes !== undefined) diagram.nodes = newNodes;
       }}
       onconnect={() => {
-        // type checking deferred to Phase 5
+        diagram.typeResult = TypeEngine.infer(diagram);
       }}
       ondelete={() => {
-        // type checking deferred to Phase 5
+        diagram.typeResult = TypeEngine.infer(diagram);
       }}
       fitView
     >
@@ -181,7 +182,9 @@
         >
         <button
           onclick={() => {
-            handleLoadModel(diagram);
+            handleLoadModel(diagram, () => {
+              diagram.typeResult = TypeEngine.infer(diagram);
+            });
             isSidebarOpen = false;
           }}
           class="toolbar-btn">📂 Carica</button

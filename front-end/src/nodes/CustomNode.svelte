@@ -30,6 +30,34 @@
       selected: n.id === id,
     }));
   }
+
+  // --- Type error indicator ---
+  let nodeErrors = $derived.by(() => {
+    if (!diagram?.typeResult) return null;
+    const errs = diagram.typeResult.errors.filter(e => e.nodeId === id);
+    if (errs.length === 0) return null;
+    return { severity: errs.some(e => e.severity === 'error') ? 'error' : 'warning', message: errs[0].message };
+  });
+
+  // --- Shape tooltip on output handle ---
+  let tooltipVisible = $state(false);
+  let tooltipTimer: ReturnType<typeof setTimeout>;
+
+  let outputShape = $derived.by(() => {
+    const ann = diagram?.typeResult?.annotations.get(id);
+    if (!ann) return null;
+    return ann.outputType.shape.map(d => d.kind === 'const' ? String(d.value) : d.kind === 'symbolic' ? '$' + d.name : d.kind).join(',');
+  });
+
+  function showTooltip() {
+    clearTimeout(tooltipTimer);
+    tooltipTimer = setTimeout(() => tooltipVisible = true, 200);
+  }
+
+  function hideTooltip() {
+    clearTimeout(tooltipTimer);
+    tooltipVisible = false;
+  }
 </script>
 
 <NodeResizer
@@ -78,8 +106,18 @@
   </div>
 {/if}
 
+{#if nodeErrors}
+  <div class="node-indicator {nodeErrors.severity}" title={nodeErrors.message}>!</div>
+{/if}
+
 {#if !data.isLoss}
-  <Handle type="source" position={Position.Bottom} {isConnectable} />
+  <!-- svelte-ignore a11y_no_static_element_interactions -->
+  <div class="output-handle-wrapper" onmouseenter={showTooltip} onmouseleave={hideTooltip}>
+    <Handle type="source" position={Position.Bottom} {isConnectable} />
+    {#if tooltipVisible && outputShape}
+      <div class="shape-tooltip">[{outputShape}]</div>
+    {/if}
+  </div>
 {/if}
 
 <style>

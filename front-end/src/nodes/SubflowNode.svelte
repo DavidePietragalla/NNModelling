@@ -43,6 +43,13 @@
     }));
   }
 
+  let nodeErrors = $derived.by(() => {
+    if (!diagram?.typeResult) return null;
+    const errs = diagram.typeResult.errors.filter(e => e.nodeId === id);
+    if (errs.length === 0) return null;
+    return { severity: errs.some(e => e.severity === 'error') ? 'error' : 'warning', message: errs[0].message };
+  });
+
   const handleResize: OnResizeEnd = (event, params) => {
     data.onResizeEnd(id, params.width, params.height);
   };
@@ -93,6 +100,10 @@
         </div>
       {/each}
     </div>
+  {/if}
+
+  {#if nodeErrors}
+    <div class="node-indicator {nodeErrors.severity}" title={nodeErrors.message}>!</div>
   {/if}
 </div>
 

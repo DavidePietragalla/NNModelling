@@ -1,5 +1,6 @@
 import { type Node, type Edge } from "@xyflow/svelte";
 import { Stereotype } from "./stereotype";
+import type { TypeResult } from './conversion/tensortypes';
 
 export const DIAGRAM_CONTEXT_KEY = Symbol("diagram-context");
 
@@ -9,6 +10,7 @@ export class Diagram {
   // Usiamo $state per rendere reattivi gli array nativi di Svelte Flow
   public nodes: Node[] = $state.raw<Node[]>([]);
   public edges: Edge[] = $state.raw<Edge[]>([]);
+  public typeResult: TypeResult | null = $state.raw(null);
 
   constructor() {
     // Boom! Una sola riga e hai caricato tutto.

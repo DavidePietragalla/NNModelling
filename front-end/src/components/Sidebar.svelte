@@ -3,6 +3,7 @@
   import type { Diagram } from "../Diagram.svelte";
   import type { Stereotype } from "../stereotype";
   import type { Node } from "@xyflow/svelte";
+  import { TypeEngine } from "../conversion/typeEngine";
 
   interface Props {
     diagram: Diagram;
@@ -54,6 +55,16 @@
   }
 
   let lastLoadedId = $state<string | null>(null);
+
+  // --- TYPE CHECK - Debounced inference on param change ---
+  let typeCheckTimer: ReturnType<typeof setTimeout>;
+
+  function scheduleTypeCheck() {
+    clearTimeout(typeCheckTimer);
+    typeCheckTimer = setTimeout(() => {
+      diagram.typeResult = TypeEngine.infer(diagram);
+    }, 300);
+  }
 
   $effect(() => {
     const id = selectedNode?.id ?? null;
@@ -126,6 +137,7 @@
       }
     }
     form.params = initialValues;
+    scheduleTypeCheck();
   }
 
   function onSubflowStereotypeChange(e: Event) {
@@ -144,6 +156,7 @@
       initialValues[key] = { value: prop.default, position: prop.position };
     }
     form.params = initialValues;
+    scheduleTypeCheck();
   }
 
   function handleCreate() {
@@ -167,6 +180,13 @@
       });
     }
     resetForm();
+    scheduleTypeCheck();
+  }
+
+  function getNodeLabel(nodeId: string): string {
+    const n = diagram.nodes.find(node => node.id === nodeId);
+    if (!n) return nodeId;
+    return (n.data as Record<string, unknown>)?.name as string ?? (n.data as Record<string, unknown>)?.stereotype as string ?? nodeId;
   }
 
   function handleManualUpdate() {
@@ -195,6 +215,7 @@
           params: { ...form.params }
         });
       }
+      scheduleTypeCheck();
     }
   }
 
@@ -286,10 +307,81 @@
       
     </div>
 
+    {#if diagram.typeResult}
+      <div class="type-error-panel">
+        <div class="type-error-panel-header">
+          Type Check ({diagram.typeResult.errors.length} issues)
+        </div>
+        {#if diagram.typeResult.errors.length === 0}
+          <div class="type-errors-empty">No type errors or warnings.</div>
+        {:else}
+          {#each diagram.typeResult.errors as err}
+            <!-- svelte-ignore a11y_no_static_element_interactions a11y_click_events_have_key_events -->
+            <div class="type-error-item {err.severity}" onclick={() => {
+              const found = diagram.nodes.find(n => n.id === err.nodeId);
+              if (found) {
+                diagram.nodes = diagram.nodes.map(n => ({ ...n, selected: n.id === found.id }));
+              }
+            }} onkeydown={(e) => { if (e.key === 'Enter' || e.key === ' ') { const found = diagram.nodes.find(n => n.id === err.nodeId); if (found) { diagram.nodes = diagram.nodes.map(n => ({ ...n, selected: n.id === found.id })); } } }} role="button" tabindex="0">
+              <span class="type-error-icon">{err.severity === 'error' ? '❌' : '⚠️'}</span>
+              <div class="type-error-text">
+                <span class="type-error-node">{getNodeLabel(err.nodeId)}</span>
+                <span class="type-error-msg">{err.message}</span>
+              </div>
+            </div>
+          {/each}
+        {/if}
+      </div>
+    {/if}
 
   </aside>
 {/if}
 
 <style>
   @import "../styles/sidebar.css";
+
+  .type-error-panel {
+    margin-top: 16px;
+    border-top: 1px solid #e5e7eb;
+    padding-top: 8px;
+    padding-left: 8px;
+    padding-right: 8px;
+  }
+  .type-error-panel-header {
+    font-weight: 600;
+    font-size: 0.85rem;
+    margin-bottom: 6px;
+  }
+  .type-errors-empty {
+    font-style: italic;
+    color: #6b7280;
+    font-size: 0.8rem;
+  }
+  .type-error-item {
+    display: flex;
+    align-items: flex-start;
+    gap: 6px;
+    padding: 3px 0;
+    cursor: pointer;
+    font-size: 0.8rem;
+  }
+  .type-error-item:hover {
+    background: #f3f4f6;
+  }
+  .type-error-item.error .type-error-msg {
+    color: #dc2626;
+  }
+  .type-error-item.warning .type-error-msg {
+    color: #f59e0b;
+  }
+  .type-error-icon {
+    flex-shrink: 0;
+  }
+  .type-error-text {
+    display: flex;
+    flex-direction: column;
+  }
+  .type-error-node {
+    font-weight: 600;
+  }
 </style>

@@ -201,7 +201,7 @@ export function handleSaveModel(diagram: Diagram) {
 }
 
 // --- LOGICA DI CARICAMENTO (Upload File) ---
-export function handleLoadModel(diagram: Diagram) {
+export function handleLoadModel(diagram: Diagram, onLoad?: () => void) {
   // Creiamo un input file invisibile
   const input = document.createElement("input");
   input.type = "file";
@@ -217,6 +217,7 @@ export function handleLoadModel(diagram: Diagram) {
       if (fileContent) {
         // Passiamo il contenuto al diagramma!
         diagram.importFromJson(fileContent);
+        onLoad?.();
       }
     };
     // Leggiamo il file come testo semplice
