@@ -73,9 +73,9 @@ NNModelling/
 │   │       ├── train.test.ts   # Tier 3: main.py training smoke
 │   │       └── infer.test.ts   # Tier 4: infer.py output validation
 │   ├── nodes/
-│   │   ├── CustomNode.svelte   # Standard NN module node
-│   │   ├── JoinNode.svelte     # Merge node (multi-input)
-│   │   └── SubflowNode.svelte  # Collapsible submodel container
+│   │   ├── CustomNode.svelte   # Standard NN module node (with type error indicator badges)
+│   │   ├── JoinNode.svelte     # Merge node (multi-input) (with type error indicator badges)
+│   │   └── SubflowNode.svelte  # Collapsible submodel container (with type error indicator badges)
 │   ├── conversion/
 │   │   ├── nnTree.ts           # Diagram → tree representation
 │   │   ├── tensortypes.ts      # Tensor type model interfaces
@@ -150,7 +150,7 @@ NNModelling/
 - **Pattern**: Pure TS unit tests, no DOM/browser
 - **Real Diagram**: Tests use real `Diagram` class (Svelte `$state.raw` compiled by Vite plugin). Stub `globalThis.window` before construction.
 - **Helpers**: `node(id, stereo, name, params, overrides?)` and `edge(id, source, target, handles?)` for concise fixtures.
-- **Coverage**: **89 tests** — sequential chain, skip/joins, autoencoder, subflow compilation, nested subflows, hidden nodes, error handling, connection validation, Fork node, type inference (Input, Linear, ReLU, wildcards, mismatches, edge cases)
+- **Coverage**: **102 tests** — sequential chain, skip/joins, autoencoder, subflow compilation, nested subflows, hidden nodes, error handling, connection validation, Fork node, type inference (Input, Linear, ReLU, Conv2d, Flatten, MaxPool2d, wildcards, mismatches, edge cases, computed dimensions, join type checking)
 
 ### Testing — Integration (Vitest + Python Pipeline)
 
@@ -194,6 +194,12 @@ Stereotypes/ (JSON) → Stereotype class → Diagram class (reactive state) → 
 - **Stereotype** (stereotype.ts) — Loads all JSON files from `Stereotypes/**/*.json` via Vite's `import.meta.glob`. Each stereotype defines: `pythonClassName`, `view` (color/size), `params` (type/default/position), `category` (determines `isJoin`, `isInput`, `isLoss`, `isSubFlow`).
 - **NNTree** (conversion/nnTree.ts) — Converts visual graph to tree representation. Handles sequential chains, joins (multiple parents), loss nodes, and subflow containers with Kahn's topological sort. Subflows are type `"subflow"` with `entryNode` + internal `nodes` map (not flattened to sequential). Supports recursive nested subflows via `compileSubflowGraph`. Output JSON consumed by Python side.
 - **TypeEngine** (conversion/typeEngine.ts) — Constraint-based static tensor type checker. Interprets `type_signature` from stereotype JSON. Data-driven — no hardcoded module-specific logic. Implements pattern matching with symbolic dimension binding, wildcard capture, param reference resolution, and dtype propagation. Supports: Input, Linear, ReLU (Phase 1). Join/subflow inference deferred to Phase 3/4.
+
+  **Phase 2 (computed dims)**: The engine supports `computed` dimension patterns with formula resolution (`conv2d_hw`, `pool2d_hw`, `flatten_prod`). Conv2d output H/W are computed from kernel/stride/padding/dilation parameters. Flatten computes the product of wildcard-captured dimensions.
+
+  **Phase 3 (join type checking)**: Join nodes with `kind: "join"` in their type_signature undergo multi-input pattern matching. Symbolic unification validates constraints (e.g., `MatMul`: K must match across inputs). The `Concat` constraint type sums dimensions on a specified axis. ScaledDotProduct validates Q/K/V shape compatibility.
+
+  **Phase 5 (editor integration)**: The TypeEngine is wired into the visual editor. Edge connections, parameter changes, and diagram loads trigger real-time type inference. Errors appear as red badges on nodes and in a panel at the bottom of the Sidebar. Hovering an output handle shows the inferred output shape via tooltip.
 - **Tensor Types** (conversion/tensortypes.ts) — Type model: ShapeDimension (const/symbolic/param_ref/wildcard discriminated union), TensorType (shape + dtype), TypeSignature (declarative input/output patterns), TypeEnvironment (symbolic bindings), TypeResult (annotations + errors).
 - **FlowCanvas.svelte** — Main editor component. Renders SvelteFlow canvas, toolbar (Save/Load/Convert), and Sidebar. Three node types: `custom`, `subflow`, `join`.
 - **Sidebar.svelte** — Node create/edit form. Resizable. Updates Diagram state reactively.
@@ -263,7 +269,7 @@ Each stereotype JSON can optionally include a `type_signature` field declaring t
 
 **Dimension kinds**: `const` (literal int), `symbolic` (e.g. `$B` for batch), `param_ref` (references node param), `wildcard` (matches zero or more arbitrary dims).
 
-**Phase 1 modules** with type signatures: Input, Linear, ReLU. Modules without a `type_signature` emit a warning and propagate an unknown type — the system supports gradual typing.
+**Phase 1-3 modules** with type signatures: Input, Linear, ReLU, Tanh, Sigmoid, Softmax, Dropout, BatchNorm1d, BatchNorm2d, LayerNorm, Conv2d, MaxPool2d, AvgPool2d, Flatten, Embedding (+6 joins: Addition, Concat, MatMul, ScaledDotProduct, MaskedScaledDotProduct). Modules without a `type_signature` emit a warning and propagate an unknown type — the system supports gradual typing.
 
 The TypeEngine interprets these declarative signatures via constraint-based inference. Adding a new module requires only updating its stereotype JSON — no TypeScript changes needed.
 
@@ -385,6 +391,7 @@ New stereotypes and refactoring:
 | `front-end/src/conversion/nnTree.ts` | Graph → tree conversion |
 | `front-end/src/conversion/tensortypes.ts` | Tensor type model: ShapeDimension, TensorType, TypeSignature, TypeResult |
 | `front-end/src/conversion/typeEngine.ts` | Constraint-based type inference: pattern matching, symbolic binding, dtype propagation |
+| `docs/designs/tensor-type-system/` | Full architectural design (7 docs): architecture, type model, engine spec, computed dims, join checking, editor integration, review |
 | `front-end/src/FlowCanvas.svelte` | Main editor + toolbar |
 | `front-end/src/Sidebar.svelte` | Node create/edit form |
 | `front-end/src/nodes/SubflowNode.svelte` | Collapsible subflow UI |

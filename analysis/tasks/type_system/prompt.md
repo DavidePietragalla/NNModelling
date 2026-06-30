@@ -1,4 +1,3 @@
-
 # Goal
 
 Introduce a static tensor type system into the NNModelling DSL capable of verifying tensor shapes and dtypes during visual editing and front-end compilation, preventing runtime PyTorch shape/type errors.
@@ -329,3 +328,5 @@ Before writing any code:
 4. State explicitly any assumptions instead of guessing.
 
 Focus on designing a type system that remains maintainable as the DSL grows to include more tensor operators and graph constructs.
+
+PLEASE: write only the documentation.
