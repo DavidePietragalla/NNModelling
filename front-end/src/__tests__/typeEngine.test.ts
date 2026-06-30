@@ -121,6 +121,33 @@ describe("TypeEngine — Happy Path", () => {
     // Linear output shape = [B, out_features] = [B, 128]
     expectOutputShape(result, linearId, ["$B", "128"]);
   });
+
+  it("1.2: Input → Linear → ReLU chain preserves shape and dtype", () => {
+    const d = new Diagram();
+    const inputId = d.nodes[0].id;
+    d.updateModule(inputId, { params: { out_features: { value: "784" } } });
+
+    // Linear
+    const linearStereo = d.stereotypes.find((s) => s.name === "Linear")!;
+    d.addModule(linearStereo, 200, 0);
+    const linearId = d.nodes[1].id;
+    d.edges.push(edge("e1", inputId, linearId));
+    d.updateModule(linearId, {
+      params: { in_features: { value: "784" }, out_features: { value: "256" } },
+    });
+
+    // ReLU
+    const reluStereo = d.stereotypes.find((s) => s.name === "ReLU")!;
+    d.addModule(reluStereo, 200, 100);
+    const reluId = d.nodes[2].id;
+    d.edges.push(edge("e2", linearId, reluId));
+
+    const result = TypeEngine.infer(d);
+    expectTypeSuccess(result);
+    expectOutputShape(result, inputId, ["$B", "784"]);
+    expectOutputShape(result, linearId, ["$B", "256"]);
+    expectOutputShape(result, reluId, ["$B", "256"]);
+  });
 });
 
 // ---------------------------------------------------------------------------
@@ -148,7 +175,27 @@ describe("TypeEngine — Shape Mismatch Errors", () => {
     expect(ann.outputType.shape[1].kind).toBe("symbolic");
   });
 
-  it("2.1: Linear in_features mismatch", () => {});
+  it("2.1: Linear in_features mismatch", () => {
+    const d = new Diagram();
+    const inputId = d.nodes[0].id;
+    d.updateModule(inputId, { params: { out_features: { value: "784" } } });
+
+    // Add Linear with in_features=512 (MISMATCH — Input outputs 784)
+    const linearStereo = d.stereotypes.find((s) => s.name === "Linear")!;
+    d.addModule(linearStereo, 200, 0);
+    const linearId = d.nodes[1].id;
+    d.edges.push(edge("e1", inputId, linearId));
+    d.updateModule(linearId, {
+      params: { in_features: { value: "512" }, out_features: { value: "256" } },
+    });
+
+    const result = TypeEngine.infer(d);
+    expect(result.ok).toBe(false);
+    expect(result.errors.length).toBeGreaterThanOrEqual(1);
+    const dimErr = result.errors.find((e) => e.severity === "error");
+    expect(dimErr).toBeDefined();
+    expect(dimErr!.message).toMatch(/in_features|512|784|mismatch|dimension/i);
+  });
 
   it.skip(
     "2.2: Extra dimensions not covered — needs fixed-dim pattern",
@@ -287,9 +334,15 @@ describe("TypeEngine — Wildcard Behavior", () => {
     expect(reluAnn.outputType.dtype).toBe("float32");
   });
 
-  it("4.1: Wildcard consumes zero dimensions", () => {});
+  it.skip(
+    "4.1: Wildcard consumes zero dimensions (needs multi-dim input source for testing)",
+    () => {},
+  );
 
-  it("4.2: Wildcard consumes one intermediate dimension", () => {});
+  it.skip(
+    "4.2: Wildcard consumes one intermediate dimension (needs multi-dim input source for testing)",
+    () => {},
+  );
 });
 
 // ---------------------------------------------------------------------------
