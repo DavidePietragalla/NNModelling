@@ -63,6 +63,7 @@ NNModelling/
 │   ├── __tests__/              # Vitest test suites
 │   │   ├── helpers.ts          # Test factories (stubWindow, node, edge)
 │   │   ├── nnTree.test.ts      # NNTree regression tests
+│   │   ├── typeEngine.test.ts  # Type inference unit tests
 │   │   ├── utils.test.ts       # checkValidConnection tests
 │   │   └── integration/        # Integration test suite (tiered, Python pipeline)
 │   │       ├── helpers.ts      # Shared helpers (manifest, uvRun, pipeline stages)
@@ -76,7 +77,9 @@ NNModelling/
 │   │   ├── JoinNode.svelte     # Merge node (multi-input)
 │   │   └── SubflowNode.svelte  # Collapsible submodel container
 │   ├── conversion/
-│   │   └── nnTree.ts           # Diagram → tree representation
+│   │   ├── nnTree.ts           # Diagram → tree representation
+│   │   ├── tensortypes.ts      # Tensor type model interfaces
+│   │   └── typeEngine.ts       # Constraint-based type inference engine
 │   ├── styles/                 # CSS (flowcanvas, node, sidebar, join, subflow, dropdown)
 │   ├── components/
 │   │   ├── Sidebar.svelte      # Node create/edit form
@@ -147,7 +150,7 @@ NNModelling/
 - **Pattern**: Pure TS unit tests, no DOM/browser
 - **Real Diagram**: Tests use real `Diagram` class (Svelte `$state.raw` compiled by Vite plugin). Stub `globalThis.window` before construction.
 - **Helpers**: `node(id, stereo, name, params, overrides?)` and `edge(id, source, target, handles?)` for concise fixtures.
-- **Coverage**: **76 tests** — sequential chain, skip/joins, autoencoder, subflow compilation, nested subflows, hidden nodes, error handling, connection validation, Fork node
+- **Coverage**: **89 tests** — sequential chain, skip/joins, autoencoder, subflow compilation, nested subflows, hidden nodes, error handling, connection validation, Fork node, type inference (Input, Linear, ReLU, wildcards, mismatches, edge cases)
 
 ### Testing — Integration (Vitest + Python Pipeline)
 
@@ -178,6 +181,8 @@ NNModelling/
 ```
 Stereotypes/ (JSON) → Stereotype class → Diagram class (reactive state) → FlowCanvas.svelte (Svelte Flow UI)
                                                                                ↓
+                                                                    TypeEngine (type checking)
+                                                                               ↓
                                                                           NNTree class (conversion)
                                                                                ↓
                                                                           JSON → convert.py (Hydra configs)
@@ -188,6 +193,8 @@ Stereotypes/ (JSON) → Stereotype class → Diagram class (reactive state) → 
 - **Diagram.svelte.ts** — Central state manager. Holds `nodes` and `edges` as Svelte 5 `$state.raw` arrays. Methods: `addModule`, `addJoinNode`, `addSubGraph`, `deleteNodes`, `importFromJson`, `exportToJson`, `toggleSubflow`.
 - **Stereotype** (stereotype.ts) — Loads all JSON files from `Stereotypes/**/*.json` via Vite's `import.meta.glob`. Each stereotype defines: `pythonClassName`, `view` (color/size), `params` (type/default/position), `category` (determines `isJoin`, `isInput`, `isLoss`, `isSubFlow`).
 - **NNTree** (conversion/nnTree.ts) — Converts visual graph to tree representation. Handles sequential chains, joins (multiple parents), loss nodes, and subflow containers with Kahn's topological sort. Subflows are type `"subflow"` with `entryNode` + internal `nodes` map (not flattened to sequential). Supports recursive nested subflows via `compileSubflowGraph`. Output JSON consumed by Python side.
+- **TypeEngine** (conversion/typeEngine.ts) — Constraint-based static tensor type checker. Interprets `type_signature` from stereotype JSON. Data-driven — no hardcoded module-specific logic. Implements pattern matching with symbolic dimension binding, wildcard capture, param reference resolution, and dtype propagation. Supports: Input, Linear, ReLU (Phase 1). Join/subflow inference deferred to Phase 3/4.
+- **Tensor Types** (conversion/tensortypes.ts) — Type model: ShapeDimension (const/symbolic/param_ref/wildcard discriminated union), TensorType (shape + dtype), TypeSignature (declarative input/output patterns), TypeEnvironment (symbolic bindings), TypeResult (annotations + errors).
 - **FlowCanvas.svelte** — Main editor component. Renders SvelteFlow canvas, toolbar (Save/Load/Convert), and Sidebar. Three node types: `custom`, `subflow`, `join`.
 - **Sidebar.svelte** — Node create/edit form. Resizable. Updates Diagram state reactively.
 
@@ -231,6 +238,34 @@ Params in stereotype JSON can have `position: "top"` or `"bottom"` for display p
 **SubFlows (2):** Repeat (iterations param), HorizontalRepeat (n param)
 
 **Ops (11):** Addition, Einsum, MatMul, ScaledDotProduct, Concat, Subflow, Repeat, HorizontalRepeat, MaskedScaledDotProduct, PositionalEncoding, SequencePool
+
+### Type Signatures
+
+Each stereotype JSON can optionally include a `type_signature` field declaring the module's tensor shape contract:
+
+```json
+{
+  "type_signature": {
+    "kind": "module",
+    "input": [
+      { "kind": "symbolic", "name": "$B" },
+      { "kind": "wildcard" },
+      { "kind": "param_ref", "name": "in_features" }
+    ],
+    "output": [
+      { "kind": "symbolic", "name": "$B" },
+      { "kind": "wildcard" },
+      { "kind": "param_ref", "name": "out_features" }
+    ]
+  }
+}
+```
+
+**Dimension kinds**: `const` (literal int), `symbolic` (e.g. `$B` for batch), `param_ref` (references node param), `wildcard` (matches zero or more arbitrary dims).
+
+**Phase 1 modules** with type signatures: Input, Linear, ReLU. Modules without a `type_signature` emit a warning and propagate an unknown type — the system supports gradual typing.
+
+The TypeEngine interprets these declarative signatures via constraint-based inference. Adding a new module requires only updating its stereotype JSON — no TypeScript changes needed.
 
 ## Design Requirements
 
@@ -348,10 +383,13 @@ New stereotypes and refactoring:
 | `front-end/src/Diagram.svelte.ts` | Reactive state: nodes, edges, add/delete/toggle |
 | `front-end/src/stereotype.ts` | Load JSON stereotypes via glob |
 | `front-end/src/conversion/nnTree.ts` | Graph → tree conversion |
+| `front-end/src/conversion/tensortypes.ts` | Tensor type model: ShapeDimension, TensorType, TypeSignature, TypeResult |
+| `front-end/src/conversion/typeEngine.ts` | Constraint-based type inference: pattern matching, symbolic binding, dtype propagation |
 | `front-end/src/FlowCanvas.svelte` | Main editor + toolbar |
 | `front-end/src/Sidebar.svelte` | Node create/edit form |
 | `front-end/src/nodes/SubflowNode.svelte` | Collapsible subflow UI |
 | `front-end/src/utils.ts` | Connection validation |
+| `front-end/src/__tests__/typeEngine.test.ts` | Type inference unit tests (18 tests, 5 skipped for Phase 2+) |
 | `converted/src/convert.py` | NNTree JSON → Hydra configs |
 | `converted/src/infer.py` | Inference: load trained model, run test set, save predictions/images |
 | `converted/src/net/base.py` | Dynamic LightningModule |
