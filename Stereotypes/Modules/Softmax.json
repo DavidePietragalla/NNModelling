@@ -12,5 +12,14 @@
       "type": "int",
       "default": "None"
     }
+  },
+  "type_signature": {
+    "kind": "module",
+    "input": [
+      { "kind": "wildcard" }
+    ],
+    "output": [
+      { "kind": "wildcard" }
+    ]
   }
 }

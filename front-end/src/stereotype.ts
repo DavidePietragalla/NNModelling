@@ -104,11 +104,14 @@ export class Stereotype {
     };
   }
 
-  /** Deep‑clone a single dimension pattern, stripping the leading `$` from symbolic names. */
+  /** Deep‑clone a single dimension pattern, stripping the leading `$` from symbolic names.
+   *  For `computed` patterns, the `args` array is kept as-is; the `$` prefix in args
+   *  (e.g. `"$H"`, `"$W"`, `"$*"`) is interpreted by the type engine at resolution time. */
   private stripDollar(pattern: ShapeDimPattern): ShapeDimPattern {
     if (pattern.kind === 'symbolic' && pattern.name.startsWith('$')) {
       return { ...pattern, name: pattern.name.slice(1) };
     }
+    // computed patterns don't need $ stripping — args are kept verbatim
     return pattern;
   }
 

@@ -319,6 +319,88 @@ export class TypeEngine {
   }
 
   // ───────────────────────────────────────────────────────────────────────────
+  // Formula resolution (Phase 2 — computed dimensions)
+  // ───────────────────────────────────────────────────────────────────────────
+
+  /**
+   * Resolve a dimension formula with concrete numeric arguments.
+   *
+   * Supported formulas:
+   * - `conv2d_hw`:  H_out = floor((H + 2*pad - dilation*(kernel-1) - 1) / stride + 1)
+   * - `pool2d_hw`:  H_out = floor((H + 2*pad - kernel) / stride + 1)
+   * - `flatten_prod`: product of all args (dimensions being flattened)
+   *
+   * Returns `undefined` for unknown formulas.
+   */
+  private static resolveFormula(
+    formula: string,
+    args: number[],
+  ): number | undefined {
+    switch (formula) {
+      case "conv2d_hw": {
+        const [h, k, s, p, d] = args;
+        return Math.floor((h + 2 * p - d * (k - 1) - 1) / s + 1);
+      }
+      case "pool2d_hw": {
+        const [h, k, s, p] = args;
+        return Math.floor((h + 2 * p - k) / s + 1);
+      }
+      case "flatten_prod": {
+        return args.reduce((a, b) => a * b, 1);
+      }
+      default:
+        return undefined;
+    }
+  }
+
+  /**
+   * Resolve a single computed-arg string to a concrete number.
+   *
+   * - If the arg starts with `$`, it is a symbolic reference resolved from env.
+   * - If the arg is `$*`, it expands to the product of all captured dims.
+   * - Otherwise it is a parameter reference resolved from `params`.
+   *
+   * Returns `{ resolved: true; value: number }` or `{ resolved: false }`.
+   */
+  private static resolveComputedArg(
+    arg: string,
+    env: TypeEnvironment,
+    params: Record<string, unknown>,
+    captured: ShapeDimension[],
+  ): { resolved: true; value: number } | { resolved: false } {
+    // ── Special wildcard reference: $* ──────────────────────────────
+    if (arg === "$*") {
+      let product = 1;
+      for (const dim of captured) {
+        if (dim.kind === "const") {
+          product *= dim.value;
+        } else {
+          // One captured dim is non-const -> can't compute product
+          return { resolved: false };
+        }
+      }
+      return { resolved: true, value: product };
+    }
+
+    // ── Symbolic reference (e.g. $H, $W) ────────────────────────────
+    if (arg.startsWith("$")) {
+      const name = arg.slice(1);
+      const dim = env.get(name);
+      if (dim && dim.kind === "const") {
+        return { resolved: true, value: dim.value };
+      }
+      return { resolved: false };
+    }
+
+    // ── Parameter reference (e.g. kernel_size, stride) ──────────────
+    const val = this.resolveParamRef(arg, params);
+    if (val !== undefined) {
+      return { resolved: true, value: val };
+    }
+    return { resolved: false };
+  }
+
+  // ───────────────────────────────────────────────────────────────────────────
   // Private helpers
   // ───────────────────────────────────────────────────────────────────────────
 
@@ -487,6 +569,23 @@ export class TypeEngine {
           break;
         }
 
+        // ── computed (pass-through — no input validation) ────
+        case "computed": {
+          // Computed dims in the input pattern just require the
+          // dimension to exist; the exact value is not validated
+          // since computed dims are primarily output-side constraints.
+          if (i >= inputDims.length) {
+            return {
+              nodeId: "",
+              message: `expected dim at position ${j}, got end of shape`,
+              severity: "error",
+            } satisfies TypeError;
+          }
+          i++;
+          j++;
+          break;
+        }
+
         // ── wildcard ─────────────────────────────────────────
         case "wildcard": {
           // Count how many non-wildcard pattern elements follow.
@@ -580,6 +679,48 @@ export class TypeEngine {
           break;
         }
 
+        case "computed": {
+          // Try to resolve all formula arguments
+          const argValues: number[] = [];
+          let allResolved = true;
+          for (const arg of p.args) {
+            const resolved = this.resolveComputedArg(
+              arg,
+              env,
+              params,
+              captured,
+            );
+            if (resolved.resolved) {
+              argValues.push(resolved.value);
+            } else {
+              allResolved = false;
+              break;
+            }
+          }
+
+          if (allResolved) {
+            const value = this.resolveFormula(p.formula, argValues);
+            if (value !== undefined) {
+              result.push({ kind: "const", value });
+            } else {
+              // Unknown formula — keep as deferred computed
+              result.push({
+                kind: "computed",
+                formula: p.formula,
+                args: p.args,
+              });
+            }
+          } else {
+            // Can't resolve all args — keep as deferred computed
+            result.push({
+              kind: "computed",
+              formula: p.formula,
+              args: p.args,
+            });
+          }
+          break;
+        }
+
         default:
           // Unknown pattern kind — keep as unknown symbolic
           result.push({
@@ -651,6 +792,8 @@ export class TypeEngine {
         return `params.${d.name}`;
       case "wildcard":
         return "*";
+      case "computed":
+        return `computed(${d.formula})`;
     }
   }
 }
@@ -673,6 +816,8 @@ function dimEqual(a: ShapeDimension, b: ShapeDimension): boolean {
       return a.name === (b as typeof a).name;
     case "wildcard":
       return true;
+    case "computed":
+      return a.formula === (b as typeof a).formula;
   }
 }
 

@@ -54,5 +54,20 @@
       "type": "str",
       "default": "None"
     }
+  },
+  "type_signature": {
+    "kind": "module",
+    "input": [
+      { "kind": "symbolic", "name": "$B" },
+      { "kind": "param_ref", "name": "in_channels" },
+      { "kind": "symbolic", "name": "$H" },
+      { "kind": "symbolic", "name": "$W" }
+    ],
+    "output": [
+      { "kind": "symbolic", "name": "$B" },
+      { "kind": "param_ref", "name": "out_channels" },
+      { "kind": "computed", "formula": "conv2d_hw", "args": ["$H", "kernel_size", "stride", "padding", "dilation"] },
+      { "kind": "computed", "formula": "conv2d_hw", "args": ["$W", "kernel_size", "stride", "padding", "dilation"] }
+    ]
   }
 }

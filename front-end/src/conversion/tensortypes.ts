@@ -19,12 +19,15 @@
  * - `'symbolic'` — a named variable (e.g. batch size `B`, sequence length `S`).
  * - `'param_ref'` — references a node parameter (e.g. `in_features`).
  * - `'wildcard'` — matches zero or more arbitrary trailing dimensions.
+ * - `'computed'` — a dimension computed by a formula (e.g. conv2d_hw).
+ *   `value` is set when formula arguments have been fully resolved.
  */
 export type ShapeDimension =
   | { kind: 'const'; value: number }
   | { kind: 'symbolic'; name: string }
   | { kind: 'param_ref'; name: string }
-  | { kind: 'wildcard' };
+  | { kind: 'wildcard' }
+  | { kind: 'computed'; formula: string; args: string[]; value?: number };
 
 // ─────────────────────────────────────────────────────────────────────────────
 // 2. TensorShape — ordered list of dimensions
@@ -66,12 +69,18 @@ export interface TensorType {
  *
  * The leading `$` from JSON symbolic names is stripped on load, so
  * `"$B"` becomes `{ kind: 'symbolic', name: 'B' }`.
+ *
+ * `'computed'` — a dimension whose size is determined by a named formula
+ * (e.g. `conv2d_hw`) with arguments that reference symbolic dims (`$H`)
+ * or node params (`kernel_size`).  Computed dimensions are resolved during
+ * `resolvePattern` when all arguments are known.
  */
 export type ShapeDimPattern =
   | { kind: 'const'; value: number }
   | { kind: 'symbolic'; name: string }
   | { kind: 'param_ref'; name: string }
-  | { kind: 'wildcard' };
+  | { kind: 'wildcard' }
+  | { kind: 'computed'; formula: string; args: string[] };
 
 // ─────────────────────────────────────────────────────────────────────────────
 // 6. ShapePattern — ordered list of dimension patterns
