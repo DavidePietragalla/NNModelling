@@ -6,6 +6,7 @@
 \usepackage{xcolor}
 \usepackage{titlesec}
 \usepackage{amsmath}
+\usepackage{amssymb}
 \usepackage{cite}
 \usepackage{subcaption}
 \usepackage{placeins}
@@ -382,6 +383,151 @@ into Hydra configurations and PyTorch modules.
 	\Return \(T\)
 
 \end{algorithm}
+
+\pagebreak
+
+\section{Static Tensor Type System}
+
+A fundamental challenge in visual DSLs for neural network design is the lack of compile-time feedback about tensor shape compatibility. In NNModelling, a user may connect a \texttt{Linear} layer expecting 784 input features to a \texttt{Conv2d} layer producing a 3D tensor without any editor-level warning. The shape mismatch is only discovered at runtime when PyTorch raises a dimension error during training.
+
+To address this, we introduce a \textbf{static tensor type system} capable of verifying tensor shapes and dtypes during visual editing and front-end compilation. The type system is integrated into the DSL as a separate verification pass, preserving the existing architecture while extending the language with compile-time safety guarantees.
+
+\subsection{Tensor Types}
+
+A tensor type $\tau$ is a pair consisting of a shape and a dtype:
+
+\[
+	\tau ::= \text{Tensor}(\sigma, \delta)
+\]
+
+where $\sigma$ is a tensor shape and $\delta$ is a tensor dtype (e.g., \texttt{float32}, \texttt{float64}, \texttt{int64}).
+
+\subsection{Shape Dimensions}
+
+A shape $\sigma$ is a finite sequence of dimensions $d_1, d_2, \ldots, d_n$. Each dimension $d$ belongs to one of the following categories:
+
+\[
+	d ::= c \mid x \mid p \mid *
+\]
+
+where:
+\begin{itemize}
+	\item $c \in \mathbb{N}$ is a \textbf{constant} dimension (e.g., $3$, $784$, $1$)
+	\item $x \in \mathcal{X}$ is a \textbf{symbolic} dimension variable (e.g., $B$ for batch size, $C$ for channels, $H$ for height, $W$ for width) --- these represent unknown dimensions whose values are determined during type inference but remain symbolic in the type representation
+	\item $p \in \mathcal{P}$ is a \textbf{parameter reference} (e.g., \texttt{in\_features}, \texttt{out\_channels}) --- these refer to node parameter values that are resolved at inference time
+	\item $*$ is the \textbf{wildcard} dimension, matching zero or more arbitrary dimensions of any size. A wildcard in an input pattern consumes any matching dimensions from the actual tensor; in an output pattern, it reproduces the dimensions consumed during input matching
+\end{itemize}
+
+This representation allows the type system to express shapes that are partially known (containing symbolic variables and wildcards) rather than requiring every dimension to be a concrete integer. This is essential for modeling neural network architectures, where batch size is unknown at definition time and intermediate feature dimensions depend on upstream layers.
+
+\subsection{Typing Context}
+
+The typing context $\Gamma$ is a partial mapping from symbolic dimension names to their resolved dimension values:
+
+\[
+	\Gamma ::= \{ x_1 \mapsto d_1,\; x_2 \mapsto d_2,\; \ldots \}
+\]
+
+The context is populated incrementally during type inference as symbolic dimensions are bound to concrete values. Additionally, $\Gamma$ carries the dtype environment and maintains a mapping from node identifiers to their inferred tensor types.
+
+\subsection{Typing Judgments}
+
+The central judgment form for node-level type inference is:
+
+\[
+	\Gamma, P \vdash M : (\tau_{\text{in}} \rightarrow \tau_{\text{out}})
+\]
+
+meaning: ``in context $\Gamma$ with parameter values $P$, module $M$ maps input type $\tau_{\text{in}}$ to output type $\tau_{\text{out}}$.''
+
+For graph-level inference, we extend the judgment to:
+
+\[
+	\Gamma \vdash G : \Gamma'
+\]
+
+meaning: ``graph $G$ is well-typed, producing the extended environment $\Gamma'$ containing type annotations for every node.''
+
+\subsection{Inference Rules}
+
+The typing rules are defined per module type. Each rule is derived declaratively from the \texttt{type\_signature} field in the module's stereotype JSON, rather than being hardcoded in the inference engine. This data-driven approach ensures that adding a new module requires only extending its stereotype definition, with no changes to the TypeScript implementation.
+
+\paragraph{Input Node}
+
+The Input node is a source in the computation graph. It produces a tensor whose last dimension is determined by its \texttt{out\_features} parameter and whose batch dimension is a fresh symbolic variable:
+
+\[
+	\frac{
+	\text{stereotype}(v) = \text{Input}
+	\qquad
+	P = \text{params}(v)
+	}{
+	\Gamma \vdash v :
+	\text{Tensor}((B,\, P.\text{out\_features}),\, \text{float32})
+	}\]
+
+where $B$ is a fresh symbolic dimension variable introduced into $\Gamma$.
+
+\paragraph{Linear Layer}
+
+A \texttt{Linear} layer with parameters $P$ applies an affine transformation to the last dimension of its input. Given an input tensor of type $\text{Tensor}((B, \alpha_1, \ldots, \alpha_k, F), \delta)$:
+
+\[
+	\frac{
+	\Gamma \vdash x :
+	\text{Tensor}((B, \alpha_1, \ldots, \alpha_k, F), \delta)
+	\qquad
+	F = P.\text{in\_features}
+	}{
+	\Gamma \vdash \text{Linear}(P)(x) :
+	\text{Tensor}((B, \alpha_1, \ldots, \alpha_k, P.\text{out\_features}), \delta)
+	}\]
+
+where $\alpha_1, \ldots, \alpha_k$ are intermediate dimensions matched by a wildcard pattern and carried forward unchanged. The last dimension $F$ must equal the declared \texttt{in\_features} parameter; if this constraint is violated, a type error is emitted. The output preserves the batch dimension, all intermediate dimensions, and the dtype, while the last dimension becomes \texttt{out\_features}.
+
+\paragraph{ReLU Activation}
+
+Activation functions are shape-preserving and dtype-preserving:
+
+\[
+	\frac{
+		\Gamma \vdash x : \text{Tensor}(\sigma, \delta)
+	}{
+		\Gamma \vdash \text{ReLU}(x) : \text{Tensor}(\sigma, \delta)
+	}\]
+
+The same rule applies to all element-wise activation functions (Tanh, Sigmoid, Softmax) and normalization layers (BatchNorm, LayerNorm, Dropout), making their type signatures trivial to add.
+
+\subsection{Constraint-Based Inference Algorithm}
+
+Rather than implementing module-specific typing logic as TypeScript conditionals, the type engine implements a \textbf{constraint generation and constraint solving} approach. This design choice is fundamental to the extensibility of the type system.
+
+The algorithm operates in two phases:
+
+\begin{enumerate}
+	\item \textbf{Constraint Generation}: For each node visited in topological order, the engine reads the node's stereotype \texttt{type\_signature} and generates constraints by pattern-matching the actual input tensor shape against the declared input pattern. This produces:
+	      \begin{itemize}
+		      \item \textbf{Bindings}: symbolic dimensions in the pattern are bound to their matched concrete values
+		      \item \textbf{Substitutions}: wildcard dimensions capture a suffix of the actual shape for reuse in the output pattern
+		      \item \textbf{Resolutions}: parameter references are resolved to the node's current parameter values
+	      \end{itemize}
+
+	\item \textbf{Constraint Solving}: The engine substitutes bound variables and captured wildcards into the output pattern, producing the output tensor type. If any constraint is violated (e.g., a constant dimension does not match, a dtype constraint fails, or a parameter reference cannot be resolved), a \texttt{TypeError} is recorded.
+\end{enumerate}
+
+The inference is \textbf{forward-only} in Phase~1: types propagate from the Input node through the graph, and each node's output type is computed before its successors are visited. Future phases will support backward inference (e.g., deducing input sizes from loss function requirements) and bidirectional constraint propagation (e.g., inferring \texttt{in\_features} from context).
+
+\subsection{Pattern Matching Semantics}
+
+The pattern matching algorithm handles each dimension kind as follows:
+
+\begin{itemize}
+	\item \textbf{Constant ($c$)}: The actual input dimension at this position must equal $c$. If it does not, a type error is emitted (e.g., ``dimension mismatch: expected 3, got 1'').
+	\item \textbf{Symbolic ($x$)}: If $x$ is already bound in $\Gamma$, the actual dimension must equal the bound value (unification). If $x$ is unbound, a new binding $x \mapsto d$ is added to $\Gamma$.
+	\item \textbf{Parameter reference ($p$)}: The parameter $p$ is resolved from the node's parameter map. The actual dimension must equal the resolved value.
+	\item \textbf{Wildcard ($*$)}: Consumes zero or more dimensions from the actual input shape. The consumed dimensions are captured and substituted into the corresponding position in the output pattern.
+\end{itemize}
+
 
 \pagebreak
 
