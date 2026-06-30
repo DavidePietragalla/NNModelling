@@ -155,6 +155,48 @@ describe("TypeEngine — Happy Path", () => {
 // ---------------------------------------------------------------------------
 
 describe("TypeEngine — Shape Mismatch Errors", () => {
+  it("2.5: Input → Linear → ReLU → Linear with in_features mismatch in second Linear", () => {
+    const d = new Diagram();
+    const inputId = d.nodes[0].id;
+    d.updateModule(inputId, { params: { out_features: { value: "784" } } });
+
+    // Linear_0: 784 → 200 (matching)
+    const linearStereo = d.stereotypes.find((s) => s.name === "Linear")!;
+    d.addModule(linearStereo, 200, 0);
+    const linear0Id = d.nodes[1].id;
+    d.edges.push(edge("e1", inputId, linear0Id));
+    d.updateModule(linear0Id, {
+      params: { in_features: { value: "784" }, out_features: { value: "200" } },
+    });
+
+    // ReLU (shape-preserving)
+    const reluStereo = d.stereotypes.find((s) => s.name === "ReLU")!;
+    d.addModule(reluStereo, 200, 100);
+    const reluId = d.nodes[2].id;
+    d.edges.push(edge("e2", linear0Id, reluId));
+
+    // Linear_1: 300 → 100 (MISMATCH: expects 300 but ReLU outputs 200)
+    d.addModule(linearStereo, 200, 200);
+    const linear1Id = d.nodes[3].id;
+    d.edges.push(edge("e3", reluId, linear1Id));
+    d.updateModule(linear1Id, {
+      params: { in_features: { value: "300" }, out_features: { value: "100" } },
+    });
+
+    const result = TypeEngine.infer(d);
+
+    // Verify the mismatch IS detected
+    const hardErrors = result.errors.filter(e => e.severity === "error");
+
+    expect(result.ok).toBe(false);
+    expect(hardErrors.length).toBeGreaterThanOrEqual(1);
+    const dimErr = hardErrors.find(
+      e => e.message.includes("in_features") || e.message.includes("300") || e.message.includes("200"),
+    );
+    expect(dimErr).toBeDefined();
+    expect(dimErr!.nodeId).toBe(linear1Id);
+  });
+
   it("2.3: Unresolved param ('Undefined') produces no hard error", () => {
     const d = new Diagram();
     const inputId = d.nodes[0].id;
