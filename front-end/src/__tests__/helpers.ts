@@ -50,3 +50,95 @@ export function edge(
 ): Edge {
   return { id, source, target, ...handles } as Edge;
 }
+
+// ─────────────────────────────────────────────────────────────────────────────
+// Type engine test helpers
+// ─────────────────────────────────────────────────────────────────────────────
+
+import type { TypeResult } from '../conversion/tensortypes';
+
+/**
+ * Assert that a TypeResult is successful (no errors with severity 'error').
+ */
+export function expectTypeSuccess(result: TypeResult): void {
+  const hardErrors = result.errors.filter(e => e.severity === 'error');
+  if (hardErrors.length > 0) {
+    throw new Error(
+      `Expected type success but got errors: ${hardErrors.map(e => e.message).join('; ')}`,
+    );
+  }
+}
+
+/**
+ * Assert that a node in the TypeResult has the expected output shape.
+ * Shape is specified as an array of descriptive strings:
+ *   "784" → const dim with value 784
+ *   "$B"  → symbolic dim with name "B"
+ *   "*"   → wildcard (not checked strictly)
+ */
+export function expectOutputShape(
+  result: TypeResult,
+  nodeId: string,
+  expected: string[],
+): void {
+  const ann = result.annotations.get(nodeId);
+  if (!ann) throw new Error(`No annotation found for node ${nodeId}`);
+  const shape = ann.outputType.shape;
+  if (shape.length !== expected.length) {
+    throw new Error(
+      `Shape length mismatch for ${nodeId}: expected ${expected.length} dims, got ${shape.length}`,
+    );
+  }
+  for (let i = 0; i < expected.length; i++) {
+    const exp = expected[i];
+    const dim = shape[i];
+    if (exp.startsWith('$')) {
+      // Symbolic dim
+      if (dim.kind !== 'symbolic') {
+        throw new Error(`Expected symbolic dim at position ${i}, got ${dim.kind}`);
+      }
+      if (dim.name !== exp.slice(1) && dim.name !== exp) {
+        throw new Error(
+          `Symbolic name mismatch at ${i}: expected ${exp.slice(1)}, got ${dim.name}`,
+        );
+      }
+    } else if (exp === '*') {
+      // Wildcard — skip strict check
+      continue;
+    } else {
+      // Const dim
+      const val = parseInt(exp, 10);
+      if (isNaN(val)) throw new Error(`Invalid expected shape value: ${exp}`);
+      if (dim.kind !== 'const') {
+        throw new Error(`Expected const dim at position ${i}, got ${dim.kind}`);
+      }
+      if (dim.value !== val) {
+        throw new Error(`Const value mismatch at ${i}: expected ${val}, got ${dim.value}`);
+      }
+    }
+  }
+}
+
+/**
+ * Assert that a TypeResult contains a specific error for a node.
+ */
+export function expectTypeError(
+  result: TypeResult,
+  nodeId: string,
+  messageContains?: string,
+): void {
+  const matching = result.errors.filter(e => e.nodeId === nodeId);
+  if (matching.length === 0) {
+    throw new Error(
+      `No errors found for node ${nodeId}. Errors: ${result.errors.map(e => `${e.nodeId}: ${e.message}`).join('; ')}`,
+    );
+  }
+  if (messageContains) {
+    const hasMessage = matching.some(e => e.message.includes(messageContains));
+    if (!hasMessage) {
+      throw new Error(
+        `No error for ${nodeId} contains "${messageContains}". Errors: ${matching.map(e => e.message).join('; ')}`,
+      );
+    }
+  }
+}
