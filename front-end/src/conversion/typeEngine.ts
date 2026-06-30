@@ -204,6 +204,10 @@ export class TypeEngine {
           }
         }
       } else {
+        // Patch the nodeId if the callee left it empty
+        if (!result.nodeId) {
+          result.nodeId = nodeId;
+        }
         errors.push(result);
       }
     }
@@ -295,17 +299,13 @@ export class TypeEngine {
 
       // ── Join kind (Phase 3 TODO) ──────────────────────────────
       case "join": {
-        console.warn(
-          `join type inference not yet supported for "${stereotype.name}"`,
-        );
+        // TODO: implement join type inference (Phase 3)
         return { shape: [], dtype: "unknown" } satisfies TensorType;
       }
 
       // ── Subflow kind (Phase 4 TODO) ───────────────────────────
       case "subflow": {
-        console.warn(
-          `subflow type inference not yet supported for "${stereotype.name}"`,
-        );
+        // TODO: implement subflow type inference (Phase 4)
         return { shape: [], dtype: "unknown" } satisfies TensorType;
       }
 
@@ -489,16 +489,20 @@ export class TypeEngine {
 
         // ── wildcard ─────────────────────────────────────────
         case "wildcard": {
-          if (j < pattern.length - 1) {
-            return {
-              nodeId: "",
-              message:
-                "wildcard is only supported as the last non-wildcard element in Phase 1",
-              severity: "error",
-            } satisfies TypeError;
+          // Count how many non-wildcard pattern elements follow.
+          // The wildcard consumes all input dims except those reserved
+          // for subsequent required pattern elements.
+          let remainingRequired = 0;
+          for (let k = j + 1; k < pattern.length; k++) {
+            if (pattern[k].kind !== "wildcard") remainingRequired++;
           }
-          // Consume all remaining input dims
-          while (i < inputDims.length) {
+
+          // How many input dims remain?
+          const available = inputDims.length - i;
+          const toConsume = Math.max(0, available - remainingRequired);
+
+          // Consume the wildcard dims
+          for (let c = 0; c < toConsume; c++) {
             captured.push(inputDims[i]);
             i++;
           }
