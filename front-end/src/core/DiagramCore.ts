@@ -14,14 +14,21 @@ import { checkValidConnection as coreCheckValidConnection } from "./validation";
 import type { DiagramCoreSnapshot, NodeConfig, JoinNodeConfig } from "./types";
 
 export class DiagramCore {
-  public stereotypes: StereotypeCore[];
+  public stereotypes!: StereotypeCore[];
   public readonly events: EventBus;
 
-  public nodes: Node[] = [];
-  public edges: Edge[] = [];
+  // nodes/edges are declared but NOT initialized with `= []` here.
+  // Diagram.svelte.ts overrides them with $state.raw reactive arrays.
+  // Using `!` (definite assignment assertion) tells TS they'll be set
+  // before use (by the Diagram constructor chain calling initStereotypes).
+  public nodes!: Node[];
+  public edges!: Edge[];
 
   constructor() {
-    this.stereotypes = [];
+    // NOTE: nodes and edges are NOT initialized here.
+    // The Diagram subclass initializes them with $state.raw.
+    // When used standalone (MCP server), call initStereotypes() then
+    // manually set nodes/edges before any operations.
     this.events = new EventBus();
   }
 

@@ -71,6 +71,12 @@ NNModelling/
 │   │       ├── forward.test.ts # Tier 2: Net.forward() pass
 │   │       ├── train.test.ts   # Tier 3: main.py training smoke
 │   │       └── infer.test.ts   # Tier 4: infer.py output validation
+│   ├── core/                     # Pure TypeScript (no Svelte deps)
+│   │   ├── DiagramCore.ts        # All diagram business logic + EventBus
+│   │   ├── EventBus.ts           # Typed event emitter with monotonic seq
+│   │   ├── StereotypeCore.ts     # Pure TS stereotype with dual loader (Vite/Node)
+│   │   ├── types.ts              # Shared type definitions (events, WS, configs)
+│   │   └── validation.ts         # Standalone connection validation
 │   ├── nodes/
 │   │   ├── CustomNode.svelte   # Standard NN module node
 │   │   ├── JoinNode.svelte     # Merge node (multi-input)
@@ -176,17 +182,23 @@ NNModelling/
 ### Front-end Data Flow
 
 ```
-Stereotypes/ (JSON) → Stereotype class → Diagram class (reactive state) → FlowCanvas.svelte (Svelte Flow UI)
-                                                                               ↓
-                                                                          NNTree class (conversion)
-                                                                               ↓
-                                                                          JSON → convert.py (Hydra configs)
+Stereotypes/ (JSON) → StereotypeCore → DiagramCore (pure TS state + EventBus)
+                                            ↑ extends
+                                       Diagram.svelte.ts ($state.raw wrapper)
+                                            ↓
+                                       FlowCanvas.svelte (Svelte Flow UI)
+                                            ↓
+                                       NNTree class (conversion)
+                                            ↓
+                                       JSON → convert.py (Hydra configs)
 ```
 
 ### Key Classes
 
-- **Diagram.svelte.ts** — Central state manager. Holds `nodes` and `edges` as Svelte 5 `$state.raw` arrays. Methods: `addModule`, `addJoinNode`, `addSubGraph`, `deleteNodes`, `importFromJson`, `exportToJson`, `toggleSubflow`.
-- **Stereotype** (stereotype.ts) — Loads all JSON files from `Stereotypes/**/*.json` via Vite's `import.meta.glob`. Each stereotype defines: `pythonClassName`, `view` (color/size), `params` (type/default/position), `category` (determines `isJoin`, `isInput`, `isLoss`, `isSubFlow`).
+- **DiagramCore** (core/DiagramCore.ts) — Pure TypeScript state authority. Holds `nodes` and `edges` as plain arrays. All business logic: `addModule`, `addJoinNode`, `addSubGraph`, `deleteNodes`, `addEdge`, `moveNode`, `importFromJson`, `exportToJson`, `toggleSubflow`. Integrates `EventBus` — every mutation emits typed domain events.
+- **Diagram.svelte.ts** — Thin Svelte 5 wrapper extending `DiagramCore`. Overrides `nodes`/`edges` with `$state.raw` for reactive UI. Handles Svelte-specific concerns: auto-spawn Input node, re-hydrate subflow callbacks (onToggle, onResizeEnd) after JSON import.
+- **StereotypeCore** (core/StereotypeCore.ts) — Pure TypeScript stereotype with dual loader: `loadFromDirectory()` uses Vite's `import.meta.glob` for browser; `loadFromDirectoryNode(path)` uses `fs.readdirSync` for Node.js/MCP server.
+- **Stereotype** (stereotype.ts) — Thin wrapper extending `StereotypeCore`. Delegates to Vite loader via `StereotypeCore.loadFromDirectory()`.
 - **NNTree** (conversion/nnTree.ts) — Converts visual graph to tree representation. Handles sequential chains, joins (multiple parents), loss nodes, and subflow containers with Kahn's topological sort. Subflows are type `"subflow"` with `entryNode` + internal `nodes` map (not flattened to sequential). Supports recursive nested subflows via `compileSubflowGraph`. Output JSON consumed by Python side.
 - **FlowCanvas.svelte** — Main editor component. Renders SvelteFlow canvas, toolbar (Save/Load/Convert), and Sidebar. Three node types: `custom`, `subflow`, `join`.
 - **Sidebar.svelte** — Node create/edit form. Resizable. Updates Diagram state reactively.
@@ -217,6 +229,8 @@ Each JSON in `Stereotypes/Modules/` has a `category` field that determines node 
 - `"Join"` (in `Stereotypes/Joins/`) — Multi-input merge nodes
 - `"SubFlow"` (in `Stereotypes/SubFlows/`) — Container templates with params like `iterations`/`n`
 - Categories ending in `"Loss"` — Output nodes (no output handle, sets taskType for metric selection)
+
+The StereotypeCore class provides two loaders: `loadFromDirectory()` (Vite glob, for browser) and `loadFromDirectoryNode(path)` (Node fs, for MCP server).
 
 ### Parameter Positions
 
@@ -341,12 +355,33 @@ New stereotypes and refactoring:
 - **EnronSpamDataset**: text classification dataset via HF datasets + transformers
 - **Test count**: 73 → 76 tests (3 Fork tests)
 
+### Phase 9 — Core Extraction for MCP Server (commit XXXXXXX)
+
+Refactored frontend to extract pure TypeScript core — preparation for the MCP server (Phase 2):
+
+- **core/DiagramCore.ts**: All business logic from Diagram.svelte.ts with zero Svelte deps. Integrates EventBus — every mutation (addModule, deleteNodes, addEdge, etc.) emits typed domain events. New methods: addEdge, removeEdge, reconnectEdge, moveNode, moveNodes, getSnapshot, restoreSnapshot, selectNodes, clearSelection.
+- **core/EventBus.ts**: Typed event emitter with monotonic sequence numbers, ring buffer (max 1000 events), on/onAny/emit/getEventsSince.
+- **core/StereotypeCore.ts**: Pure TS stereotype with dual loader: Vite's import.meta.glob for browser, fs.readdirSync for Node.js/MCP server.
+- **core/types.ts**: Shared type definitions: DomainEvent<T> with 12 event types, WebSocket delta protocol types (WSSnapshotMessage, WSDeltaMessage, DeltaOperation), config interfaces.
+- **core/validation.ts**: Standalone checkValidConnection on plain Edge[] (was coupled to Diagram instance).
+- **Diagram.svelte.ts**: Reduced from 346 to 129 lines. Now a thin Svelte wrapper extending DiagramCore — only adds $state.raw reactivity and Svelte-specific callbacks.
+- **stereotype.ts**: Reduced from 93 to 17 lines. Stereotype extends StereotypeCore.
+- **nnTree.ts**: Now accepts DiagramCore (type-only import) instead of Diagram.
+- **utils.ts**: Delegates checkValidConnection to core/validation.ts.
+- **Verification**: All 76 unit tests pass, 64 integration smoke tests pass, svelte-check unchanged (4 pre-existing errors, 7 warnings).
+- **Git tag**: `phase1-complete`
+
 ## Key Files Reference
 
 | File | Purpose |
 |------|---------|
-| `front-end/src/Diagram.svelte.ts` | Reactive state: nodes, edges, add/delete/toggle |
-| `front-end/src/stereotype.ts` | Load JSON stereotypes via glob |
+| `front-end/src/Diagram.svelte.ts` | Thin Svelte wrapper: $state.raw, auto-spawn Input, callback re-hydration |
+| `front-end/src/stereotype.ts` | Stereotype extends StereotypeCore, Vite loader |
+| `front-end/src/core/DiagramCore.ts` | Pure TS state management + EventBus integration |
+| `front-end/src/core/EventBus.ts` | Typed event emitter with monotonic sequencing |
+| `front-end/src/core/StereotypeCore.ts` | Pure TS stereotype with dual Vite/Node.js loader |
+| `front-end/src/core/types.ts` | Shared type definitions (DomainEvent, WS messages, configs) |
+| `front-end/src/core/validation.ts` | Standalone connection validation on Edge[] |
 | `front-end/src/conversion/nnTree.ts` | Graph → tree conversion |
 | `front-end/src/FlowCanvas.svelte` | Main editor + toolbar |
 | `front-end/src/Sidebar.svelte` | Node create/edit form |
