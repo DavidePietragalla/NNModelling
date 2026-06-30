@@ -11,5 +11,16 @@
       "type": "int",
       "default": "784"
     }
+  },
+  "type_signature": {
+    "kind": "module",
+    "input": [],
+    "output": [
+      { "kind": "symbolic", "name": "$B" },
+      { "kind": "param_ref", "name": "out_features" }
+    ],
+    "dtype": {
+      "output": "float32"
+    }
   }
 }

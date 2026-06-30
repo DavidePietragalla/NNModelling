@@ -1,3 +1,5 @@
+import type { ShapeDimPattern, ShapePattern, TypeSignature } from './conversion/tensortypes';
+
 // 1. Definiamo i tipi esatti del tuo JSON originale
 export interface ModuleParameter {
   type: string;
@@ -18,6 +20,7 @@ export interface StereotypeJson {
   expr?: string;
   view?: Partial<StereotypeView>;
   params?: Record<string, ModuleParameter>;
+  type_signature?: TypeSignature;
 }
 
 export class Stereotype {
@@ -34,6 +37,10 @@ export class Stereotype {
   public readonly isInput: boolean;
   public readonly isLoss: boolean;
   public readonly isSubFlow: boolean;
+
+  /** Optional type signature for static tensor type checking.
+   *  undefined means this stereotype has not been annotated yet. */
+  public readonly typeSignature: TypeSignature | undefined;
 
   constructor(filePath: string, data: StereotypeJson) {
     this.id = filePath;
@@ -64,6 +71,45 @@ export class Stereotype {
       width: data.view?.width || 140,
       height: data.view?.height || 60
     };
+
+    this.typeSignature = this.parseTypeSignature(data.type_signature);
+  }
+
+  /**
+   * Parse a raw TypeSignature from JSON, stripping the `$` prefix from
+   * symbolic dimension names and deep-cloning to avoid mutation.
+   * Returns undefined when no signature is present.
+   */
+  private parseTypeSignature(raw: TypeSignature | undefined): TypeSignature | undefined {
+    if (!raw) return undefined;
+
+    const stripPattern = (pattern: ShapePattern): ShapePattern =>
+      pattern.map((dim) => this.stripDollar(dim));
+
+    // input is ShapePattern (ShapeDimPattern[]) for modules/subflows,
+    // or ShapePattern[] (ShapeDimPattern[][]) for joins.
+    // Distinguish by checking whether the first element is itself an array.
+    let input: ShapePattern | ShapePattern[];
+    if (Array.isArray(raw.input) && raw.input.length > 0 && Array.isArray(raw.input[0])) {
+      input = (raw.input as ShapePattern[]).map((p) => stripPattern(p));
+    } else {
+      input = stripPattern(raw.input as ShapePattern);
+    }
+
+    return {
+      kind: raw.kind,
+      input,
+      output: stripPattern(raw.output),
+      dtype: raw.dtype ? { ...raw.dtype } : undefined,
+    };
+  }
+
+  /** Deep‑clone a single dimension pattern, stripping the leading `$` from symbolic names. */
+  private stripDollar(pattern: ShapeDimPattern): ShapeDimPattern {
+    if (pattern.kind === 'symbolic' && pattern.name.startsWith('$')) {
+      return { ...pattern, name: pattern.name.slice(1) };
+    }
+    return pattern;
   }
 
   // ---- IL CARICATORE AUTOMATICO ----

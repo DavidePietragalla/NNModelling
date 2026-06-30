@@ -30,5 +30,18 @@
       "type": "str",
       "default": "None"
     }
+  },
+  "type_signature": {
+    "kind": "module",
+    "input": [
+      { "kind": "symbolic", "name": "$B" },
+      { "kind": "wildcard" },
+      { "kind": "param_ref", "name": "in_features" }
+    ],
+    "output": [
+      { "kind": "symbolic", "name": "$B" },
+      { "kind": "wildcard" },
+      { "kind": "param_ref", "name": "out_features" }
+    ]
   }
 }
