@@ -30,7 +30,7 @@
 
   // 1. Importiamo la classe Diagram
   import { Diagram, DIAGRAM_CONTEXT_KEY } from "./Diagram.svelte"; // Modifica il path se necessario
-  import { setContext } from "svelte";
+  import { setContext, onMount } from "svelte";
   import { toPng } from "html-to-image";
 
   const nodeTypes = {
@@ -66,6 +66,11 @@
     if (activeNode) {
       isSidebarOpen = true;
     }
+  });
+
+  // Initial type check on mount
+  onMount(() => {
+    diagram.typeResult = TypeEngine.infer(diagram);
   });
 
   function getSpawnPosition() {
