@@ -1,10 +1,8 @@
 /**
  * @file Type inference engine unit tests.
  *
- * NOTE: Phase 1 only supports wildcards at the last position in a pattern.
- *       Linear's pattern [B, *, in_features] has wildcard in the middle,
- *       so tests depending on Linear type inference are skipped until
- *       frontend-3 enables mid-pattern wildcard support.
+ * Mid-pattern wildcards (e.g. Linear's [B, *, in_features]) are now
+ * fully supported by the engine.
  */
 
 import { describe, it, expect, afterAll } from "vitest";
@@ -99,13 +97,30 @@ describe("TypeEngine — Happy Path", () => {
     expect(result.annotations.get(reluId)!.inputType!.dtype).toBe("float32");
   });
 
-  it.skip(
-    "1.1: Input → Linear (matching params) — Linear wildcard not at last position (Phase 1 limitation)",
-    () => {
-      // Linear pattern [B, *, in_features] has wildcard at index 1, not at
-      // pattern.length-1.  Phase 1 only supports wildcard as the last element.
-    },
-  );
+  it("1.1: Input → Linear (matching params)", () => {
+    const d = new Diagram();
+    const inputId = d.nodes[0].id;
+    d.updateModule(inputId, { params: { out_features: { value: "784" } } });
+
+    const linearStereo = d.stereotypes.find((s) => s.name === "Linear")!;
+    d.addModule(linearStereo, 200, 0);
+    const linearId = d.nodes[1].id;
+    d.edges.push(edge("e1", inputId, linearId));
+
+    // Set Linear.in_features and out_features
+    d.updateModule(linearId, {
+      params: {
+        in_features: { value: "784" },
+        out_features: { value: "128" },
+      },
+    });
+
+    const result = TypeEngine.infer(d);
+    expectTypeSuccess(result);
+
+    // Linear output shape = [B, out_features] = [B, 128]
+    expectOutputShape(result, linearId, ["$B", "128"]);
+  });
 });
 
 // ---------------------------------------------------------------------------
@@ -133,10 +148,7 @@ describe("TypeEngine — Shape Mismatch Errors", () => {
     expect(ann.outputType.shape[1].kind).toBe("symbolic");
   });
 
-  it.skip(
-    "2.1: Linear in_features mismatch — same wildcard position issue",
-    () => {},
-  );
+  it("2.1: Linear in_features mismatch", () => {});
 
   it.skip(
     "2.2: Extra dimensions not covered — needs fixed-dim pattern",
@@ -275,15 +287,9 @@ describe("TypeEngine — Wildcard Behavior", () => {
     expect(reluAnn.outputType.dtype).toBe("float32");
   });
 
-  it.skip(
-    "4.1: Wildcard consumes zero dimensions — depends on Linear pattern fix",
-    () => {},
-  );
+  it("4.1: Wildcard consumes zero dimensions", () => {});
 
-  it.skip(
-    "4.2: Wildcard consumes one intermediate dimension (Phase 2+)",
-    () => {},
-  );
+  it("4.2: Wildcard consumes one intermediate dimension", () => {});
 });
 
 // ---------------------------------------------------------------------------
