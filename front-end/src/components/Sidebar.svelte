@@ -198,9 +198,7 @@
     }
   }
 
- function handleLiveUpdate() {
-    handleManualUpdate();
-  } 
+ 
 </script>
 
 {#if isOpen}
@@ -224,15 +222,15 @@
     <div class="form-container">
       <label>
         {isSubflow ? "Etichetta Sottografo" : "Nome"}
-        <input type="text" bind:value={form.name} oninput={handleLiveUpdate} />
+        <input type="text" bind:value={form.name} oninput={handleManualUpdate} />
       </label>
 
       <div class="row">
         {#if !isSubflow || (isSubflow && selection !== null)}
-          <label>Colore <input type="color" bind:value={form.color} oninput={handleLiveUpdate} /></label>
+          <label>Colore <input type="color" bind:value={form.color} oninput={handleManualUpdate} /></label>
         {/if}
-        <label>Width <input type="number" bind:value={form.width} oninput={handleLiveUpdate} /></label>
-        <label>Height <input type="number" bind:value={form.height} oninput={handleLiveUpdate} /></label>
+        <label>Width <input type="number" bind:value={form.width} oninput={handleManualUpdate} /></label>
+        <label>Height <input type="number" bind:value={form.height} oninput={handleManualUpdate} /></label>
       </div>
 
       {#if isSubflow}
@@ -252,7 +250,7 @@
             {#each Object.entries(selection.parameters || {}) as [key, config]}
               <div class="param-row">
                 <label for={key}>{key}</label>
-                <input type="text" id={key} bind:value={form.params[key].value} oninput={handleLiveUpdate} />
+                <input type="text" id={key} bind:value={form.params[key].value} oninput={handleManualUpdate} />
               </div>
             {/each}
           </div>
@@ -271,7 +269,7 @@
             {#each Object.entries(selection.parameters || {}) as [key, config]}
               <div class="param-row">
                 <label for={key}>{key}</label>
-                <input type="text" id={key} bind:value={form.params[key].value} oninput={handleLiveUpdate} />
+                <input type="text" id={key} bind:value={form.params[key].value} oninput={handleManualUpdate} />
               </div>
             {/each}
           </div>
@@ -287,6 +285,8 @@
       {/if}
       
     </div>
+
+
   </aside>
 {/if}
 

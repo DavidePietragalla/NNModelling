@@ -1,6 +1,8 @@
 import { type Node, type Edge } from "@xyflow/svelte";
 import { Stereotype } from "./stereotype";
 
+export const DIAGRAM_CONTEXT_KEY = Symbol("diagram-context");
+
 export class Diagram {
   public stereotypes: Stereotype[];
 

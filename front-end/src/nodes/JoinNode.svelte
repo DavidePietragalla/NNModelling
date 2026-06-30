@@ -1,7 +1,10 @@
 <script lang="ts">
   import { Handle, Position, useSvelteFlow, type NodeProps } from "@xyflow/svelte";
+  import { getContext } from "svelte";
+  import { DIAGRAM_CONTEXT_KEY, type Diagram } from "../Diagram.svelte";
 
   let { id, data, selected, isConnectable }: NodeProps = $props();
+  const diagram = getContext<Diagram>(DIAGRAM_CONTEXT_KEY);
   
   // Usiamo l'API nativa per aggiornare i dati del nodo senza impazzire con classi esterne
   const { updateNodeData } = useSvelteFlow();
@@ -9,6 +12,13 @@
   // Reattività nativa Svelte 5 basata sul payload "data"
   let inputsCount = $derived((data.inputsCount as number) || 2);
   let name = $derived((data.name as string) || "Join");
+
+  function focusInSidebar() {
+    diagram.nodes = diagram.nodes.map((n) => ({
+      ...n,
+      selected: n.id === id,
+    }));
+  }
 
   function increase(e: Event) {
     e.stopPropagation();
@@ -23,7 +33,7 @@
   }
 </script>
 
-<div class="node-wrapper" class:selected>
+<div class="node-wrapper" class:selected style="position: relative;">
   <button class="btn-branch" onclick={decrease} disabled={inputsCount <= 2}>
     -
   </button>

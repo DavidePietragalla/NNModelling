@@ -448,7 +448,7 @@ describe("TypeEngine — Phase 2 Computed Dimensions", () => {
     expect(sig.output[1].kind).toBe("computed");
     if (sig.output[1].kind === "computed") {
       expect(sig.output[1].formula).toBe("flatten_prod");
-      expect(sig.output[1].args).toEqual(["$*"]);
+      expect(sig.output[1].args).toEqual(["*"]);
     }
   });
 

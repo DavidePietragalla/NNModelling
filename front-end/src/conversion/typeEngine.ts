@@ -417,6 +417,20 @@ export class TypeEngine {
             } satisfies TypeError;
           }
           outputDims = this.resolveConcatOutput(inputTypes, concatDim);
+
+          // Verify non-concat dims match across all inputs
+          for (let idx = 1; idx < inputTypes.length; idx++) {
+            for (let d = 0; d < inputTypes[0].shape.length; d++) {
+              if (d === concatDim) continue;
+              if (!dimEqual(inputTypes[0].shape[d], inputTypes[idx].shape[d])) {
+                return {
+                  nodeId: "",
+                  message: `Concat input ${idx} dimension ${d} mismatch: expected ${this.describeDim(inputTypes[0].shape[d])}, got ${this.describeDim(inputTypes[idx].shape[d])}`,
+                  severity: "error",
+                } satisfies TypeError;
+              }
+            }
+          }
         } else {
           // Standard join: resolve output pattern with merged env
           // Use only the first input's captured dims for output resolution;
@@ -552,7 +566,11 @@ export class TypeEngine {
    * - If the arg is `$*`, it expands to the product of all captured dims.
    * - Otherwise it is a parameter reference resolved from `params`.
    *
-   * Returns `{ resolved: true; value: number }` or `{ resolved: false }`.
+   * @param arg - The argument string to resolve (e.g. "$B", "$*", "kernel_size").
+   * @param env - Symbolic environment with bound dimension values.
+   * @param params - Node parameter map.
+   * @param captured - Wildcard-captured dimensions from pattern matching.
+   * @returns `{ resolved: true; value: number }` on success, `{ resolved: false }` otherwise.
    */
   private static resolveComputedArg(
     arg: string,
@@ -560,8 +578,8 @@ export class TypeEngine {
     params: Record<string, unknown>,
     captured: ShapeDimension[],
   ): { resolved: true; value: number } | { resolved: false } {
-    // ── Special wildcard reference: $* ──────────────────────────────
-    if (arg === "$*") {
+    // ── Special wildcard reference: * ($ stripped during parsing) ──
+    if (arg === "*") {
       let product = 1;
       for (const dim of captured) {
         if (dim.kind === "const") {
@@ -574,14 +592,10 @@ export class TypeEngine {
       return { resolved: true, value: product };
     }
 
-    // ── Symbolic reference (e.g. $H, $W) ────────────────────────────
-    if (arg.startsWith("$")) {
-      const name = arg.slice(1);
-      const dim = env.get(name);
-      if (dim && dim.kind === "const") {
-        return { resolved: true, value: dim.value };
-      }
-      return { resolved: false };
+    // ── Symbolic reference (e.g. B, H, W — $ stripped during parsing)
+    const dim = env.get(arg);
+    if (dim && dim.kind === "const") {
+      return { resolved: true, value: dim.value };
     }
 
     // ── Parameter reference (e.g. kernel_size, stride) ──────────────
@@ -1009,7 +1023,8 @@ function dimEqual(a: ShapeDimension, b: ShapeDimension): boolean {
     case "wildcard":
       return true;
     case "computed":
-      return a.formula === (b as typeof a).formula;
+      return a.formula === (b as typeof a).formula && 
+             JSON.stringify(a.args) === JSON.stringify((b as typeof a).args);
   }
 }
 

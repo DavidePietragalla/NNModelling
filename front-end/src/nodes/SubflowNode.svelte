@@ -6,6 +6,8 @@
     type NodeProps,
   } from "@xyflow/svelte";
   import { type Node, type OnResizeEnd } from "@xyflow/svelte";
+  import { getContext } from "svelte";
+  import { DIAGRAM_CONTEXT_KEY, type Diagram } from "../Diagram.svelte";
 
   type SubflowData = {
     label: string;
@@ -20,6 +22,7 @@
   type MySubflowNode = Node<SubflowData, "subflow">;
 
   let { data, selected, id }: NodeProps<MySubflowNode> = $props();
+  const diagram = getContext<Diagram>(DIAGRAM_CONTEXT_KEY);
 
   let topParams = $derived(
     Object.entries(data.params || {}).filter(
@@ -32,6 +35,13 @@
       ([_, p]: any) => p?.position === "bottom",
     ),
   );
+
+  function focusInSidebar() {
+    diagram.nodes = diagram.nodes.map((n) => ({
+      ...n,
+      selected: n.id === id,
+    }));
+  }
 
   const handleResize: OnResizeEnd = (event, params) => {
     data.onResizeEnd(id, params.width, params.height);
@@ -47,7 +57,7 @@
 
 <Handle type="target" position={Position.Top} />
 
-<div class="subflow-wrapper" class:collapsed={data.isCollapsed}>
+<div class="subflow-wrapper" class:collapsed={data.isCollapsed} style="position: relative;">
   <div
     class="subflow-header"
     style:background={String(data.color || "#007bff")}

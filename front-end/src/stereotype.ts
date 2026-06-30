@@ -112,7 +112,12 @@ export class Stereotype {
     if (pattern.kind === 'symbolic' && pattern.name.startsWith('$')) {
       return { ...pattern, name: pattern.name.slice(1) };
     }
-    // computed patterns don't need $ stripping — args are kept verbatim
+    if (pattern.kind === 'computed') {
+      return {
+        ...pattern,
+        args: pattern.args.map((arg) => (arg.startsWith('$') ? arg.slice(1) : arg)),
+      };
+    }
     return pattern;
   }
 

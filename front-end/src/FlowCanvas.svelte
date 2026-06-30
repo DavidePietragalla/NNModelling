@@ -28,7 +28,8 @@
   import { NNTree } from "./conversion/nnTree";
 
   // 1. Importiamo la classe Diagram
-  import { Diagram } from "./Diagram.svelte"; // Modifica il path se necessario
+  import { Diagram, DIAGRAM_CONTEXT_KEY } from "./Diagram.svelte"; // Modifica il path se necessario
+  import { setContext } from "svelte";
   import { toPng } from "html-to-image";
 
   const nodeTypes = {
@@ -40,6 +41,7 @@
   // 2. Istanziamo il nostro "Controller/Model"
   // Grazie a Svelte 5, le sue proprietà interne $state saranno reattive qui dentro!
   const diagram = new Diagram();
+  setContext(DIAGRAM_CONTEXT_KEY, diagram);
 
   // --- SVELTE 5: Stato derivato per abilitare/disabilitare i pulsanti ---
   // Ora peschiamo direttamente dall'istanza diagram
@@ -162,6 +164,12 @@
           getInternalNode,
         );
         if (newNodes !== undefined) diagram.nodes = newNodes;
+      }}
+      onconnect={() => {
+        // type checking deferred to Phase 5
+      }}
+      ondelete={() => {
+        // type checking deferred to Phase 5
       }}
       fitView
     >
