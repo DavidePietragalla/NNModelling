@@ -1,8 +1,12 @@
 {
-  "name": "vite-svelte-flow-template",
+  "name": "@nnmodelling/front-end",
   "private": true,
   "version": "0.0.0",
   "type": "module",
+  "exports": {
+    "./core/*": "./src/core/*",
+    "./conversion/*": "./src/conversion/*"
+  },
   "scripts": {
     "dev": "vite",
     "build": "vite build",
