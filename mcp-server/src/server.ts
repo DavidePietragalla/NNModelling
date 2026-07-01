@@ -23,6 +23,8 @@ import {
 } from "@modelcontextprotocol/sdk/types.js";
 import { DiagramCore } from "@nnmodelling/front-end/core/DiagramCore";
 import { StereotypeCore } from "@nnmodelling/front-end/core/StereotypeCore";
+import { readdirSync, readFileSync } from "fs";
+import { join } from "path";
 import { TransactionManager } from "./transaction";
 import { HistoryManager } from "./history";
 import * as pipelineMod from "./pipeline";
@@ -181,6 +183,36 @@ function discoverTools(module: Record<string, unknown>): Map<string, MCPToolEntr
   return tools;
 }
 
+// ── ESM-compatible stereotype loader ────────────────────────────────────
+// StereotypeCore.loadFromDirectoryNode() uses require("fs") which fails in
+// ESM. This local function uses statically-imported readdirSync/readFileSync
+// to achieve the same result without CJS interop.
+
+function loadStereotypesFromDirectory(stereotypesDir: string): StereotypeCore[] {
+  const loaded: StereotypeCore[] = [];
+
+  function walkDir(dir: string): void {
+    const entries = readdirSync(dir, { withFileTypes: true });
+    for (const entry of entries) {
+      const fullPath = join(dir, entry.name);
+      if (entry.isDirectory()) {
+        walkDir(fullPath);
+      } else if (entry.name.endsWith(".json")) {
+        try {
+          const content = readFileSync(fullPath, "utf-8");
+          const jsonData = JSON.parse(content);
+          loaded.push(new StereotypeCore(fullPath, jsonData));
+        } catch (e) {
+          console.error(`Error loading stereotype from ${fullPath}:`, e);
+        }
+      }
+    }
+  }
+
+  walkDir(stereotypesDir);
+  return loaded.sort((a, b) => a.name.localeCompare(b.name));
+}
+
 // ── createServer ────────────────────────────────────────────────────────
 
 /**
@@ -196,7 +228,7 @@ export async function createServer(
   // ── Step 1: Initialize DiagramCore (pure TS, no Svelte) ─────────────
   console.error(`[nnmodelling-mcp] Loading stereotypes from ${stereotypesDir}`);
   const diagram = new DiagramCore();
-  const stereotypes = StereotypeCore.loadFromDirectoryNode(stereotypesDir);
+  const stereotypes = loadStereotypesFromDirectory(stereotypesDir);
   diagram.initStereotypes(stereotypes);
 
   // Initialize plain arrays for headless Node.js operation

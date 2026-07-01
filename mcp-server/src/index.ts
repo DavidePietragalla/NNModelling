@@ -22,11 +22,10 @@ import { createServer } from "./server";
 import { createWSServer, type WSServer } from "./ws-server";
 
 async function main(): Promise<void> {
-  // Resolve the Stereotypes directory relative to the project root.
-  // In development: mcp-server/../Stereotypes/
-  // In production: adjust via NNM_STEREOTYPES env var
+  // Resolve the Stereotypes directory relative to this source file
+  // (import.meta.dirname → mcp-server/src/ → up 2 levels → repo root)
   const stereotypesDir =
-    process.env.NNM_STEREOTYPES ?? resolve(process.cwd(), "..", "Stereotypes");
+    process.env.NNM_STEREOTYPES ?? resolve(import.meta.dirname, "..", "..", "Stereotypes");
 
   console.error("[nnmodelling-mcp] Starting server...");
   console.error(`[nnmodelling-mcp] Stereotypes dir: ${stereotypesDir}`);
