@@ -21,14 +21,10 @@ class MockWebSocket {
     setTimeout(() => this.onopen?.(), 0);
   }
 
-  // @ts-expect-error — static property needed for WebSocket constants
-  static OPEN = 1;
-  // @ts-expect-error — static property needed for WebSocket constants
-  static CONNECTING = 0;
-  // @ts-expect-error — static property needed for WebSocket constants
-  static CLOSING = 2;
-  // @ts-expect-error — static property needed for WebSocket constants
-  static CLOSED = 3;
+  static OPEN: number = 1;
+  static CONNECTING: number = 0;
+  static CLOSING: number = 2;
+  static CLOSED: number = 3;
 }
 
 // ── Helpers ────────────────────────────────────────────────────────
