@@ -31,6 +31,9 @@
   import { Diagram } from "./Diagram.svelte"; // Modifica il path se necessario
   import { toPng } from "html-to-image";
 
+  // Sync client — real-time state sync with MCP server
+  import { DiagramSyncClient } from "./sync/DiagramSyncClient";
+
   const nodeTypes = {
     custom: CustomNode,
     subflow: SubflowNode,
@@ -63,6 +66,15 @@
     if (activeNode) {
       isSidebarOpen = true;
     }
+  });
+
+  // Connessione WebSocket per la sincronizzazione real-time con MCP server
+  let syncClient: DiagramSyncClient;
+
+  $effect(() => {
+    syncClient = new DiagramSyncClient(diagram);
+    syncClient.connect();
+    return () => syncClient.disconnect();
   });
 
   function getSpawnPosition() {
