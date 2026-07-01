@@ -67,7 +67,7 @@ export function createWSServer(
     // ── Send full snapshot on connect ────────────────────────
     const snapshot: WSSnapshotMessage = {
       type: "snapshot",
-      seq: eventBus.getCurrentSeq(),
+      seq: broadcastSeq,
       nodes: diagram.nodes,
       edges: diagram.edges,
     };
@@ -80,7 +80,7 @@ export function createWSServer(
         if (msg.type === "request_snapshot") {
           const snap: WSSnapshotMessage = {
             type: "snapshot",
-            seq: eventBus.getCurrentSeq(),
+            seq: broadcastSeq,
             nodes: diagram.nodes,
             edges: diagram.edges,
           };

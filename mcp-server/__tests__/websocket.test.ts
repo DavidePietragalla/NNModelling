@@ -257,6 +257,30 @@ describe("WebSocket Server - Delta Broadcast", () => {
     ws.close();
   });
 
+  it("snapshot seq and first delta seq are consecutive", async () => {
+    const ws = new WebSocket(`ws://localhost:${port}`);
+
+    // Receive snapshot — its seq should be the current broadcastSeq value
+    const snap: WSSnapshotMessage = await waitForMessage(ws);
+    expect(snap.type).toBe("snapshot");
+    const snapshotSeq = snap.seq;
+    expect(snapshotSeq).toBeTypeOf("number");
+
+    // Create a node — the delta seq should be exactly snapshotSeq + 1
+    const stereo = diagram.getStereotype("Linear")!;
+    diagram.addModule(stereo, 500, 100);
+
+    const delta: WSDeltaMessage = await waitForMessage(
+      ws,
+      (msg) => msg.type === "delta"
+    );
+
+    expect(delta.seq).toBe(snapshotSeq + 1);
+    expect(delta.operations[0].op).toBe("node_added");
+
+    ws.close();
+  });
+
   it("sends snapshots to multiple connected clients", async () => {
     const ws1 = new WebSocket(`ws://localhost:${port}`);
     const ws2 = new WebSocket(`ws://localhost:${port}`);
