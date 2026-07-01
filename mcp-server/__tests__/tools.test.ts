@@ -22,6 +22,7 @@ import * as conversionTools from "../src/tools/conversion";
 import * as inspectionTools from "../src/tools/inspection";
 import * as lifecycleTools from "../src/tools/lifecycle";
 import * as validationTools from "../src/tools/validation";
+import * as connectionTools from "../src/tools/connection";
 
 // ── Test Helper ─────────────────────────────────────────────────────────
 
@@ -29,8 +30,11 @@ function createMockBrowser(): BrowserRPCClient {
   const mock = {
     call: vi.fn().mockResolvedValue({}),
     isConnected: vi.fn().mockReturnValue(true),
-    connect: vi.fn().mockResolvedValue(undefined),
+    start: vi.fn(),
     close: vi.fn(),
+    getTabs: vi.fn().mockReturnValue([]),
+    selectTab: vi.fn(),
+    getActiveTabId: vi.fn().mockReturnValue(null),
   };
   return mock as unknown as BrowserRPCClient;
 }
@@ -350,5 +354,62 @@ describe("lifecycle tools", () => {
 
     expect(mockBrowser.call).toHaveBeenCalledWith("ping", {});
     expect(result).toEqual(expectedResult);
+  });
+});
+
+// ── Connection Tools ──────────────────────────────────────────────────────
+
+describe("connection tools", () => {
+  let ctx: ServerContext;
+  let mockBrowser: BrowserRPCClient;
+
+  beforeEach(() => {
+    ctx = createTestContext();
+    mockBrowser = ctx.browser;
+  });
+
+  it("list_browser_tabs returns tabs and activeTabId", async () => {
+    const mockTabs = [
+      { id: "tab_1", nodeCount: 5, edgeCount: 4, connectedAt: 1000 },
+      { id: "tab_2", nodeCount: 3, edgeCount: 2, connectedAt: 2000 },
+    ];
+    (mockBrowser.getTabs as ReturnType<typeof vi.fn>).mockReturnValue(mockTabs);
+    (mockBrowser.getActiveTabId as ReturnType<typeof vi.fn>).mockReturnValue("tab_1");
+
+    const result = await connectionTools.list_browser_tabs.handler(ctx, {});
+
+    expect(result).toEqual({
+      tabs: mockTabs,
+      activeTabId: "tab_1",
+    });
+    expect(mockBrowser.getTabs).toHaveBeenCalled();
+    expect(mockBrowser.getActiveTabId).toHaveBeenCalled();
+  });
+
+  it("select_browser_tab selects an existing tab", async () => {
+    const mockTabs = [
+      { id: "tab_1", nodeCount: 5, edgeCount: 4, connectedAt: 1000 },
+      { id: "tab_2", nodeCount: 3, edgeCount: 2, connectedAt: 2000 },
+    ];
+    (mockBrowser.getTabs as ReturnType<typeof vi.fn>).mockReturnValue(mockTabs);
+
+    const input = { tabId: "tab_2" };
+    const result = await connectionTools.select_browser_tab.handler(ctx, input);
+
+    expect(result).toEqual({ success: true, selectedTab: "tab_2" });
+    expect(mockBrowser.selectTab).toHaveBeenCalledWith("tab_2");
+  });
+
+  it("select_browser_tab throws for unknown tab", async () => {
+    (mockBrowser.getTabs as ReturnType<typeof vi.fn>).mockReturnValue([
+      { id: "tab_1", nodeCount: 5, edgeCount: 4, connectedAt: 1000 },
+    ]);
+
+    const input = { tabId: "nonexistent" };
+    await expect(
+      connectionTools.select_browser_tab.handler(ctx, input),
+    ).rejects.toThrow("Tab 'nonexistent' not found");
+
+    expect(mockBrowser.selectTab).not.toHaveBeenCalled();
   });
 });

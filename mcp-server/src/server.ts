@@ -36,6 +36,7 @@ import * as validationTools from "./tools/validation";
 import * as conversionTools from "./tools/conversion";
 import * as inspectionTools from "./tools/inspection";
 import * as lifecycleTools from "./tools/lifecycle";
+import * as connectionTools from "./tools/connection";
 
 // ── ServerContext ───────────────────────────────────────────────────────
 
@@ -143,11 +144,10 @@ export async function createServer(
   const stereotypes = loadStereotypesFromDirectory(stereotypesDir);
   console.error(`[nnmodelling-mcp] Loaded ${stereotypes.length} stereotypes`);
 
-  // ── Step 2: Create BrowserRPCClient and wait for browser ────────────
+  // ── Step 2: Create BrowserRPCClient and start listening ────────────
   const browser = new BrowserRPCClient();
-  console.error("[nnmodelling-mcp] Waiting for browser connection...");
-  await browser.connect();
-  console.error("[nnmodelling-mcp] Browser connected");
+  browser.start();  // Non-blocking — opens port, returns immediately
+  console.error("[nnmodelling-mcp] Browser WebSocket server started (non-blocking)");
 
   // ── Step 3: Build ServerContext ──────────────────────────────────────
   const ctx: ServerContext = {
@@ -176,6 +176,7 @@ export async function createServer(
     conversionTools,
     inspectionTools,
     lifecycleTools,
+    connectionTools,
   ] as Record<string, unknown>[];
 
   for (const module of allToolModules) {
