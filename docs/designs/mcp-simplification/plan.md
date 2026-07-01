@@ -16,22 +16,55 @@ The MCP server maintains a **full server-side copy of the diagram state** (`Diag
 Model (LLM)
   │ stdio (MCP protocol)
   ▼
-MCP Server (~800 lines, from ~4000)
+MCP Server (~900 lines, from ~4000)
   │  - Zod schema input validation
-  │  - WebSocket RPC client (request/response, not delta broadcast)
+  │  - WebSocket RPC client (multi-tab, request/response)
+  │  - Multi-tab connection manager (list_browser_tabs, select_browser_tab)
   │  - Stereotype loading (static, server-side)
   │  - Python subprocess execution (convert.py, main.py, infer.py)
   │  - Minimal error types (~5 classes)
   │
-  ├─▶ WebSocket RPC ──▶ Browser: BrowserRPCHandler (~200 lines)
+  ├─▶ WebSocket RPC ──▶ Browser Tab #1: BrowserRPCHandler
   │    POST {id, method, params} → handler runs on DiagramCore → {id, result}
-  │    Replaces: DiagramSyncClient (249 lines) + ws-server delta (267 lines)
+  │
+  ├─▶ WebSocket RPC ──▶ Browser Tab #2: BrowserRPCHandler
+  │    (same protocol, different tab — different diagram)
   │
   └─▶ Subprocess ──▶ Python Pipeline (convert.py / main.py / infer.py)
        Server: queries browser for NNTree JSON → runs uv run python
 ```
 
-**Key property**: the browser's `DiagramCore` is the **only** copy of diagram state. The MCP server never holds nodes/edges.
+**Key properties**:
+- The browser's `DiagramCore` is the **only** copy of diagram state. The MCP server never holds nodes/edges.
+- Multiple browser tabs can connect simultaneously. Each tab has its own independent diagram.
+- The model uses `list_browser_tabs` to see all open tabs and `select_browser_tab` to pick which one to work with.
+- If only one tab is connected, it's auto-selected — no user prompt needed.
+
+### Multi-Tab Connection Lifecycle
+
+```
+Browser Tab opens localhost:5173
+  → BrowserRPCHandler connects to ws://localhost:9339
+  → Server assigns tab ID: "tab_1", stores WebSocket
+  → Server pings tab for summary: { nodeCount, edgeCount }
+  → Server auto-selects tab if it's the only one
+  → Tab appears in list_browser_tabs output
+
+Browser Tab #2 opens
+  → Server assigns "tab_2"
+  → Does NOT auto-select (ambiguity)
+  → Model sees 2 tabs → asks user → select_browser_tab("tab_2")
+
+Browser Tab closes
+  → Server removes from client list
+  → If it was the active tab, activeTabId becomes null
+  → Model must call select_browser_tab to pick another
+
+All tabs close
+  → activeTabId = null
+  → All mutation tools fail with "No browser connected"
+  → list_stereotypes and pipeline tools still work
+```
 
 ## 3. What Gets Removed
 
@@ -60,21 +93,22 @@ MCP Server (~800 lines, from ~4000)
 | Component | Lines | Why |
 |---|---|---|
 | `pipeline.ts` | 433 | Python subprocess execution (convert, train, infer) |
-| `analysis.ts` | 133 | Graph analysis helpers (used by statistics tool) |
-| MCP tool definitions | ~600 | Zod schemas + thin proxy handlers (~30 tools) |
-| `server.ts` bootstrap | ~200 | Simplified: no DiagramCore, no resources |
-| `browser-client.ts` | ~100 | New: WebSocket RPC client |
+| MCP tool definitions | ~700 | Zod schemas + thin proxy handlers (~32 tools) |
+| `server.ts` bootstrap | ~220 | Simplified: no DiagramCore, no resources |
+| `browser-client.ts` | ~200 | WebSocket RPC client with multi-tab management |
+| `tools/connection.ts` | ~60 | New: list_browser_tabs, select_browser_tab |
 | Stereotype loader | ~60 | Static data, loaded at startup |
 | Error classes (minimal) | ~60 | Pipeline errors + base class |
 
-**Total server: ~800 lines (down from ~4700).**
+**Total server: ~900 lines (down from ~4700).**
 
 ## 5. What Gets Created
 
 | File | Lines | Purpose |
 |---|---|---|
 | `front-end/src/sync/BrowserRPCHandler.ts` | ~200 | Receives RPC calls, executes on DiagramCore, returns results |
-| `mcp-server/src/browser-client.ts` | ~100 | WebSocket client: send request, await promise |
+| `mcp-server/src/browser-client.ts` | ~200 | WebSocket server: accepts multiple browser tabs, routes RPC to selected tab |
+| `mcp-server/src/tools/connection.ts` | ~60 | list_browser_tabs, select_browser_tab tools |
 
 ## 6. Phase-by-Phase Implementation Plan
 
