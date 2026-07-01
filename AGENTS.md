@@ -6,15 +6,17 @@ This file provides guidance to Claude Code when working with this repository.
 
 **NNModelling** — DSL for designing neural networks via visual node editor. Diagrams convert to PyTorch/Lightning code.
 
-Two main parts:
+Three main packages (pnpm workspace):
 
 1. **front-end/** — Svelte 5 + Svelte Flow visual editor (TypeScript)
 2. **converted/** — Python codegen target (PyTorch + Lightning + Hydra)
+3. **mcp-server/** — MCP server for headless diagram manipulation + real-time sync
 
 ### Tech Stack
 
 - **Frontend**: Svelte 5, Svelte Flow (@xyflow/svelte), Vite 8, TypeScript
-- **Build**: pnpm v10
+- **Build**: pnpm v10 (monorepo workspace)
+- **MCP Server**: @modelcontextprotocol/sdk, ws, zod
 - **Python**: PyTorch, Lightning (LightningModule), Hydra (config), wandb (logging)
 - **Vitest** (front-end unit tests, configured in `vitest.config.ts`)
 - **pytest** (Python unit tests, in `converted/src/tests/`)
@@ -55,6 +57,16 @@ uv run python src/main.py --config-dir <dir>               # Train model
 uv run python src/infer.py --config-path <dir> --config-name <name> --weights <path>  # Inference
 ```
 
+```bash
+cd mcp-server
+pnpm run build       # Compile TypeScript
+pnpm run test        # Run unit tests (vitest)
+pnpm run start       # Start server (node dist/index.js)
+
+# Run MCP server directly with tsx (for development, bypasses ESM issues):
+npx tsx mcp-server/src/index.ts
+```
+
 ## Project Structure
 
 ```
@@ -64,6 +76,7 @@ NNModelling/
 │   │   ├── helpers.ts          # Test factories (stubWindow, node, edge)
 │   │   ├── nnTree.test.ts      # NNTree regression tests
 │   │   ├── utils.test.ts       # checkValidConnection tests
+│   │   ├── DiagramSyncClient.test.ts  # Sync client tests
 │   │   └── integration/        # Integration test suite (tiered, Python pipeline)
 │   │       ├── helpers.ts      # Shared helpers (manifest, uvRun, pipeline stages)
 │   │       ├── smoke.test.ts   # Tier 0: nnTree compilation
@@ -77,6 +90,8 @@ NNModelling/
 │   │   ├── StereotypeCore.ts     # Pure TS stereotype with dual loader (Vite/Node)
 │   │   ├── types.ts              # Shared type definitions (events, WS, configs)
 │   │   └── validation.ts         # Standalone connection validation
+│   ├── sync/                     # Browser-side sync client
+│   │   └── DiagramSyncClient.ts  # WebSocket client, applies deltas to $state.raw
 │   ├── nodes/
 │   │   ├── CustomNode.svelte   # Standard NN module node
 │   │   ├── JoinNode.svelte     # Merge node (multi-input)
@@ -129,6 +144,33 @@ NNModelling/
 │       ├── test_integration.py # 11 end-to-end integration tests
 │       ├── test_main.py        # 2 training smoke tests
 │       └── test_infer.py       # 4 inference validation tests
+├── mcp-server/                        # MCP server package (Node.js ESM)
+│   ├── package.json
+│   ├── tsconfig.json
+│   ├── vitest.config.ts
+│   └── src/
+│       ├── index.ts                   # Entry point (stdio + WebSocket bootstrap)
+│       ├── server.ts                  # MCP server setup + tool registration
+│       ├── ws-server.ts               # WebSocket delta broadcaster
+│       ├── errors.ts                  # Error type hierarchy (22 classes)
+│       ├── transaction.ts             # TransactionManager
+│       ├── history.ts                 # HistoryManager (undo/redo)
+│       ├── pipeline.ts                # Python subprocess interface
+│       ├── analysis.ts                # Shared graph analysis helpers
+│       ├── resources/
+│       │   └── index.ts               # MCP resource definitions (14 resources)
+│       └── tools/
+│           ├── graph.ts               # create_node, delete_nodes, connect_nodes, ...
+│           ├── parameters.ts          # set_parameter, update_parameters, ...
+│           ├── selection.ts           # select_nodes, clear_selection, ...
+│           ├── canvas.ts              # get_canvas_state, fit_view, center_view
+│           ├── validation.ts          # validate_graph, validate_connections, ...
+│           ├── conversion.ts          # compile_nntree, execute_conversion, ...
+│           ├── inspection.ts          # get_graph, get_node, graph_statistics, ...
+│           ├── transaction.ts         # begin_transaction, commit, rollback
+│           ├── history.ts             # undo, redo, get_history_status
+│           ├── events.ts              # get_events (EventBus polling)
+│           └── lifecycle.ts           # reset_diagram, ping
 ├── analysis/
 │   ├── requirements/reqs.md    # DSL requirements specification
 │   └── uml/nn.vpp              # UML model (Visual Paradigm)
@@ -153,7 +195,7 @@ NNModelling/
 - **Pattern**: Pure TS unit tests, no DOM/browser
 - **Real Diagram**: Tests use real `Diagram` class (Svelte `$state.raw` compiled by Vite plugin). Stub `globalThis.window` before construction.
 - **Helpers**: `node(id, stereo, name, params, overrides?)` and `edge(id, source, target, handles?)` for concise fixtures.
-- **Coverage**: **76 tests** — sequential chain, skip/joins, autoencoder, subflow compilation, nested subflows, hidden nodes, error handling, connection validation, Fork node
+- **Coverage**: **91 tests** — sequential chain, skip/joins, autoencoder, subflow compilation, nested subflows, hidden nodes, error handling, connection validation, Fork node, DiagramSyncClient
 
 ### Testing — Integration (Vitest + Python Pipeline)
 
@@ -190,8 +232,33 @@ Stereotypes/ (JSON) → StereotypeCore → DiagramCore (pure TS state + EventBus
                                             ↓
                                        NNTree class (conversion)
                                             ↓
-                                       JSON → convert.py (Hydra configs)
+                                        JSON → convert.py (Hydra configs)
 ```
+
+### MCP Server & Real-Time Sync
+
+The MCP server acts as a **headless diagram manipulator** — a process holding a live `DiagramCore` instance and exposing its API as MCP tools. The browser UI is a reactive rendering target.
+
+```
+MCP Server (state authority + WebSocket server)
+    │
+    ├──▶ stdio (MCP protocol) ──▶ LLM Agent (manipulation via 43 tools)
+    │
+    ├──▶ WebSocket (ws://localhost:9339) ──▶ Browser UI (Svelte Flow)
+    │        │                    │
+    │        │    push_state on   │  DiagramSyncClient applies
+    │        │    connect ↔       │  deltas to $state.raw arrays
+    │        │    snapshot back   │
+    │
+    └──▶ Subprocess ──▶ Python Pipeline (convert.py, main.py, infer.py)
+```
+
+**Sync flow**: Browser connects → pushes its diagram state via `push_state` → server imports state → sends snapshot back → browser applies snapshot (confirms sync). Subsequent MCP mutations emit deltas via EventBus → WebSocket broadcast → browser receives and applies incrementally.
+
+**Key differences from Phase 1:**
+- `StereotypeCore.loadFromDirectoryNode()` uses `require("fs")` which fails in ESM. The MCP server uses a local `loadStereotypesFromDirectory()` in `server.ts` with statically-imported `readdirSync`/`readFileSync`.
+- The MCP server runs via `npx tsx` (not compiled `node dist/index.js`) because `moduleResolution: "bundler"` produces extensionless imports incompatible with Node ESM.
+- `@xyflow/svelte` is only used as `import type` in the shared core — no runtime dependency in the MCP server.
 
 ### Key Classes
 
@@ -371,7 +438,22 @@ Refactored frontend to extract pure TypeScript core — preparation for the MCP 
 - **Verification**: All 76 unit tests pass, 64 integration smoke tests pass, svelte-check unchanged (4 pre-existing errors, 7 warnings).
 - **Git tag**: `phase1-complete`
 
-## Key Files Reference
+### Phase 10 — MCP Server & Real-Time Sync
+
+Built the MCP server package (`mcp-server/`) with real-time WebSocket sync between the browser canvas and LLM agents:
+
+- **mcp-server/ package**: Workspace package with `@modelcontextprotocol/sdk`, `ws`, `zod`. Runs via `npx tsx` for ESM compatibility.
+- **43 MCP tools**: Graph manipulation (create/delete/connect/move/duplicate nodes), parameter management, selection, canvas stubs, validation (graph/connections/params/subflows), conversion pipeline (compile/export/import/execute), inspection (get_graph/get_node/statistics/stereotypes), transactions, undo/redo, events, lifecycle (reset/ping).
+- **14 MCP resources**: `nnmodelling://diagram/current`, `/node/{id}`, `/edge/{id}`, `/stereotypes`, `/validation`, `/statistics`, `/conversion`, `/history`, `/events`, etc.
+- **WebSocket delta broadcast**: `ws-server.ts` subscribes to EventBus, converts DomainEvents to DeltaOperations, broadcasts to connected browsers. Uses separate `broadcastSeq` counter to prevent seq gaps from skipped `graph_changed` events.
+- **Browser sync client**: `DiagramSyncClient.ts` connects to `ws://localhost:9339` (proxied via Vite's `/ws` in dev). Handles snapshot (full state replace), delta (incremental apply), sequence gap detection, exponential backoff reconnection. Sends `push_state` on connect so MCP tools reflect the browser canvas.
+- **TransactionManager**: Snapshot-based atomic batch operations with commit/rollback.
+- **HistoryManager**: 50-entry undo/redo stack with `pushSnapshot`/`undo`/`redo`.
+- **Python pipeline**: `executeConversion`/`executeTraining`/`executeInference` spawn `uv run python` subprocesses.
+- **Error hierarchy**: 22 error classes (STEREOTYPE_NOT_FOUND, NODE_NOT_FOUND, etc.).
+- **Test count**: 39 MCP server tests (21 tools + 13 WebSocket + 5 integration) + 15 DiagramSyncClient tests.
+- **Frontend unit tests**: 91 tests (unchanged from Phase 9).
+- **Git tags**: `phase1-complete` → `phase2-complete`
 
 | File | Purpose |
 |------|---------|
@@ -383,6 +465,7 @@ Refactored frontend to extract pure TypeScript core — preparation for the MCP 
 | `front-end/src/core/types.ts` | Shared type definitions (DomainEvent, WS messages, configs) |
 | `front-end/src/core/validation.ts` | Standalone connection validation on Edge[] |
 | `front-end/src/conversion/nnTree.ts` | Graph → tree conversion |
+| `front-end/src/sync/DiagramSyncClient.ts` | Browser WebSocket sync client |
 | `front-end/src/FlowCanvas.svelte` | Main editor + toolbar |
 | `front-end/src/Sidebar.svelte` | Node create/edit form |
 | `front-end/src/nodes/SubflowNode.svelte` | Collapsible subflow UI |
@@ -412,3 +495,17 @@ Refactored frontend to extract pure TypeScript core — preparation for the MCP 
 | `converted/src/tests/test_infer.py` | Python inference validation tests |
 | `converted/src/tests/test_integration.py` | Python integration tests (convert → Net forward end-to-end) |
 | `examples/manifest.json` | Manifest of example diagrams/nntrees (input shapes, task types, trainable flags) |
+| `mcp-server/src/server.ts` | MCP server bootstrap + tool registration |
+| `mcp-server/src/ws-server.ts` | WebSocket delta broadcaster |
+| `mcp-server/src/index.ts` | Entry point (stdio transport + WebSocket) |
+| `mcp-server/src/tools/graph.ts` | Graph manipulation tools (10 tools) |
+| `mcp-server/src/tools/validation.ts` | Graph validation tools |
+| `mcp-server/src/tools/conversion.ts` | Conversion pipeline tools |
+| `mcp-server/src/tools/inspection.ts` | Inspection tools |
+| `mcp-server/src/resources/index.ts` | 14 MCP resource definitions |
+| `mcp-server/src/errors.ts` | 22 error classes |
+| `mcp-server/src/transaction.ts` | TransactionManager |
+| `mcp-server/src/history.ts` | HistoryManager (undo/redo) |
+| `mcp-server/src/pipeline.ts` | Python subprocess interface |
+| `mcp-server/src/analysis.ts` | Shared graph analysis helpers |
+| `pnpm-workspace.yaml` | pnpm monorepo config |
