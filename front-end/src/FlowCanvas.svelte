@@ -31,8 +31,8 @@
   import { Diagram } from "./Diagram.svelte"; // Modifica il path se necessario
   import { toPng } from "html-to-image";
 
-  // Sync client — real-time state sync with MCP server
-  import { DiagramSyncClient } from "./sync/DiagramSyncClient";
+  // RPC handler — receives MCP server requests and dispatches to Diagram
+  import { BrowserRPCHandler } from "./sync/BrowserRPCHandler";
 
   const nodeTypes = {
     custom: CustomNode,
@@ -68,11 +68,11 @@
     }
   });
 
-  // Connessione WebSocket per la sincronizzazione real-time con MCP server
-  let syncClient: DiagramSyncClient;
+  // Connessione WebSocket per gestire richieste RPC dal MCP server
+  let syncClient: BrowserRPCHandler;
 
   $effect(() => {
-    syncClient = new DiagramSyncClient(diagram);
+    syncClient = new BrowserRPCHandler(diagram);
     syncClient.connect();
     return () => syncClient.disconnect();
   });
