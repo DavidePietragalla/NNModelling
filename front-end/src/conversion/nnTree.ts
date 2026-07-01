@@ -95,28 +95,29 @@ export class NNTree {
       const n = internalNodes.find((m: any) => m.id === id)!;
       const children = adj.get(id) || [];
 
+      const nd = n.data as Record<string, unknown>;
       if (this.isSubflowNode(n)) {
         const nested = this.compileSubflowGraph(diagram, n.id);
         nodesMap[id] = {
           type: "subflow",
-          name: n.data.name,
-          stereotype: n.data.stereotype,
+          name: nd.name as string,
+          stereotype: nd.stereotype as string,
           pythonClassName: this.getPythonClassName(diagram, n),
-          params: n.data.params,
+          params: nd.params,
           children,
           entryNode: nested.entryNode,
           nodes: nested.nodes,
         };
       } else {
         const isJoinNode = n.type === "join"
-          || diagram.getStereotype(n.data.stereotype as string)?.category === "Join";
+          || diagram.getStereotype(nd.stereotype as string)?.category === "Join";
         nodesMap[id] = {
           type: isJoinNode ? "join" : "module",
-          name: n.data.name,
-          stereotype: n.data.stereotype,
+          name: nd.name as string,
+          stereotype: nd.stereotype as string,
           pythonClassName: this.getPythonClassName(diagram, n),
           taskType: this.getTaskType(diagram, n),
-          params: n.data.params,
+          params: nd.params,
           children,
           ...(isJoinNode ? { inputs: targetInputs[id] || [] } : {}),
         };
