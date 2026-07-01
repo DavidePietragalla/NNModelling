@@ -3,10 +3,9 @@
 /**
  * NNModelling MCP Server — Entry Point
  *
- * Bootstraps the MCP server (stdio transport) and the WebSocket server
- * (browser sync) in the same process. The MCP server handles tool/resource
- * requests from LLM agents; the WebSocket server broadcasts delta updates
- * to connected browser canvases.
+ * Bootstraps the MCP server (stdio transport). The MCP server handles
+ * tool/resource requests from LLM agents and communicates with the browser
+ * via WebSocket RPC through the BrowserRPCClient.
  *
  * Usage:
  *   node dist/index.js
@@ -19,7 +18,6 @@
 import { StdioServerTransport } from "@modelcontextprotocol/sdk/server/stdio.js";
 import { resolve } from "path";
 import { createServer } from "./server";
-import { createWSServer, type WSServer } from "./ws-server";
 
 async function main(): Promise<void> {
   // Resolve the Stereotypes directory relative to this source file
@@ -39,24 +37,9 @@ async function main(): Promise<void> {
 
   console.error("[nnmodelling-mcp] Server connected via stdio");
 
-  // ── Start WebSocket server for browser sync ────────────────────────
-  const wsPort = parseInt(process.env.NNM_WS_PORT || "9339", 10);
-  const wss = createWSServer(ctx.diagram, ctx.diagram.events, { port: wsPort });
-
   // ── Graceful shutdown ──────────────────────────────────────────────
   const shutdown = async (): Promise<void> => {
     console.error("[nnmodelling-mcp] Shutting down...");
-
-    // Close WebSocket server (calls unsubscribe + clears ping timer)
-    try {
-      const wsServer = wss as WSServer;
-      const wsShutdown = wsServer._shutdown;
-      if (typeof wsShutdown === "function") {
-        await Promise.resolve(wsShutdown());
-      }
-    } catch (err) {
-      console.error("[nnmodelling-mcp] WebSocket shutdown error:", err);
-    }
 
     // Close MCP server (returns Promise<void>)
     try {
