@@ -10,6 +10,8 @@ import type {
   DeltaOperation,
   WSDeltaMessage,
   WSSnapshotMessage,
+  Node,
+  Edge,
 } from "@nnmodelling/front-end/core/types";
 
 export interface WSServerConfig {
@@ -19,17 +21,26 @@ export interface WSServerConfig {
   pingInterval?: number;      // Default: 30000 (30s)
 }
 
+/** Extended WebSocketServer with external shutdown trigger. */
+export interface WSServer extends WebSocketServer {
+  _shutdown: () => void;
+}
+
 export function createWSServer(
   diagram: DiagramCore,
   eventBus: EventBus,
   config: WSServerConfig,
-): WebSocketServer {
+): WSServer {
   const host = config.host ?? "localhost";
   const port = config.port;
   const maxClients = config.maxClients ?? 10;
   const pingInterval = config.pingInterval ?? 30000;
 
-  const wss = new WebSocketServer({ port, host });
+  const wss = new WebSocketServer({ port, host }) as WSServer;
+
+  // Broadcast sequence counter — only increments when a message is actually
+  // sent. This prevents seq gaps when events like graph_changed are skipped.
+  let broadcastSeq = 0;
 
   console.error(
     `[nnmodelling-ws] WebSocket server listening on ws://${host}:${port}`,
@@ -98,9 +109,11 @@ export function createWSServer(
     const operations = domainEventToDeltaOps(event);
     if (operations.length === 0) return;
 
+    broadcastSeq++;
+
     const delta: WSDeltaMessage = {
       type: "delta",
-      seq: event.seq,
+      seq: broadcastSeq,
       operations,
     };
 
@@ -132,7 +145,7 @@ export function createWSServer(
   };
 
   // Allow external shutdown trigger
-  (wss as any)._shutdown = shutdown;
+  wss._shutdown = shutdown;
 
   return wss;
 }
@@ -226,8 +239,8 @@ function domainEventToDeltaOps(event: DomainEvent): DeltaOperation[] {
       return [
         {
           op: "graph_reset",
-          nodes: (p.nodes ?? []) as any[],
-          edges: (p.edges ?? []) as any[],
+          nodes: (p.nodes ?? []) as Node[],
+          edges: (p.edges ?? []) as Edge[],
         },
       ];
 

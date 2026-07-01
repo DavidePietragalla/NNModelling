@@ -19,7 +19,7 @@
 import { StdioServerTransport } from "@modelcontextprotocol/sdk/server/stdio.js";
 import { resolve } from "path";
 import { createServer } from "./server";
-import { createWSServer } from "./ws-server";
+import { createWSServer, type WSServer } from "./ws-server";
 
 async function main(): Promise<void> {
   // Resolve the Stereotypes directory relative to the project root.
@@ -45,17 +45,26 @@ async function main(): Promise<void> {
   const wss = createWSServer(ctx.diagram, ctx.diagram.events, { port: wsPort });
 
   // ── Graceful shutdown ──────────────────────────────────────────────
-  const shutdown = (): void => {
+  const shutdown = async (): Promise<void> => {
     console.error("[nnmodelling-mcp] Shutting down...");
 
     // Close WebSocket server (calls unsubscribe + clears ping timer)
-    const wsShutdown = (wss as unknown as Record<string, unknown>)._shutdown;
-    if (typeof wsShutdown === "function") {
-      (wsShutdown as () => void)();
+    try {
+      const wsServer = wss as WSServer;
+      const wsShutdown = wsServer._shutdown;
+      if (typeof wsShutdown === "function") {
+        await Promise.resolve(wsShutdown());
+      }
+    } catch (err) {
+      console.error("[nnmodelling-mcp] WebSocket shutdown error:", err);
     }
 
-    // Close MCP server
-    server.close();
+    // Close MCP server (returns Promise<void>)
+    try {
+      await server.close();
+    } catch (err) {
+      console.error("[nnmodelling-mcp] MCP server close error:", err);
+    }
 
     process.exit(0);
   };

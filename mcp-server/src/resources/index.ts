@@ -27,6 +27,8 @@
 import type { ServerContext } from "../server";
 import type { Node, Edge } from "@nnmodelling/front-end/core/types";
 import { NNTree } from "@nnmodelling/front-end/conversion/nnTree";
+import { computeMaxDepth, computeAvgFanOut, isCycleFree } from "../analysis";
+import { validate_graph } from "../tools/validation";
 
 // ── Types ─────────────────────────────────────────────────────────────────
 
@@ -50,111 +52,6 @@ interface ResourceDefinition {
 /** Extract the stereotype name from a node's data field. */
 function getStereoName(node: Node): string | undefined {
   return (node.data as Record<string, unknown> | undefined)?.stereotype as string | undefined;
-}
-
-/**
- * Compute the longest path depth in the graph using BFS from all input nodes.
- * Returns 0 if there are no input nodes or the graph is empty.
- */
-function computeMaxDepth(
-  graph: { nodes: Node[]; edges: Edge[] },
-  getStereotype: (name: string) => { isInput?: boolean; isLoss?: boolean } | undefined,
-): number {
-  const adjacency = new Map<string, string[]>();
-  for (const edge of graph.edges) {
-    if (!adjacency.has(edge.source)) adjacency.set(edge.source, []);
-    adjacency.get(edge.source)!.push(edge.target);
-  }
-
-  const inputs = graph.nodes.filter((n) => {
-    const stereoName = getStereoName(n);
-    if (!stereoName) return false;
-    const stereo = getStereotype(stereoName);
-    return stereo?.isInput === true;
-  });
-  if (inputs.length === 0) return 0;
-
-  let maxDepth = 0;
-  for (const input of inputs) {
-    const visited = new Set<string>();
-    const queue: Array<{ id: string; depth: number }> = [{ id: input.id, depth: 0 }];
-    visited.add(input.id);
-
-    while (queue.length > 0) {
-      const { id, depth } = queue.shift()!;
-      maxDepth = Math.max(maxDepth, depth);
-      for (const childId of adjacency.get(id) ?? []) {
-        if (!visited.has(childId)) {
-          visited.add(childId);
-          queue.push({ id: childId, depth: depth + 1 });
-        }
-      }
-    }
-  }
-
-  return maxDepth;
-}
-
-/**
- * Compute the average number of outgoing edges per non-loss node.
- * Loss/output nodes are excluded since they typically have no outgoing edges.
- */
-function computeAvgFanOut(
-  graph: { nodes: Node[]; edges: Edge[] },
-  getStereotype: (name: string) => { isInput?: boolean; isLoss?: boolean } | undefined,
-): number {
-  let totalOut = 0;
-  let count = 0;
-
-  for (const node of graph.nodes) {
-    const stereoName = getStereoName(node);
-    if (stereoName) {
-      const stereo = getStereotype(stereoName);
-      if (stereo?.isLoss) continue;
-    }
-
-    totalOut += graph.edges.filter((e) => e.source === node.id).length;
-    count++;
-  }
-
-  return count > 0 ? Math.round((totalOut / count) * 100) / 100 : 0;
-}
-
-/**
- * Detect whether the graph contains any cycles using Kahn's algorithm.
- * Returns true if the graph is acyclic (DAG).
- */
-function isCycleFree(graph: { nodes: Node[]; edges: Edge[] }): boolean {
-  const inDegree = new Map<string, number>();
-  const adjacency = new Map<string, string[]>();
-
-  for (const node of graph.nodes) {
-    inDegree.set(node.id, 0);
-    adjacency.set(node.id, []);
-  }
-
-  for (const edge of graph.edges) {
-    adjacency.get(edge.source)?.push(edge.target);
-    inDegree.set(edge.target, (inDegree.get(edge.target) ?? 0) + 1);
-  }
-
-  const queue: string[] = [];
-  for (const [id, deg] of inDegree) {
-    if (deg === 0) queue.push(id);
-  }
-
-  let visitedCount = 0;
-  while (queue.length > 0) {
-    const id = queue.shift()!;
-    visitedCount++;
-    for (const neighbor of adjacency.get(id) ?? []) {
-      const newDeg = (inDegree.get(neighbor) ?? 1) - 1;
-      inDegree.set(neighbor, newDeg);
-      if (newDeg === 0) queue.push(neighbor);
-    }
-  }
-
-  return visitedCount === graph.nodes.length;
 }
 
 // ── Resource Factory ──────────────────────────────────────────────────────
@@ -484,153 +381,7 @@ export function defineResources(ctx: ServerContext): ResourceDefinition[] {
         "Checks: Input node count, loss node presence, orphan nodes, cycles.",
       mimeType: "application/json",
       async read() {
-        const errors: Array<{
-          code: string;
-          message: string;
-          nodeId?: string;
-          edgeId?: string;
-        }> = [];
-        const warnings: Array<{
-          code: string;
-          message: string;
-          nodeId?: string;
-        }> = [];
-
-        const { nodes, edges } = ctx.diagram;
-        const getStereo = (name: string) => ctx.diagram.getStereotype(name);
-
-        // ── 1. Empty graph ─────────────────────────────────────
-        if (nodes.length === 0) {
-          errors.push({
-            code: "EMPTY_GRAPH",
-            message:
-              "The diagram is empty. Add at least one Input node and one Loss node.",
-          });
-          return {
-            contents: [
-              {
-                uri: "nnmodelling://validation",
-                mimeType: "application/json",
-                text: JSON.stringify(
-                  {
-                    valid: false,
-                    errors,
-                    warnings,
-                    timestamp: new Date().toISOString(),
-                  },
-                  null,
-                  2,
-                ),
-              },
-            ],
-          };
-        }
-
-        // ── 2. Input node count ────────────────────────────────
-        const inputNodeIds = new Set<string>();
-        for (const n of nodes) {
-          const stereoName = getStereoName(n);
-          if (stereoName) {
-            const stereo = getStereo(stereoName);
-            if (stereo?.isInput) inputNodeIds.add(n.id);
-          } else if (
-            n.data &&
-            (n.data as Record<string, unknown>).stereotype === "Input"
-          ) {
-            inputNodeIds.add(n.id);
-          }
-        }
-
-        if (inputNodeIds.size === 0) {
-          errors.push({
-            code: "MISSING_INPUT",
-            message:
-              "No Input node found. Every diagram must have exactly one Input node.",
-          });
-        } else if (inputNodeIds.size > 1) {
-          errors.push({
-            code: "MULTIPLE_INPUTS",
-            message: `Found ${inputNodeIds.size} Input nodes. Every diagram must have exactly one Input node.`,
-          });
-        }
-
-        // ── 3. Loss node presence ──────────────────────────────
-        const nodesWithOutgoing = new Set(edges.map((e) => e.source));
-        const terminalNodes = nodes.filter(
-          (n) => !nodesWithOutgoing.has(n.id),
-        );
-
-        let hasLossNode = false;
-        for (const n of terminalNodes) {
-          const stereoName = getStereoName(n);
-          if (stereoName) {
-            const stereo = getStereo(stereoName);
-            if (stereo?.isLoss) {
-              hasLossNode = true;
-              break;
-            }
-          }
-        }
-
-        if (!hasLossNode) {
-          warnings.push({
-            code: "NO_LOSS_NODE",
-            message:
-              "No Loss node (terminal node with Loss category) detected. " +
-              "The diagram will compile but may not produce training metrics. " +
-              "Add a loss node (e.g. CrossEntropyLoss, MSELoss) as the final output.",
-          });
-        }
-
-        // ── 4. Disconnected / orphan nodes ─────────────────────
-        const nodesWithIncoming = new Set(edges.map((e) => e.target));
-
-        for (const n of nodes) {
-          const stereoName = getStereoName(n);
-          if (stereoName) {
-            const stereo = getStereo(stereoName);
-            if (stereo?.isInput) continue;
-            if (stereo?.isLoss) continue;
-          }
-
-          const hasIncoming = nodesWithIncoming.has(n.id);
-          const hasOutgoing = nodesWithOutgoing.has(n.id);
-
-          if (!hasIncoming && !hasOutgoing) {
-            warnings.push({
-              code: "ORPHAN_NODE",
-              message: `Node "${(n.data as Record<string, unknown>)?.name ?? n.id}" has no incoming or outgoing connections.`,
-              nodeId: n.id,
-            });
-          } else if (!hasIncoming) {
-            warnings.push({
-              code: "DISCONNECTED_INPUT",
-              message: `Node "${(n.data as Record<string, unknown>)?.name ?? n.id}" has no incoming connections.`,
-              nodeId: n.id,
-            });
-          } else if (!hasOutgoing) {
-            const sName = getStereoName(n);
-            if (!sName || !getStereo(sName)?.isLoss) {
-              warnings.push({
-                code: "DISCONNECTED_OUTPUT",
-                message: `Node "${(n.data as Record<string, unknown>)?.name ?? n.id}" has no outgoing connections but is not a Loss node.`,
-                nodeId: n.id,
-              });
-            }
-          }
-        }
-
-        // ── 5. Cycle detection ─────────────────────────────────
-        if (!isCycleFree(ctx.diagram)) {
-          errors.push({
-            code: "GRAPH_CYCLE",
-            message:
-              "The diagram contains one or more cycles. " +
-              "Cycle detection uses Kahn's algorithm on the full edge set. " +
-              "Cycles are not allowed in the computation graph.",
-          });
-        }
-
+        const result = await validate_graph.handler(ctx, {});
         return {
           contents: [
             {
@@ -638,9 +389,9 @@ export function defineResources(ctx: ServerContext): ResourceDefinition[] {
               mimeType: "application/json",
               text: JSON.stringify(
                 {
-                  valid: errors.length === 0,
-                  errors,
-                  warnings,
+                  valid: result.valid,
+                  errors: result.errors,
+                  warnings: result.warnings,
                   timestamp: new Date().toISOString(),
                 },
                 null,
