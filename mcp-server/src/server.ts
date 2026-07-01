@@ -1,35 +1,29 @@
 /**
- * MCP Server Bootstrap — creates DiagramCore, loads stereotypes, registers
- * all tools and resources, and returns the MCP Server instance and context.
+ * MCP Server Bootstrap — creates BrowserRPCClient, loads stereotypes,
+ * registers all tools, and returns the MCP Server instance and context.
  *
  * This is the wiring hub of the NNModelling MCP server. It:
- *   1. Creates a DiagramCore instance (headless state authority)
- *   2. Loads stereotypes via StereotypeCore.loadFromDirectoryNode
- *   3. Initializes TransactionManager and HistoryManager
- *   4. Sets up an EventBus subscriber for the MCP event buffer
- *   5. Creates the MCP Server instance
- *   6. Registers all tools from tools/*.ts (iterates exports, finds {schema,handler} pairs)
- *   7. Implements ListToolsRequestSchema and CallToolRequestSchema
- *   8. Registers resources via defineResources(ctx)
- *   9. Implements ListResourcesRequestSchema and ReadResourceRequestSchema
+ *   1. Loads stereotypes via StereotypeCore.loadFromDirectoryNode
+ *   2. Creates a BrowserRPCClient for browser communication
+ *   3. Creates the MCP Server instance
+ *   4. Registers all tools from tools/*.ts (iterates exports, finds {schema,handler} pairs)
+ *   5. Implements ListToolsRequestSchema and CallToolRequestSchema
+ *
+ * The browser is the single source of truth for diagram state.
+ * The server is a thin proxy — it sends RPC calls to the browser
+ * and forwards results back to the LLM via MCP.
  */
 
 import { Server } from "@modelcontextprotocol/sdk/server/index.js";
 import {
   CallToolRequestSchema,
   ListToolsRequestSchema,
-  ListResourcesRequestSchema,
-  ReadResourceRequestSchema,
 } from "@modelcontextprotocol/sdk/types.js";
-import { DiagramCore } from "@nnmodelling/front-end/core/DiagramCore";
 import { StereotypeCore } from "@nnmodelling/front-end/core/StereotypeCore";
 import { readdirSync, readFileSync } from "fs";
 import { join } from "path";
-import { TransactionManager } from "./transaction";
-import { HistoryManager } from "./history";
 import * as pipelineMod from "./pipeline";
-import { defineResources } from "./resources/index";
-import type { DomainEvent } from "@nnmodelling/front-end/core/types";
+import { BrowserRPCClient } from "./browser-client";
 
 // ── Import all tool modules ─────────────────────────────────────────────
 // Each file exports multiple named tools (e.g. create_node, delete_nodes).
@@ -41,9 +35,6 @@ import * as canvasTools from "./tools/canvas";
 import * as validationTools from "./tools/validation";
 import * as conversionTools from "./tools/conversion";
 import * as inspectionTools from "./tools/inspection";
-import * as txnTools from "./tools/transaction";
-import * as historyTools from "./tools/history";
-import * as eventTools from "./tools/events";
 import * as lifecycleTools from "./tools/lifecycle";
 
 // ── ServerContext ───────────────────────────────────────────────────────
@@ -51,20 +42,14 @@ import * as lifecycleTools from "./tools/lifecycle";
 /**
  * Shared context object passed as the first argument to every MCP tool handler.
  * Provides access to:
- *   - diagram:       The live DiagramCore instance (state authority)
- *   - transactions:  TransactionManager for atomic batch operations
- *   - history:       HistoryManager for undo/redo
- *   - pipeline:      Python subprocess interface (executeConversion, etc.)
- *   - eventBuffer:   Ring buffer of emitted DomainEvents
- *   - lastEventCursor: Last seq the LLM has seen (for get_events)
+ *   - browser:      BrowserRPCClient for sending RPC calls to the browser
+ *   - pipeline:     Python subprocess interface (executeConversion, etc.)
+ *   - stereotypes:  Static stereotype definitions loaded at startup
  */
 export interface ServerContext {
-  diagram: DiagramCore;
-  transactions: TransactionManager;
-  history: HistoryManager;
+  browser: BrowserRPCClient;
   pipeline: typeof pipelineMod;
-  eventBuffer: DomainEvent[];
-  lastEventCursor: number;
+  stereotypes: StereotypeCore[];
 }
 
 // ── Internal Types ──────────────────────────────────────────────────────
@@ -225,46 +210,29 @@ function loadStereotypesFromDirectory(stereotypesDir: string): StereotypeCore[] 
 export async function createServer(
   stereotypesDir: string,
 ): Promise<{ server: Server; ctx: ServerContext }> {
-  // ── Step 1: Initialize DiagramCore (pure TS, no Svelte) ─────────────
+  // ── Step 1: Load stereotypes (static data) ──────────────────────────
   console.error(`[nnmodelling-mcp] Loading stereotypes from ${stereotypesDir}`);
-  const diagram = new DiagramCore();
   const stereotypes = loadStereotypesFromDirectory(stereotypesDir);
-  diagram.initStereotypes(stereotypes);
-
-  // Initialize plain arrays for headless Node.js operation
-  diagram.nodes = [];
-  diagram.edges = [];
-
   console.error(`[nnmodelling-mcp] Loaded ${stereotypes.length} stereotypes`);
 
-  // ── Step 2: Event buffer for MCP get_events tool ────────────────────
-  const eventBuffer: DomainEvent[] = [];
-  diagram.events.onAny((event: DomainEvent) => {
-    eventBuffer.push(event);
-    if (eventBuffer.length > 1000) eventBuffer.shift();
-  });
+  // ── Step 2: Create BrowserRPCClient ─────────────────────────────────
+  // (Browser connection will be awaited in Phase 4)
+  const browser = new BrowserRPCClient();
 
-  // ── Step 3: Create managers ─────────────────────────────────────────
-  const transactions = new TransactionManager(diagram);
-  const history = new HistoryManager();
-
-  // ── Step 4: Build ServerContext ──────────────────────────────────────
+  // ── Step 3: Build ServerContext ──────────────────────────────────────
   const ctx: ServerContext = {
-    diagram,
-    transactions,
-    history,
+    browser,
     pipeline: pipelineMod,
-    eventBuffer,
-    lastEventCursor: 0,
+    stereotypes,
   };
 
-  // ── Step 5: Create MCP Server instance ──────────────────────────────
+  // ── Step 4: Create MCP Server instance ──────────────────────────────
   const server = new Server(
     { name: "nnmodelling-mcp-server", version: "0.1.0" },
-    { capabilities: { tools: {}, resources: {} } },
+    { capabilities: { tools: {} } }, // No resources capability
   );
 
-  // ── Step 6: Register all tools ──────────────────────────────────────
+  // ── Step 5: Register all tools ──────────────────────────────────────
   const toolRegistry = new Map<string, MCPToolEntry>();
 
   // Merge tools from all modules. Duplicate names are overwritten
@@ -277,9 +245,6 @@ export async function createServer(
     validationTools,
     conversionTools,
     inspectionTools,
-    txnTools,
-    historyTools,
-    eventTools,
     lifecycleTools,
   ] as Record<string, unknown>[];
 
@@ -292,7 +257,7 @@ export async function createServer(
 
   console.error(`[nnmodelling-mcp] Registered ${toolRegistry.size} tools`);
 
-  // ── Step 7: ListTools handler ───────────────────────────────────────
+  // ── Step 6: ListTools handler ───────────────────────────────────────
   server.setRequestHandler(ListToolsRequestSchema, async () => {
     const tools = Array.from(toolRegistry.entries()).map(([name, tool]) => ({
       name,
@@ -303,7 +268,7 @@ export async function createServer(
     return { tools };
   });
 
-  // ── Step 8: CallTool handler ────────────────────────────────────────
+  // ── Step 7: CallTool handler ────────────────────────────────────────
   server.setRequestHandler(CallToolRequestSchema, async (request) => {
     const tool = toolRegistry.get(request.params.name);
     if (!tool) {
@@ -327,36 +292,6 @@ export async function createServer(
         isError: true,
       };
     }
-  });
-
-  // ── Step 9: Define resources ────────────────────────────────────────
-  const resources = defineResources(ctx);
-
-  // ── Step 10: ListResources handler ───────────────────────────────────
-  server.setRequestHandler(ListResourcesRequestSchema, async () => ({
-    resources: resources.map((r) => ({
-      uri: r.uri,
-      name: r.name,
-      description: r.description,
-      mimeType: r.mimeType,
-    })),
-  }));
-
-  // ── Step 11: ReadResource handler ────────────────────────────────────
-  server.setRequestHandler(ReadResourceRequestSchema, async (request) => {
-    const uri = new URL(request.params.uri);
-
-    for (const resource of resources) {
-      // Build a regex from the URI template (replace {param} with wildcard capture)
-      const pattern = resource.uri.replace(/\{[^}]+\}/g, "[^/]+");
-      const regex = new RegExp(`^${pattern}$`);
-
-      if (regex.test(request.params.uri)) {
-        return await resource.read(uri);
-      }
-    }
-
-    throw new Error(`Resource not found: ${request.params.uri}`);
   });
 
   return { server, ctx };

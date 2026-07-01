@@ -1,142 +1,51 @@
 /**
  * Compilation, Serialization, and Pipeline Execution Tools.
  *
- * These tools bridge the diagram state (DiagramCore) with the Python
- * training pipeline:
- *   1. Compile the diagram into an NNTree JSON representation
- *   2. Export/import diagram JSON for persistence
- *   3. Execute the Python conversion pipeline (convert.py → Hydra YAML)
- *   4. Execute training (main.py)
- *   5. Execute inference (infer.py)
+ * Three patterns:
+ *   1. Browser proxy: compile_nntree, export_diagram, import_diagram
+ *   2. Hybrid: execute_conversion queries browser for NNTree JSON, then runs
+ *      convert.py on the server side
+ *   3. Server-only pipeline: execute_training, execute_inference
  *
  * @module tools/conversion
  */
 
 import { z } from "zod";
 import type { ServerContext } from "../server";
-import { NNTree } from "@nnmodelling/front-end/conversion/nnTree";
-import { CompilationFailedError, ImportFailedError, ExportFailedError } from "../errors";
-import type {
-  ConversionResult,
-  TrainingResult,
-  InferenceResult,
-} from "../pipeline";
-import type { NNTreeOutput } from "@nnmodelling/front-end/core/types";
+import type { ConversionResult, TrainingResult, InferenceResult } from "../pipeline";
 
-// ── compile_nntree ─────────────────────────────────────────────────────
+// ── Browser Proxy Tools ───────────────────────────────────────────────
 
 export const compile_nntree = {
   schema: z.object({}),
 
-  async handler(
-    ctx: ServerContext,
-    _input: z.infer<typeof this.schema>,
-  ): Promise<NNTreeOutput> {
-    try {
-      const nntree = new NNTree(ctx.diagram);
-      const json = nntree.toJson();
-      const parsed = JSON.parse(json);
-
-      // Count subflows in the compiled tree
-      let subflowCount = 0;
-      for (const [, node] of nntree.nodes) {
-        if (node.isSubflow()) subflowCount++;
-      }
-
-      return {
-        json,
-        root: nntree.root,
-        nodeCount: nntree.nodes.size,
-        subflowCount,
-        lossNodeType: nntree.lossNode?.stereotype ?? null,
-      };
-    } catch (err: unknown) {
-      const message =
-        err instanceof Error ? err.message : "Unknown compilation error";
-      throw new CompilationFailedError(message);
-    }
+  async handler(ctx: ServerContext, _input: z.infer<typeof this.schema>) {
+    return ctx.browser.call("compile_nntree", {});
   },
 };
-
-// ── export_diagram ─────────────────────────────────────────────────────
 
 export const export_diagram = {
   schema: z.object({}),
 
-  async handler(
-    ctx: ServerContext,
-    _input: z.infer<typeof this.schema>,
-  ): Promise<{
-    json: string;
-    nodeCount: number;
-    edgeCount: number;
-  }> {
-    try {
-      const json = ctx.diagram.exportToJson();
-      return {
-        json,
-        nodeCount: ctx.diagram.nodes.length,
-        edgeCount: ctx.diagram.edges.length,
-      };
-    } catch (err: unknown) {
-      const message =
-        err instanceof Error ? err.message : "Unknown export error";
-      throw new ExportFailedError(message);
-    }
+  async handler(ctx: ServerContext, _input: z.infer<typeof this.schema>) {
+    return ctx.browser.call("export_diagram", {});
   },
 };
-
-// ── import_diagram ─────────────────────────────────────────────────────
 
 export const import_diagram = {
-  schema: z.object({
-    json: z.string().min(1),
-  }),
+  schema: z.object({ json: z.string().min(1) }),
 
-  async handler(
-    ctx: ServerContext,
-    input: z.infer<typeof this.schema>,
-  ): Promise<{
-    nodeCount: number;
-    edgeCount: number;
-  }> {
-    // Validate JSON format before importing
-    let parsed: Record<string, unknown>;
-    try {
-      parsed = JSON.parse(input.json);
-    } catch {
-      throw new ImportFailedError("Invalid JSON string — could not parse.");
-    }
-
-    if (
-      !Array.isArray(parsed.nodes) ||
-      !Array.isArray(parsed.edges)
-    ) {
-      throw new ImportFailedError(
-        "JSON must contain both 'nodes' (array) and 'edges' (array) fields.",
-      );
-    }
-
-    // Push history snapshot before mutation
-    ctx.history.pushSnapshot("import_diagram", ctx.diagram);
-
-    try {
-      ctx.diagram.importFromJson(input.json);
-    } catch (err: unknown) {
-      const message =
-        err instanceof Error ? err.message : "Unknown import error";
-      throw new ImportFailedError(message);
-    }
-
-    return {
-      nodeCount: ctx.diagram.nodes.length,
-      edgeCount: ctx.diagram.edges.length,
-    };
+  async handler(ctx: ServerContext, input: z.infer<typeof this.schema>) {
+    return ctx.browser.call("import_diagram", input);
   },
 };
 
-// ── execute_conversion ─────────────────────────────────────────────────
+// ── Hybrid Pipeline Tools ────────────────────────────────────────────
 
+/**
+ * execute_conversion: queries browser for NNTree JSON, writes temp file,
+ * runs convert.py via server-side pipeline.
+ */
 export const execute_conversion = {
   schema: z.object({
     outputDir: z.string().min(1),
@@ -151,10 +60,10 @@ export const execute_conversion = {
     ctx: ServerContext,
     input: z.infer<typeof this.schema>,
   ): Promise<ConversionResult> {
-    // Step 1: Compile NNTree
-    const nntreeOutput = await compile_nntree.handler(ctx, {});
+    // Step 1: Compile NNTree on the browser side
+    const nntreeOutput = await ctx.browser.call<{ json: string }>("compile_nntree", {});
 
-    // Step 2: Run Python conversion
+    // Step 2: Run Python conversion on the server side
     const result = await ctx.pipeline.executeConversion(nntreeOutput.json, {
       outputDir: input.outputDir,
       numClasses: input.numClasses,
@@ -164,14 +73,11 @@ export const execute_conversion = {
       maxEpochs: input.maxEpochs,
     });
 
-    // Step 3: Push history snapshot
-    ctx.history.pushSnapshot("execute_conversion", ctx.diagram);
-
     return result;
   },
 };
 
-// ── execute_training ───────────────────────────────────────────────────
+// ── Server-Only Pipeline Tools ────────────────────────────────────────
 
 export const execute_training = {
   schema: z.object({
@@ -185,18 +91,14 @@ export const execute_training = {
     ctx: ServerContext,
     input: z.infer<typeof this.schema>,
   ): Promise<TrainingResult> {
-    const result = await ctx.pipeline.executeTraining({
+    return ctx.pipeline.executeTraining({
       configDir: input.configDir,
       configName: input.configName,
       device: input.device,
       maxEpochs: input.maxEpochs,
     });
-
-    return result;
   },
 };
-
-// ── execute_inference ──────────────────────────────────────────────────
 
 export const execute_inference = {
   schema: z.object({
@@ -212,7 +114,7 @@ export const execute_inference = {
     ctx: ServerContext,
     input: z.infer<typeof this.schema>,
   ): Promise<InferenceResult> {
-    const result = await ctx.pipeline.executeInference({
+    return ctx.pipeline.executeInference({
       configDir: input.configDir,
       configName: input.configName,
       weightsPath: input.weightsPath,
@@ -220,7 +122,5 @@ export const execute_inference = {
       imageDir: input.imageDir,
       device: input.device,
     });
-
-    return result;
   },
 };
