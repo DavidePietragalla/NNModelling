@@ -49,6 +49,16 @@ function waitForMessage(ws: WebSocket, predicate?: (msg: any) => boolean): Promi
   });
 }
 
+function waitForOpen(ws: WebSocket): Promise<void> {
+  return new Promise((resolve) => {
+    if (ws.readyState === WebSocket.OPEN) {
+      resolve();
+    } else {
+      ws.on("open", () => resolve());
+    }
+  });
+}
+
 // ── Tests ─────────────────────────────────────────────────────────────────
 
 describe("WebSocket Server - Snapshot", () => {
@@ -66,26 +76,39 @@ describe("WebSocket Server - Snapshot", () => {
     wss._shutdown();
   });
 
-  it("sends a snapshot message on connect with correct format", async () => {
+  it("does not send automatic snapshot on connect", async () => {
     const ws = new WebSocket(`ws://localhost:${port}`);
 
-    const msg: WSSnapshotMessage = await waitForMessage(ws);
+    // Wait a short time — no message should arrive automatically
+    const gotMessage = await Promise.race([
+      waitForMessage(ws).then(() => true),
+      new Promise<boolean>((resolve) => setTimeout(() => resolve(false), 300)),
+    ]);
 
+    expect(gotMessage).toBe(false);
+
+    // But request_snapshot still works
+    await waitForOpen(ws);
+    ws.send(JSON.stringify({ type: "request_snapshot" }));
+    const msg: WSSnapshotMessage = await waitForMessage(ws);
     expect(msg.type).toBe("snapshot");
     expect(msg.seq).toBeTypeOf("number");
-    expect(msg.seq).toBeGreaterThanOrEqual(0);
     expect(Array.isArray(msg.nodes)).toBe(true);
     expect(Array.isArray(msg.edges)).toBe(true);
 
     ws.close();
   });
 
-  it("snapshot contains current diagram nodes and edges", async () => {
+  it("request_snapshot returns current diagram state", async () => {
     // Add a node before connecting
     const stereo = diagram.getStereotype("Linear")!;
     diagram.addModule(stereo, 100, 50);
 
     const ws = new WebSocket(`ws://localhost:${port}`);
+    await waitForOpen(ws);
+
+    // Request a snapshot explicitly
+    ws.send(JSON.stringify({ type: "request_snapshot" }));
 
     const msg: WSSnapshotMessage = await waitForMessage(ws);
 
@@ -97,9 +120,7 @@ describe("WebSocket Server - Snapshot", () => {
 
   it("supports request_snapshot to get fresh state", async () => {
     const ws = new WebSocket(`ws://localhost:${port}`);
-
-    // Consume initial snapshot
-    await waitForMessage(ws);
+    await waitForOpen(ws);
 
     // Request a fresh snapshot
     ws.send(JSON.stringify({ type: "request_snapshot" }));
@@ -108,6 +129,35 @@ describe("WebSocket Server - Snapshot", () => {
 
     expect(msg.type).toBe("snapshot");
     expect(Array.isArray(msg.nodes)).toBe(true);
+
+    ws.close();
+  });
+
+  it("push_state sends snapshot back with imported state", async () => {
+    const ws = new WebSocket(`ws://localhost:${port}`);
+    await waitForOpen(ws);
+
+    // Send a push_state with test nodes/edges
+    ws.send(JSON.stringify({
+      type: "push_state",
+      nodes: [{
+        id: "test_1",
+        type: "custom",
+        position: { x: 100, y: 100 },
+        data: { stereotype: "Input", label: "Input", params: {} },
+      }],
+      edges: [],
+    }));
+
+    const msg: WSSnapshotMessage = await waitForMessage(
+      ws,
+      (msg) => msg.type === "snapshot",
+    );
+
+    expect(msg.type).toBe("snapshot");
+    expect(msg.nodes).toHaveLength(1);
+    expect(msg.nodes[0].id).toBe("test_1");
+    expect(Array.isArray(msg.edges)).toBe(true);
 
     ws.close();
   });
@@ -130,9 +180,7 @@ describe("WebSocket Server - Delta Broadcast", () => {
 
   it("broadcasts delta when a module node is created", async () => {
     const ws = new WebSocket(`ws://localhost:${port}`);
-
-    // Consume initial snapshot
-    await waitForMessage(ws);
+    await waitForOpen(ws);
 
     // Create a ReLU module node (triggers node_created event)
     const stereo = diagram.getStereotype("ReLU")!;
@@ -153,9 +201,7 @@ describe("WebSocket Server - Delta Broadcast", () => {
 
   it("broadcasts delta when a join node is created", async () => {
     const ws = new WebSocket(`ws://localhost:${port}`);
-
-    // Consume initial snapshot
-    await waitForMessage(ws);
+    await waitForOpen(ws);
 
     // Create an Addition join node
     const stereo = diagram.getStereotype("Addition")!;
@@ -174,9 +220,7 @@ describe("WebSocket Server - Delta Broadcast", () => {
 
   it("broadcasts delta when an edge is created", async () => {
     const ws = new WebSocket(`ws://localhost:${port}`);
-
-    // Consume initial snapshot
-    await waitForMessage(ws);
+    await waitForOpen(ws);
 
     // Create two nodes and connect them
     const reluStereo = diagram.getStereotype("ReLU")!;
@@ -207,9 +251,7 @@ describe("WebSocket Server - Delta Broadcast", () => {
 
   it("broadcasts delta when a node is deleted", async () => {
     const ws = new WebSocket(`ws://localhost:${port}`);
-
-    // Consume initial snapshot
-    await waitForMessage(ws);
+    await waitForOpen(ws);
 
     // Create a node, then delete it
     const stereo = diagram.getStereotype("Dropout")!;
@@ -234,9 +276,7 @@ describe("WebSocket Server - Delta Broadcast", () => {
 
   it("broadcasts delta with correct seq numbering", async () => {
     const ws = new WebSocket(`ws://localhost:${port}`);
-
-    // Consume initial snapshot
-    await waitForMessage(ws);
+    await waitForOpen(ws);
 
     // Create two nodes in sequence
     const linearStereo = diagram.getStereotype("Linear")!;
@@ -257,11 +297,21 @@ describe("WebSocket Server - Delta Broadcast", () => {
     ws.close();
   });
 
-  it("snapshot seq and first delta seq are consecutive", async () => {
+  it("snapshot seq and next delta seq are consecutive", async () => {
     const ws = new WebSocket(`ws://localhost:${port}`);
+    await waitForOpen(ws);
 
-    // Receive snapshot — its seq should be the current broadcastSeq value
-    const snap: WSSnapshotMessage = await waitForMessage(ws);
+    // Send push_state to trigger a snapshot response
+    ws.send(JSON.stringify({
+      type: "push_state",
+      nodes: [],
+      edges: [],
+    }));
+
+    const snap: WSSnapshotMessage = await waitForMessage(
+      ws,
+      (msg) => msg.type === "snapshot",
+    );
     expect(snap.type).toBe("snapshot");
     const snapshotSeq = snap.seq;
     expect(snapshotSeq).toBeTypeOf("number");
@@ -285,7 +335,13 @@ describe("WebSocket Server - Delta Broadcast", () => {
     const ws1 = new WebSocket(`ws://localhost:${port}`);
     const ws2 = new WebSocket(`ws://localhost:${port}`);
 
-    // Both receive initial snapshots
+    // Wait for both to connect before sending
+    await Promise.all([waitForOpen(ws1), waitForOpen(ws2)]);
+
+    // Both request snapshots
+    ws1.send(JSON.stringify({ type: "request_snapshot" }));
+    ws2.send(JSON.stringify({ type: "request_snapshot" }));
+
     const [snap1, snap2] = await Promise.all([
       waitForMessage(ws1),
       waitForMessage(ws2),
@@ -329,9 +385,7 @@ describe("WebSocket Server - Error Handling", () => {
 
   it("ignores malformed client messages without crashing", async () => {
     const ws = new WebSocket(`ws://localhost:${port}`);
-
-    // Consume initial snapshot
-    await waitForMessage(ws);
+    await waitForOpen(ws);
 
     // Send malformed messages
     ws.send("not valid json");
@@ -341,8 +395,10 @@ describe("WebSocket Server - Error Handling", () => {
     // Wait a bit and verify server is still responsive
     await new Promise((resolve) => setTimeout(resolve, 200));
 
-    // Server should still send snapshots to new clients
+    // Server should still respond to request_snapshot
     const ws2 = new WebSocket(`ws://localhost:${port}`);
+    await waitForOpen(ws2);
+    ws2.send(JSON.stringify({ type: "request_snapshot" }));
     const msg: WSSnapshotMessage = await waitForMessage(ws2);
     expect(msg.type).toBe("snapshot");
 

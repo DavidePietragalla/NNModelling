@@ -48,6 +48,8 @@ export class DiagramSyncClient {
     this.ws.onopen = () => {
       console.debug(`[SyncClient] Connected to ${this.url}`);
       this.reconnectDelay = 1000; // Reset exponential backoff
+      // Push browser state to server so MCP tools reflect the canvas
+      this.pushState();
     };
 
     this.ws.onmessage = (event: MessageEvent) => {
@@ -125,6 +127,19 @@ export class DiagramSyncClient {
   private requestSnapshot(): void {
     if (this.ws && this.ws.readyState === WebSocket.OPEN) {
       this.ws.send(JSON.stringify({ type: "request_snapshot" }));
+    }
+  }
+
+  /** Push the current browser canvas state to the MCP server. */
+  private pushState(): void {
+    if (this.ws && this.ws.readyState === WebSocket.OPEN) {
+      this.ws.send(
+        JSON.stringify({
+          type: "push_state",
+          nodes: this.diagram.nodes,
+          edges: this.diagram.edges,
+        }),
+      );
     }
   }
 

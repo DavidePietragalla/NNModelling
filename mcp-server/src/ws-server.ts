@@ -64,16 +64,7 @@ export function createWSServer(
 
     console.error(`[nnmodelling-ws] Browser connected (total: ${totalClients})`);
 
-    // ── Send full snapshot on connect ────────────────────────
-    const snapshot: WSSnapshotMessage = {
-      type: "snapshot",
-      seq: broadcastSeq,
-      nodes: diagram.nodes,
-      edges: diagram.edges,
-    };
-    ws.send(JSON.stringify(snapshot));
-
-    // ── Handle client messages (e.g., request_snapshot) ──────
+    // ── Handle client messages (e.g., request_snapshot, push_state) ──
     ws.on("message", (data: Buffer) => {
       try {
         const msg = JSON.parse(data.toString());
@@ -85,6 +76,32 @@ export function createWSServer(
             edges: diagram.edges,
           };
           ws.send(JSON.stringify(snap));
+        } else if (msg.type === "push_state") {
+          // Browser pushes its canvas state to the MCP server.
+          // This imports the browser's diagram into the server's DiagramCore
+          // so MCP tools (get_graph, etc.) reflect the current canvas.
+          try {
+            diagram.importFromJson(
+              JSON.stringify({ nodes: msg.nodes, edges: msg.edges }),
+            );
+            console.error(
+              `[nnmodelling-ws] Imported state from browser (${msg.nodes?.length ?? 0} nodes, ${msg.edges?.length ?? 0} edges)`,
+            );
+            // Send snapshot back to confirm the imported state
+            broadcastSeq++;
+            const snap: WSSnapshotMessage = {
+              type: "snapshot",
+              seq: broadcastSeq,
+              nodes: diagram.nodes,
+              edges: diagram.edges,
+            };
+            ws.send(JSON.stringify(snap));
+          } catch (importErr) {
+            console.error(
+              "[nnmodelling-ws] Failed to import browser state:",
+              importErr,
+            );
+          }
         }
       } catch {
         // Ignore malformed messages
