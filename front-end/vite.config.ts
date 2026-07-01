@@ -7,6 +7,14 @@ export default defineConfig({
       emitCss: false,
     }),
   ],
+  server: {
+    proxy: {
+      "/ws": {
+        target: "ws://localhost:9339",
+        ws: true,
+      },
+    },
+  },
   optimizeDeps: {
     exclude: ["@xyflow/svelte"],
   },
