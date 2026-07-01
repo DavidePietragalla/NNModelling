@@ -262,6 +262,16 @@ export async function executeTraining(
     options.configName || "base",
   ];
 
+  // Pass maxEpochs if set
+  if (options.maxEpochs !== undefined) {
+    args.push("--max-epochs", String(options.maxEpochs));
+  }
+
+  // Pass device if set
+  if (options.device !== undefined) {
+    args.push("--device", options.device);
+  }
+
   const startTime = Date.now();
   const { stdout, stderr, exitCode } = await spawnPython(args);
   const duration = (Date.now() - startTime) / 1000;
@@ -272,9 +282,39 @@ export async function executeTraining(
     );
   }
 
-  // main.py saves weights.pt in its working directory (hydra output dir)
-  // We report the most likely location relative to the config dir
-  const checkpointPath = resolve(absConfigDir, "..", "weights.pt");
+  // Hydra saves outputs under configDir/../outputs/<date>/<time>/checkpoints/
+  // Scan for the most recent .ckpt file; if none found, return null.
+  let checkpointPath: string | null = null;
+  const hydraOutputDir = resolve(absConfigDir, "..", "outputs");
+  try {
+    const dateDirs = readdirSync(hydraOutputDir, { withFileTypes: true })
+      .filter((d) => d.isDirectory())
+      .map((d) => d.name)
+      .sort()
+      .reverse(); // Most recent date first
+    for (const dateDir of dateDirs) {
+      const timeDirs = readdirSync(join(hydraOutputDir, dateDir), { withFileTypes: true })
+        .filter((d) => d.isDirectory())
+        .map((d) => d.name)
+        .sort()
+        .reverse(); // Most recent time first
+      for (const timeDir of timeDirs) {
+        const ckptDir = join(hydraOutputDir, dateDir, timeDir, "checkpoints");
+        try {
+          const ckptFiles = readdirSync(ckptDir).filter((f) => f.endsWith(".ckpt"));
+          if (ckptFiles.length > 0) {
+            checkpointPath = join(ckptDir, ckptFiles[0]);
+            break;
+          }
+        } catch {
+          // No checkpoints directory in this run; continue scanning
+        }
+      }
+      if (checkpointPath) break;
+    }
+  } catch {
+    // outputs/ directory doesn't exist yet
+  }
 
   // Attempt to parse metrics from stdout
   // Expected patterns: "val_metric: 0.98", "train_loss: 0.123"

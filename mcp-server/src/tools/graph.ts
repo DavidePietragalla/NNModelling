@@ -8,7 +8,7 @@
 
 import { z } from "zod";
 import type { ServerContext } from "../server";
-import type { Node, Edge } from "@nnmodelling/front-end/core/types";
+import type { Node } from "@nnmodelling/front-end/core/types";
 import {
   StereotypeNotFoundError,
   NodeNotFoundError,
@@ -107,20 +107,46 @@ export const delete_nodes = {
   async handler(
     ctx: ServerContext,
     input: z.infer<typeof this.schema>
-  ): Promise<{ deletedCount: number; reparentedNodes: number }> {
+  ): Promise<{
+    deletedNodeIds: string[];
+    deletedEdgeIds: string[];
+    reparentedNodes: Array<{ nodeId: string; oldParentId: string; newParentId: string | null }>;
+  }> {
     const { nodeIds } = input;
+    const nodeSet = new Set(nodeIds);
 
     // Validate all nodes exist
     for (const id of nodeIds) {
       if (!ctx.diagram.getNodeById(id)) throw new NodeNotFoundError(id);
     }
 
+    // Capture edges that will be removed
+    const deletedEdgeIds = ctx.diagram.edges
+      .filter((e) => nodeSet.has(e.source) || nodeSet.has(e.target))
+      .map((e) => e.id);
+
+    // Capture nodes that will be reparented (orphans of deleted subflows)
+    const reparentBefore = ctx.diagram.nodes
+      .filter((n) => n.parentId && nodeSet.has(n.parentId))
+      .map((n) => ({ nodeId: n.id, oldParentId: n.parentId! }));
+
     ctx.history.pushSnapshot(`delete ${nodeIds.length} nodes`, ctx.diagram);
     ctx.diagram.deleteNodes(nodeIds);
 
+    // After deletion, check new parent IDs for reparented nodes
+    const reparentedNodes = reparentBefore.map((r) => {
+      const n = ctx.diagram.getNodeById(r.nodeId);
+      return {
+        nodeId: r.nodeId,
+        oldParentId: r.oldParentId,
+        newParentId: n?.parentId ?? null,
+      };
+    });
+
     return {
-      deletedCount: nodeIds.length,
-      reparentedNodes: 0,
+      deletedNodeIds: [...nodeIds],
+      deletedEdgeIds,
+      reparentedNodes,
     };
   },
 };
@@ -157,23 +183,38 @@ export const connect_nodes = {
 
 export const disconnect_nodes = {
   schema: z.object({
-    edgeId: z.string().min(1),
+    source: z.string().min(1),
+    target: z.string().min(1),
+    targetHandle: z.string().optional(),
   }),
 
   async handler(
     ctx: ServerContext,
     input: z.infer<typeof this.schema>
-  ): Promise<{ removed: boolean }> {
-    const { edgeId } = input;
+  ): Promise<{ removedEdgeIds: string[] }> {
+    const { source, target, targetHandle } = input;
 
-    // Find the edge first
-    const edge = ctx.diagram.edges.find((e) => e.id === edgeId);
-    if (!edge) throw new EdgeNotFoundError(edgeId);
+    // Find matching edges before removal
+    const matchingEdges = ctx.diagram.edges.filter(
+      (e) =>
+        e.source === source &&
+        e.target === target &&
+        (targetHandle === undefined || e.targetHandle === targetHandle)
+    );
 
-    ctx.history.pushSnapshot(`disconnect edge ${edgeId}`, ctx.diagram);
-    ctx.diagram.deleteEdge(edgeId);
+    if (matchingEdges.length === 0) {
+      const desc = targetHandle
+        ? `${source} -> ${target} (handle: ${targetHandle})`
+        : `${source} -> ${target}`;
+      throw new EdgeNotFoundError(desc);
+    }
 
-    return { removed: true };
+    const removedEdgeIds = matchingEdges.map((e) => e.id);
+
+    ctx.history.pushSnapshot(`disconnect ${source} -> ${target}`, ctx.diagram);
+    ctx.diagram.removeEdge(source, target, targetHandle);
+
+    return { removedEdgeIds };
   },
 };
 
@@ -211,6 +252,12 @@ export const move_nodes = {
 export const duplicate_nodes = {
   schema: z.object({
     nodeIds: z.array(z.string()).min(1),
+    offset: z
+      .object({
+        x: z.number(),
+        y: z.number(),
+      })
+      .optional(),
   }),
 
   async handler(
@@ -218,6 +265,7 @@ export const duplicate_nodes = {
     input: z.infer<typeof this.schema>
   ): Promise<{ duplicated: Array<{ originalId: string; newId: string }> }> {
     const { nodeIds } = input;
+    const offset = input.offset ?? { x: 50, y: 50 };
 
     // Validate all originals exist and filter to supported types
     const originals: Node[] = [];
@@ -232,13 +280,11 @@ export const duplicate_nodes = {
 
     ctx.history.pushSnapshot(`duplicate ${originals.length} nodes`, ctx.diagram);
 
-    // Track original → new ID mapping
+    // Track original → new ID mapping by capturing node before/after each add
     const idMap = new Map<string, string>();
     const duplicated: Array<{ originalId: string; newId: string }> = [];
-    const OFFSET = 50;
-    const prevCount = ctx.diagram.nodes.length;
 
-    // Create copies of each original node
+    // Create copies of each original node, capturing IDs reliably
     for (const node of originals) {
       const stereoName = (node.data as Record<string, unknown>)?.stereotype as string | undefined;
       if (!stereoName) continue;
@@ -246,8 +292,11 @@ export const duplicate_nodes = {
       const stereo = ctx.diagram.getStereotype(stereoName);
       if (!stereo) continue;
 
-      const newX = node.position.x + OFFSET;
-      const newY = node.position.y + OFFSET;
+      const newX = node.position.x + offset.x;
+      const newY = node.position.y + offset.y;
+
+      // Capture length before creation to detect the new node
+      const before = ctx.diagram.nodes.length;
 
       if (stereo.isJoin) {
         ctx.diagram.addJoinNode(stereo, newX, newY, {
@@ -265,18 +314,13 @@ export const duplicate_nodes = {
           params: (node.data as Record<string, unknown>)?.params as Record<string, unknown> | undefined,
         });
       }
-    }
 
-    // Build the ID map by pairing newly created nodes with originals
-    const newNodes = ctx.diagram.nodes.slice(prevCount);
-    const validOriginals = originals.filter((n) => {
-      const s = (n.data as Record<string, unknown>)?.stereotype as string | undefined;
-      return s !== undefined && ctx.diagram.getStereotype(s);
-    });
-
-    for (let i = 0; i < Math.min(validOriginals.length, newNodes.length); i++) {
-      idMap.set(validOriginals[i].id, newNodes[i].id);
-      duplicated.push({ originalId: validOriginals[i].id, newId: newNodes[i].id });
+      // The new node is appended; capture its ID
+      if (ctx.diagram.nodes.length > before) {
+        const newNode = ctx.diagram.nodes[ctx.diagram.nodes.length - 1];
+        idMap.set(node.id, newNode.id);
+        duplicated.push({ originalId: node.id, newId: newNode.id });
+      }
     }
 
     // Copy edges between duplicated nodes (internal connections)
@@ -303,21 +347,14 @@ export const create_subflow = {
       x: z.number(),
       y: z.number(),
     }),
-    stereotype: z.string().optional(),
-    config: z
-      .object({
-        name: z.string().optional(),
-        color: z.string().optional(),
-        params: z.record(z.string(), z.string()).optional(),
-      })
-      .optional(),
+    label: z.string().optional(),
   }),
 
   async handler(
     ctx: ServerContext,
     input: z.infer<typeof this.schema>
   ): Promise<{ nodeId: string; name: string }> {
-    const { position, config } = input;
+    const { position, label } = input;
 
     // Validate position
     if (
@@ -332,17 +369,19 @@ export const create_subflow = {
     }
 
     ctx.history.pushSnapshot(`create subflow`, ctx.diagram);
+
+    // Safer node detection: capture length before creation
+    const prevCount = ctx.diagram.nodes.length;
     ctx.diagram.addSubGraph(position.x, position.y);
 
+    if (ctx.diagram.nodes.length <= prevCount) {
+      throw new Error("Failed to create subflow: no node was added");
+    }
     const created = ctx.diagram.nodes[ctx.diagram.nodes.length - 1];
 
-    // Apply optional config after creation
-    if (config) {
-      ctx.diagram.updateModule(created.id, {
-        name: config.name,
-        label: config.name,
-        params: config.params,
-      });
+    // Apply label if provided
+    if (label) {
+      ctx.diagram.updateModule(created.id, { name: label, label });
     }
 
     return {

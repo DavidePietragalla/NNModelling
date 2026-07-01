@@ -17,23 +17,37 @@ import { NodeNotFoundError } from "../errors";
 export const select_nodes = {
   schema: z.object({
     nodeIds: z.array(z.string()),
+    mode: z.enum(["replace", "add", "remove"]).optional().default("replace"),
   }),
 
   async handler(
     ctx: ServerContext,
     input: z.infer<typeof this.schema>
   ): Promise<{ selectedNodeIds: string[]; selectedEdgeIds: string[] }> {
-    const { nodeIds } = input;
+    const { nodeIds, mode } = input;
 
     // Validate that all requested nodes exist
     for (const id of nodeIds) {
       if (!ctx.diagram.getNodeById(id)) throw new NodeNotFoundError(id);
     }
 
-    ctx.diagram.selectNodes(nodeIds);
+    let finalIds: string[];
+
+    if (mode === "replace") {
+      finalIds = nodeIds;
+    } else if (mode === "add") {
+      const current = ctx.diagram.getSelectedNodes().map((n) => n.id);
+      finalIds = [...new Set([...current, ...nodeIds])];
+    } else {
+      // mode === "remove"
+      const current = ctx.diagram.getSelectedNodes().map((n) => n.id);
+      finalIds = current.filter((id) => !nodeIds.includes(id));
+    }
+
+    ctx.diagram.selectNodes(finalIds);
 
     return {
-      selectedNodeIds: nodeIds,
+      selectedNodeIds: finalIds,
       selectedEdgeIds: ctx.diagram.getSelectedEdges().map((e) => e.id),
     };
   },
