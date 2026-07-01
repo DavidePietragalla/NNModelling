@@ -78,6 +78,7 @@ export const list_stereotypes = {
         isLoss: s.isLoss,
         isSubFlow: s.isSubFlow,
         parameters: s.parameters,
+        view: s.view,
       })),
     };
   },
