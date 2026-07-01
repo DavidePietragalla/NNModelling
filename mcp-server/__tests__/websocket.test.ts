@@ -1,29 +1,24 @@
 /**
- * WebSocket Server Integration Tests
+ * BrowserRPCClient Tests
  *
- * Tests the WebSocket delta broadcaster using a real DiagramCore and
- * the ws package for both server and client. Each test suite uses a
- * dynamic port to avoid conflicts.
+ * Tests the WebSocket RPC client that communicates with the browser.
+ * Uses real WebSocket connections on dynamic ports.
+ *
+ * Test scenarios:
+ *   1. connect() waits for browser connection
+ *   2. call() sends {id, method, params} and receives {id, result}
+ *   3. call() rejects on timeout
+ *   4. call() rejects on {id, error: {message}}
+ *   5. close() shuts down server
+ *   6. connect() rejects on port conflict
+ *   7. Multiple sequential calls work correctly
  */
 
 import { describe, it, expect, beforeAll, afterAll } from "vitest";
-import path from "path";
-import { DiagramCore } from "@nnmodelling/front-end/core/DiagramCore";
-import { StereotypeCore } from "@nnmodelling/front-end/core/StereotypeCore";
-import { createWSServer } from "../src/ws-server";
-import WebSocket from "ws";
-import type { WSSnapshotMessage, WSDeltaMessage } from "@nnmodelling/front-end/core/types";
+import { BrowserRPCClient } from "../src/browser-client";
+import { WebSocketServer, WebSocket } from "ws";
 
 // ── Helpers ───────────────────────────────────────────────────────────────
-
-function createDiagram(): DiagramCore {
-  const diagram = new DiagramCore();
-  diagram.nodes = [];
-  diagram.edges = [];
-  const stereotypesDir = path.resolve(__dirname, "../../Stereotypes");
-  diagram.initStereotypes(StereotypeCore.loadFromDirectoryNode(stereotypesDir));
-  return diagram;
-}
 
 function findAvailablePort(): Promise<number> {
   return new Promise((resolve, reject) => {
@@ -36,399 +31,199 @@ function findAvailablePort(): Promise<number> {
   });
 }
 
-function waitForMessage(ws: WebSocket, predicate?: (msg: any) => boolean): Promise<any> {
-  return new Promise((resolve) => {
-    const handler = (data: Buffer) => {
-      const parsed = JSON.parse(data.toString());
-      if (!predicate || predicate(parsed)) {
-        ws.removeListener("message", handler);
-        resolve(parsed);
-      }
-    };
-    ws.on("message", handler);
-  });
-}
-
-function waitForOpen(ws: WebSocket): Promise<void> {
-  return new Promise((resolve) => {
-    if (ws.readyState === WebSocket.OPEN) {
-      resolve();
-    } else {
-      ws.on("open", () => resolve());
-    }
+/**
+ * Simulates a browser connecting to the BrowserRPCClient's WebSocket server.
+ * Returns the WebSocket that the browser would use, plus a helper to
+ * simulate sending responses.
+ */
+function createBrowserConnection(
+  port: number,
+): Promise<{ ws: WebSocket; respond: (msg: object) => void }> {
+  return new Promise((resolve, reject) => {
+    const ws = new WebSocket(`ws://localhost:${port}`);
+    ws.on("open", () => {
+      resolve({
+        ws,
+        respond: (msg: object) => ws.send(JSON.stringify(msg)),
+      });
+    });
+    ws.on("error", reject);
+    setTimeout(() => reject(new Error("Connection timeout")), 3000);
   });
 }
 
 // ── Tests ─────────────────────────────────────────────────────────────────
 
-describe("WebSocket Server - Snapshot", () => {
-  let diagram: DiagramCore;
-  let wss: ReturnType<typeof createWSServer>;
-  let port: number;
+describe("BrowserRPCClient - connect", () => {
+  it("connect() resolves when browser connects", async () => {
+    const port = await findAvailablePort();
+    const client = new BrowserRPCClient({ port, connectionTimeout: 5000 });
 
-  beforeAll(async () => {
-    port = await findAvailablePort();
-    diagram = createDiagram();
-    wss = createWSServer(diagram, diagram.events, { port });
+    // Start listening and connect a simulated browser in parallel
+    const connectPromise = client.connect();
+    const browserConn = await createBrowserConnection(port);
+
+    await expect(connectPromise).resolves.toBeUndefined();
+    expect(client.isConnected()).toBe(true);
+
+    browserConn.ws.close();
+    client.close();
   });
 
-  afterAll(() => {
-    wss._shutdown();
-  });
+  it("connect() rejects on timeout when no browser connects", async () => {
+    const port = await findAvailablePort();
+    const client = new BrowserRPCClient({ port, connectionTimeout: 500 });
 
-  it("does not send automatic snapshot on connect", async () => {
-    const ws = new WebSocket(`ws://localhost:${port}`);
+    await expect(client.connect()).rejects.toThrow("Timeout waiting for browser connection");
 
-    // Wait a short time — no message should arrive automatically
-    const gotMessage = await Promise.race([
-      waitForMessage(ws).then(() => true),
-      new Promise<boolean>((resolve) => setTimeout(() => resolve(false), 300)),
-    ]);
-
-    expect(gotMessage).toBe(false);
-
-    // But request_snapshot still works
-    await waitForOpen(ws);
-    ws.send(JSON.stringify({ type: "request_snapshot" }));
-    const msg: WSSnapshotMessage = await waitForMessage(ws);
-    expect(msg.type).toBe("snapshot");
-    expect(msg.seq).toBeTypeOf("number");
-    expect(Array.isArray(msg.nodes)).toBe(true);
-    expect(Array.isArray(msg.edges)).toBe(true);
-
-    ws.close();
-  });
-
-  it("request_snapshot returns current diagram state", async () => {
-    // Add a node before connecting
-    const stereo = diagram.getStereotype("Linear")!;
-    diagram.addModule(stereo, 100, 50);
-
-    const ws = new WebSocket(`ws://localhost:${port}`);
-    await waitForOpen(ws);
-
-    // Request a snapshot explicitly
-    ws.send(JSON.stringify({ type: "request_snapshot" }));
-
-    const msg: WSSnapshotMessage = await waitForMessage(ws);
-
-    expect(msg.nodes).toHaveLength(1);
-    expect(msg.nodes[0].data.stereotype).toBe("Linear");
-
-    ws.close();
-  });
-
-  it("supports request_snapshot to get fresh state", async () => {
-    const ws = new WebSocket(`ws://localhost:${port}`);
-    await waitForOpen(ws);
-
-    // Request a fresh snapshot
-    ws.send(JSON.stringify({ type: "request_snapshot" }));
-
-    const msg: WSSnapshotMessage = await waitForMessage(ws);
-
-    expect(msg.type).toBe("snapshot");
-    expect(Array.isArray(msg.nodes)).toBe(true);
-
-    ws.close();
-  });
-
-  it("push_state sends snapshot back with imported state", async () => {
-    const ws = new WebSocket(`ws://localhost:${port}`);
-    await waitForOpen(ws);
-
-    // Send a push_state with test nodes/edges
-    ws.send(JSON.stringify({
-      type: "push_state",
-      nodes: [{
-        id: "test_1",
-        type: "custom",
-        position: { x: 100, y: 100 },
-        data: { stereotype: "Input", label: "Input", params: {} },
-      }],
-      edges: [],
-    }));
-
-    const msg: WSSnapshotMessage = await waitForMessage(
-      ws,
-      (msg) => msg.type === "snapshot",
-    );
-
-    expect(msg.type).toBe("snapshot");
-    expect(msg.nodes).toHaveLength(1);
-    expect(msg.nodes[0].id).toBe("test_1");
-    expect(Array.isArray(msg.edges)).toBe(true);
-
-    ws.close();
+    client.close();
   });
 });
 
-describe("WebSocket Server - Delta Broadcast", () => {
-  let diagram: DiagramCore;
-  let wss: ReturnType<typeof createWSServer>;
+describe("BrowserRPCClient - call", () => {
   let port: number;
+  let client: BrowserRPCClient;
+  let browser: { ws: WebSocket; respond: (msg: object) => void };
 
   beforeAll(async () => {
     port = await findAvailablePort();
-    diagram = createDiagram();
-    wss = createWSServer(diagram, diagram.events, { port });
+    client = new BrowserRPCClient({ port, connectionTimeout: 5000, requestTimeout: 5000 });
+
+    // Connect browser before running tests
+    const connectPromise = client.connect();
+    browser = await createBrowserConnection(port);
+    await connectPromise;
   });
 
   afterAll(() => {
-    wss._shutdown();
+    browser.ws.close();
+    client.close();
   });
 
-  it("broadcasts delta when a module node is created", async () => {
-    const ws = new WebSocket(`ws://localhost:${port}`);
-    await waitForOpen(ws);
+  it("call() sends {id, method, params} and resolves with result", async () => {
+    const callPromise = client.call("get_graph", {});
 
-    // Create a ReLU module node (triggers node_created event)
-    const stereo = diagram.getStereotype("ReLU")!;
-    diagram.addModule(stereo, 50, 50);
+    // Browser receives the request
+    const message = await new Promise<string>((resolve) => {
+      browser.ws.once("message", (data: Buffer) => resolve(data.toString()));
+    });
 
-    const deltaMsg: WSDeltaMessage = await waitForMessage(
-      ws,
-      (msg) => msg.type === "delta"
-    );
+    const parsed = JSON.parse(message);
+    expect(parsed).toHaveProperty("id");
+    expect(parsed.method).toBe("get_graph");
+    expect(parsed.params).toEqual({});
 
-    expect(deltaMsg.type).toBe("delta");
-    expect(deltaMsg.seq).toBeGreaterThanOrEqual(1);
-    expect(deltaMsg.operations.length).toBeGreaterThan(0);
-    expect(deltaMsg.operations[0].op).toBe("node_added");
+    // Browser responds
+    browser.respond({ id: parsed.id, result: { nodes: [], edges: [] } });
 
-    ws.close();
+    const result = await callPromise;
+    expect(result).toEqual({ nodes: [], edges: [] });
   });
 
-  it("broadcasts delta when a join node is created", async () => {
-    const ws = new WebSocket(`ws://localhost:${port}`);
-    await waitForOpen(ws);
+  it("call() sends correct method name and params", async () => {
+    const callPromise = client.call("create_node", { stereotype: "Linear", position: { x: 100, y: 50 } });
 
-    // Create an Addition join node
-    const stereo = diagram.getStereotype("Addition")!;
-    diagram.addJoinNode(stereo, 100, 100);
+    const message = await new Promise<string>((resolve) => {
+      browser.ws.once("message", (data: Buffer) => resolve(data.toString()));
+    });
 
-    const deltaMsg: WSDeltaMessage = await waitForMessage(
-      ws,
-      (msg) => msg.type === "delta"
-    );
+    const parsed = JSON.parse(message);
+    expect(parsed.method).toBe("create_node");
+    expect(parsed.params).toEqual({ stereotype: "Linear", position: { x: 100, y: 50 } });
 
-    expect(deltaMsg.type).toBe("delta");
-    expect(deltaMsg.operations[0].op).toBe("node_added");
-
-    ws.close();
+    browser.respond({ id: parsed.id, result: { nodeId: "n1" } });
+    await callPromise;
   });
 
-  it("broadcasts delta when an edge is created", async () => {
-    const ws = new WebSocket(`ws://localhost:${port}`);
-    await waitForOpen(ws);
+  it("call() rejects on timeout", async () => {
+    const timeoutPort = await findAvailablePort();
+    const shortTimeoutClient = new BrowserRPCClient({ port: timeoutPort, connectionTimeout: 1000, requestTimeout: 100 });
+    const shortConnectPromise = shortTimeoutClient.connect();
+    const shortBrowser = await createBrowserConnection(timeoutPort);
+    await shortConnectPromise;
 
-    // Create two nodes and connect them
-    const reluStereo = diagram.getStereotype("ReLU")!;
-    const tanhStereo = diagram.getStereotype("Tanh")!;
-    diagram.addModule(reluStereo, 100, 100);
-    diagram.addModule(tanhStereo, 100, 200);
+    // Make a call but don't respond — it should time out
+    await expect(shortTimeoutClient.call("get_graph", {})).rejects.toThrow("RPC timeout");
 
-    // Consume the node_created deltas (2 messages)
-    await waitForMessage(ws, (msg) => msg.type === "delta");
-
-    // Now find the node IDs
-    const reluNode = diagram.nodes.find((n) => n.data.stereotype === "ReLU")!;
-    const tanhNode = diagram.nodes.find((n) => n.data.stereotype === "Tanh")!;
-
-    // Add edge between them
-    diagram.addEdge(reluNode.id, tanhNode.id);
-
-    const edgeDelta: WSDeltaMessage = await waitForMessage(
-      ws,
-      (msg) => msg.type === "delta" && msg.operations[0]?.op === "edge_added"
-    );
-
-    expect(edgeDelta.operations[0].op).toBe("edge_added");
-    expect(edgeDelta.operations[0].edgeId).toBeTruthy();
-
-    ws.close();
+    shortBrowser.ws.close();
+    shortTimeoutClient.close();
   });
 
-  it("broadcasts delta when a node is deleted", async () => {
-    const ws = new WebSocket(`ws://localhost:${port}`);
-    await waitForOpen(ws);
+  it("call() rejects on {id, error: {message}}", async () => {
+    const callPromise = client.call("get_node", { nodeId: "nonexistent" });
 
-    // Create a node, then delete it
-    const stereo = diagram.getStereotype("Dropout")!;
-    diagram.addModule(stereo, 200, 200);
+    const message = await new Promise<string>((resolve) => {
+      browser.ws.once("message", (data: Buffer) => resolve(data.toString()));
+    });
 
-    // Consume node_created delta
-    await waitForMessage(ws, (msg) => msg.type === "delta");
+    const parsed = JSON.parse(message);
 
-    const nodeId = diagram.nodes[diagram.nodes.length - 1].id;
-    diagram.deleteNode(nodeId);
+    // Browser responds with error
+    browser.respond({ id: parsed.id, error: { message: "Node 'nonexistent' not found" } });
 
-    const deltaMsg: WSDeltaMessage = await waitForMessage(
-      ws,
-      (msg) => msg.type === "delta" && msg.operations[0]?.op === "node_removed"
-    );
-
-    expect(deltaMsg.operations[0].op).toBe("node_removed");
-    expect(deltaMsg.operations[0].nodeId).toBe(nodeId);
-
-    ws.close();
+    await expect(callPromise).rejects.toThrow("Node 'nonexistent' not found");
   });
 
-  it("broadcasts delta with correct seq numbering", async () => {
-    const ws = new WebSocket(`ws://localhost:${port}`);
-    await waitForOpen(ws);
+  it("multiple sequential calls work correctly", async () => {
+    // First call
+    const call1Promise = client.call("ping", {});
+    const msg1 = await new Promise<string>((resolve) => {
+      browser.ws.once("message", (data: Buffer) => resolve(data.toString()));
+    });
+    const parsed1 = JSON.parse(msg1);
+    expect(parsed1.method).toBe("ping");
+    browser.respond({ id: parsed1.id, result: { status: "ok" } });
+    const result1 = await call1Promise;
+    expect(result1).toEqual({ status: "ok" });
 
-    // Create two nodes in sequence
-    const linearStereo = diagram.getStereotype("Linear")!;
-    diagram.addModule(linearStereo, 300, 100);
-    const delta1: WSDeltaMessage = await waitForMessage(
-      ws,
-      (msg) => msg.type === "delta"
-    );
-    expect(delta1.seq).toBeGreaterThanOrEqual(1);
-
-    diagram.addModule(linearStereo, 300, 200);
-    const delta2: WSDeltaMessage = await waitForMessage(
-      ws,
-      (msg) => msg.type === "delta" && msg.seq !== delta1.seq
-    );
-    expect(delta2.seq).toBeGreaterThan(delta1.seq);
-
-    ws.close();
-  });
-
-  it("snapshot seq and next delta seq are consecutive", async () => {
-    const ws = new WebSocket(`ws://localhost:${port}`);
-    await waitForOpen(ws);
-
-    // Send push_state to trigger a snapshot response
-    ws.send(JSON.stringify({
-      type: "push_state",
-      nodes: [],
-      edges: [],
-    }));
-
-    const snap: WSSnapshotMessage = await waitForMessage(
-      ws,
-      (msg) => msg.type === "snapshot",
-    );
-    expect(snap.type).toBe("snapshot");
-    const snapshotSeq = snap.seq;
-    expect(snapshotSeq).toBeTypeOf("number");
-
-    // Create a node — the delta seq should be exactly snapshotSeq + 1
-    const stereo = diagram.getStereotype("Linear")!;
-    diagram.addModule(stereo, 500, 100);
-
-    const delta: WSDeltaMessage = await waitForMessage(
-      ws,
-      (msg) => msg.type === "delta"
-    );
-
-    expect(delta.seq).toBe(snapshotSeq + 1);
-    expect(delta.operations[0].op).toBe("node_added");
-
-    ws.close();
-  });
-
-  it("sends snapshots to multiple connected clients", async () => {
-    const ws1 = new WebSocket(`ws://localhost:${port}`);
-    const ws2 = new WebSocket(`ws://localhost:${port}`);
-
-    // Wait for both to connect before sending
-    await Promise.all([waitForOpen(ws1), waitForOpen(ws2)]);
-
-    // Both request snapshots
-    ws1.send(JSON.stringify({ type: "request_snapshot" }));
-    ws2.send(JSON.stringify({ type: "request_snapshot" }));
-
-    const [snap1, snap2] = await Promise.all([
-      waitForMessage(ws1),
-      waitForMessage(ws2),
-    ]);
-
-    expect(snap1.type).toBe("snapshot");
-    expect(snap2.type).toBe("snapshot");
-
-    // Create a node and verify both clients receive the delta
-    const stereo = diagram.getStereotype("Sigmoid")!;
-    diagram.addModule(stereo, 400, 100);
-
-    const [delta1, delta2] = await Promise.all([
-      waitForMessage(ws1, (msg) => msg.type === "delta"),
-      waitForMessage(ws2, (msg) => msg.type === "delta"),
-    ]);
-
-    expect(delta1.operations[0].op).toBe("node_added");
-    expect(delta2.operations[0].op).toBe("node_added");
-    expect(delta1.seq).toBe(delta2.seq);
-
-    ws1.close();
-    ws2.close();
+    // Second call (different method)
+    const call2Promise = client.call("validate_graph", {});
+    const msg2 = await new Promise<string>((resolve) => {
+      browser.ws.once("message", (data: Buffer) => resolve(data.toString()));
+    });
+    const parsed2 = JSON.parse(msg2);
+    expect(parsed2.method).toBe("validate_graph");
+    browser.respond({ id: parsed2.id, result: { valid: true, errors: [] } });
+    const result2 = await call2Promise;
+    expect(result2).toEqual({ valid: true, errors: [] });
   });
 });
 
-describe("WebSocket Server - Error Handling", () => {
-  let diagram: DiagramCore;
-  let wss: ReturnType<typeof createWSServer>;
-  let port: number;
+describe("BrowserRPCClient - close", () => {
+  it("close() shuts down server and rejects pending calls", async () => {
+    const port = await findAvailablePort();
+    const client = new BrowserRPCClient({ port, connectionTimeout: 5000 });
+    const connectPromise = client.connect();
+    const browser = await createBrowserConnection(port);
+    await connectPromise;
 
-  beforeAll(async () => {
-    port = await findAvailablePort();
-    diagram = createDiagram();
-    wss = createWSServer(diagram, diagram.events, { port });
+    // Make a call that will be pending when we close
+    const callPromise = client.call("get_graph", {});
+
+    // Read (and discard) the message so it doesn't interfere with later tests
+    browser.ws.once("message", () => {});
+
+    // Close the server
+    client.close();
+
+    // Pending call should reject
+    await expect(callPromise).rejects.toThrow("Server shutting down");
+
+    browser.ws.close();
   });
 
-  afterAll(() => {
-    wss._shutdown();
-  });
+  it("isConnected returns false after close", async () => {
+    const port = await findAvailablePort();
+    const client = new BrowserRPCClient({ port, connectionTimeout: 5000 });
+    const connectPromise = client.connect();
+    const browser = await createBrowserConnection(port);
+    await connectPromise;
 
-  it("ignores malformed client messages without crashing", async () => {
-    const ws = new WebSocket(`ws://localhost:${port}`);
-    await waitForOpen(ws);
+    expect(client.isConnected()).toBe(true);
 
-    // Send malformed messages
-    ws.send("not valid json");
-    ws.send("");
-    ws.send('{"type": "unknown"}');
+    client.close();
+    expect(client.isConnected()).toBe(false);
 
-    // Wait a bit and verify server is still responsive
-    await new Promise((resolve) => setTimeout(resolve, 200));
-
-    // Server should still respond to request_snapshot
-    const ws2 = new WebSocket(`ws://localhost:${port}`);
-    await waitForOpen(ws2);
-    ws2.send(JSON.stringify({ type: "request_snapshot" }));
-    const msg: WSSnapshotMessage = await waitForMessage(ws2);
-    expect(msg.type).toBe("snapshot");
-
-    ws.close();
-    ws2.close();
-  });
-
-  it("cannot connect to a closed server", async () => {
-    // Create a separate server on a new port that we'll close
-    const tempPort = await findAvailablePort();
-    const tempDiagram = createDiagram();
-    const tempWss = createWSServer(tempDiagram, tempDiagram.events, { port: tempPort });
-
-    // Close it immediately
-    tempWss._shutdown();
-
-    // Give it a moment to fully close
-    await new Promise((resolve) => setTimeout(resolve, 100));
-
-    // Attempting to connect should fail
-    await expect(
-      new Promise<void>((resolve, reject) => {
-        const ws = new WebSocket(`ws://localhost:${tempPort}`);
-        ws.on("open", () => {
-          ws.close();
-          reject(new Error("Should not have connected"));
-        });
-        ws.on("error", () => resolve());
-        setTimeout(() => reject(new Error("Connection timed out")), 2000);
-      })
-    ).resolves.toBeUndefined();
+    browser.ws.close();
   });
 });

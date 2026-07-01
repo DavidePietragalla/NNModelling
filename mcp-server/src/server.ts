@@ -59,79 +59,7 @@ interface MCPToolEntry {
   handler: (ctx: ServerContext, input: Record<string, unknown>) => Promise<unknown>;
 }
 
-/**
- * Minimal Zod-to-JSON-Schema converter.
- *
- * Covers the subset of Zod types used by NNModelling tool schemas:
- *   ZodObject, ZodString, ZodNumber, ZodBoolean, ZodArray,
- *   ZodOptional, ZodEnum, ZodRecord
- *
- * Uses Zod's internal `_def.typeName` property, which is stable across
- * Zod v3.x minor versions. Returns a plain JSON Schema object suitable
- * for the MCP ListToolsResultSchema.
- */
-function zodToJsonSchema(schema: unknown): Record<string, unknown> {
-  if (!schema || typeof schema !== "object") return {};
-
-  const def = (schema as Record<string, unknown>)._def as Record<string, unknown> | undefined;
-  if (!def || typeof def !== "object") return {};
-
-  const typeName = def.typeName as string | undefined;
-  if (!typeName) return {};
-
-  switch (typeName) {
-    case "ZodObject": {
-      const shape = (def as Record<string, unknown>).shape as Record<string, unknown> | undefined;
-      if (!shape) return { type: "object", properties: {}, required: [] };
-
-      const properties: Record<string, unknown> = {};
-      const required: string[] = [];
-
-      for (const [key, value] of Object.entries(shape)) {
-        properties[key] = zodToJsonSchema(value);
-        const innerDef = (value as Record<string, unknown>)?._def as Record<string, unknown> | undefined;
-        const innerTypeName = innerDef?.typeName as string | undefined;
-        if (!innerTypeName || !innerTypeName.includes("ZodOptional")) {
-          required.push(key);
-        }
-      }
-
-      return { type: "object", properties, required } satisfies Record<string, unknown>;
-    }
-
-    case "ZodString":
-      return { type: "string" };
-
-    case "ZodNumber":
-      return { type: "number" };
-
-    case "ZodBoolean":
-      return { type: "boolean" };
-
-    case "ZodArray": {
-      const innerType = (def as Record<string, unknown>).type as unknown | undefined;
-      return { type: "array", items: zodToJsonSchema(innerType) };
-    }
-
-    case "ZodOptional": {
-      const innerType = (def as Record<string, unknown>).innerType as unknown | undefined;
-      return zodToJsonSchema(innerType);
-    }
-
-    case "ZodEnum": {
-      const values = (def as Record<string, unknown>).values as string[] | undefined;
-      return { type: "string", enum: values ?? [] };
-    }
-
-    case "ZodRecord": {
-      const valueType = (def as Record<string, unknown>).valueType as unknown | undefined;
-      return { type: "object", additionalProperties: zodToJsonSchema(valueType) };
-    }
-
-    default:
-      return { type: "string" };
-  }
-}
+import { zodToJsonSchema } from "zod-to-json-schema";
 
 /**
  * Discover tool entries from a module's named exports.
@@ -159,7 +87,7 @@ function discoverTools(module: Record<string, unknown>): Map<string, MCPToolEntr
     ) {
       const entry = value as { schema: unknown; handler: (ctx: ServerContext, input: Record<string, unknown>) => Promise<unknown> };
       tools.set(name, {
-        schema: zodToJsonSchema(entry.schema),
+        schema: zodToJsonSchema(entry.schema as any),
         handler: entry.handler,
       });
     }
@@ -205,19 +133,21 @@ function loadStereotypesFromDirectory(stereotypesDir: string): StereotypeCore[] 
  *
  * @param stereotypesDir - Absolute path to the Stereotypes/ directory
  *   (containing Modules/, Joins/, SubFlows/ subdirectories).
- * @returns An object with the MCP `Server` instance and the shared `ServerContext`.
+ * @returns An object with the MCP `Server` instance, shared `ServerContext`, and `BrowserRPCClient`.
  */
 export async function createServer(
   stereotypesDir: string,
-): Promise<{ server: Server; ctx: ServerContext }> {
+): Promise<{ server: Server; ctx: ServerContext; browser: BrowserRPCClient }> {
   // ── Step 1: Load stereotypes (static data) ──────────────────────────
   console.error(`[nnmodelling-mcp] Loading stereotypes from ${stereotypesDir}`);
   const stereotypes = loadStereotypesFromDirectory(stereotypesDir);
   console.error(`[nnmodelling-mcp] Loaded ${stereotypes.length} stereotypes`);
 
-  // ── Step 2: Create BrowserRPCClient ─────────────────────────────────
-  // (Browser connection will be awaited in Phase 4)
+  // ── Step 2: Create BrowserRPCClient and wait for browser ────────────
   const browser = new BrowserRPCClient();
+  console.error("[nnmodelling-mcp] Waiting for browser connection...");
+  await browser.connect();
+  console.error("[nnmodelling-mcp] Browser connected");
 
   // ── Step 3: Build ServerContext ──────────────────────────────────────
   const ctx: ServerContext = {
@@ -294,5 +224,5 @@ export async function createServer(
     }
   });
 
-  return { server, ctx };
+  return { server, ctx, browser };
 }

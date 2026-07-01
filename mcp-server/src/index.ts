@@ -29,7 +29,7 @@ async function main(): Promise<void> {
   console.error(`[nnmodelling-mcp] Stereotypes dir: ${stereotypesDir}`);
 
   // ── Create the MCP server with full tool/resource registration ──────
-  const { server, ctx } = await createServer(stereotypesDir);
+  const { server, ctx, browser } = await createServer(stereotypesDir);
 
   // ── Connect stdio transport (MCP protocol) ─────────────────────────
   const transport = new StdioServerTransport();
@@ -40,6 +40,9 @@ async function main(): Promise<void> {
   // ── Graceful shutdown ──────────────────────────────────────────────
   const shutdown = async (): Promise<void> => {
     console.error("[nnmodelling-mcp] Shutting down...");
+
+    // Close browser WebSocket connection
+    browser.close();
 
     // Close MCP server (returns Promise<void>)
     try {
