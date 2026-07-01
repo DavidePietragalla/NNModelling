@@ -72,6 +72,12 @@ export const get_history_status = {
     undoCount: number;
     redoCount: number;
     maxUndoDepth: number;
+    undoStack: Array<{
+      description: string;
+      timestamp: number;
+      nodeCount: number;
+      edgeCount: number;
+    }>;
   }> {
     return ctx.history.getStatus();
   },

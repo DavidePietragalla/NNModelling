@@ -113,13 +113,29 @@ export class HistoryManager {
   }
 
   /**
-   * Return the current status of both stacks.
+   * Return the current status of both stacks, including undo stack metadata.
    */
-  getStatus(): { undoCount: number; redoCount: number; maxUndoDepth: number } {
+  getStatus(): {
+    undoCount: number;
+    redoCount: number;
+    maxUndoDepth: number;
+    undoStack: Array<{
+      description: string;
+      timestamp: number;
+      nodeCount: number;
+      edgeCount: number;
+    }>;
+  } {
     return {
       undoCount: this.undoStack.length,
       redoCount: this.redoStack.length,
       maxUndoDepth: this.maxDepth,
+      undoStack: this.undoStack.map((s) => ({
+        description: s.description,
+        timestamp: s.timestamp,
+        nodeCount: s.nodes.length,
+        edgeCount: s.edges.length,
+      })),
     };
   }
 

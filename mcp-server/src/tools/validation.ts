@@ -81,6 +81,22 @@ function getStereotypeName(node: Node): string | undefined {
 }
 
 /**
+ * Compute the subflow nesting depth for a given node.
+ * Top-level subflow = depth 1, nested inside another subflow = depth 2, etc.
+ */
+function getSubflowDepth(node: Node, allNodes: Node[]): number {
+  let depth = 1;
+  let currentId = node.parentId;
+  while (currentId) {
+    const parent = allNodes.find((n) => n.id === currentId);
+    if (!parent || parent.type !== "subflow") break;
+    depth++;
+    currentId = parent.parentId;
+  }
+  return depth;
+}
+
+/**
  * Get the parameter value type from a stereotype definition by parameter key.
  * Returns "string" if the stereotype or parameter is not found.
  */
@@ -267,17 +283,7 @@ export const validate_connections = {
 
     // ── 2. Target handle occupancy ──────────────────
     // Each target handle should have at most one incoming edge.
-    const targetHandleMap = new Map<string, Edge[]>();
-    for (const e of edges) {
-      // Only check for handles that are explicitly set on the target
-      if (e.targetHandle && e.targetHandle !== "in") {
-        const key = `${e.target}:${e.targetHandle}`;
-        if (!targetHandleMap.has(key)) targetHandleMap.set(key, []);
-        targetHandleMap.get(key)!.push(e);
-      }
-    }
-
-    // Also check plain targets without handles — each node can have only one
+    // Check plain targets without handles — each node can have only one
     // connection to its "in" target (default handle).
     const targetMap = new Map<string, Edge[]>();
     for (const e of edges) {
@@ -374,7 +380,7 @@ export const validate_parameters = {
 
         // Type validation
         const valueStr = String(rawValue);
-        const expectedType = paramDef.type.toLowerCase();
+        const expectedType = paramDef.type?.toLowerCase() ?? "any";
 
         switch (expectedType) {
           case "int":
@@ -450,6 +456,7 @@ export const validate_parameters = {
 export const validate_subflows = {
   schema: z.object({
     parentId: z.string().optional(),
+    maxDepth: z.number().int().positive().default(10),
   }),
 
   async handler(
@@ -458,8 +465,10 @@ export const validate_subflows = {
   ): Promise<{
     valid: boolean;
     errors: ValidationIssue[];
+    warnings: ValidationIssue[];
   }> {
     const errors: ValidationIssue[] = [];
+    const warnings: ValidationIssue[] = [];
 
     // Identify all subflow container nodes
     const subflowNodes = input.parentId
@@ -473,12 +482,12 @@ export const validate_subflows = {
         message: `No subflow node found with ID "${input.parentId}".`,
         nodeId: input.parentId,
       });
-      return { valid: false, errors };
+      return { valid: false, errors, warnings: [] };
     }
 
     if (subflowNodes.length === 0) {
       // No subflows at all — this is valid
-      return { valid: true, errors: [] };
+      return { valid: true, errors: [], warnings: [] };
     }
 
     for (const subflowNode of subflowNodes) {
@@ -553,24 +562,42 @@ export const validate_subflows = {
         }
       }
 
-      // ── 5. Internal subflow nesting (recursive check) ──
-      // Subflows inside subflows are allowed, but we note them
+      // ── 5. Internal subflow nesting ────────────────────
+      // Check nesting depth against maxDepth parameter.
+      // Warnings for nested subflows within allowed depth; errors if exceeded.
       const nestedSubflows = internalNodes.filter((n) => n.type === "subflow");
+      const maxNestDepth = input.maxDepth;
       for (const nested of nestedSubflows) {
-        errors.push({
-          code: "NESTED_SUBFLOW",
-          message:
-            `Subflow "${subflowName}" (${subflowId}) contains a nested subflow ` +
-            `"${(nested.data as Record<string, unknown>)?.name ?? nested.id}" (${nested.id}). ` +
-            `Nested subflows are supported but may increase compilation complexity.`,
-          nodeId: nested.id,
-        });
+        const depth = getSubflowDepth(nested, ctx.diagram.nodes);
+        const nestedName =
+          (nested.data as Record<string, unknown>)?.name as string ?? nested.id;
+
+        if (depth > maxNestDepth) {
+          errors.push({
+            code: "SUBFLOW_DEPTH_EXCEEDED",
+            message:
+              `Subflow "${subflowName}" (${subflowId}) contains a nested subflow ` +
+              `"${nestedName}" (${nested.id}) at depth ${depth}, ` +
+              `exceeding the maximum allowed depth of ${maxNestDepth}.`,
+            nodeId: nested.id,
+          });
+        } else {
+          warnings.push({
+            code: "NESTED_SUBFLOW",
+            message:
+              `Subflow "${subflowName}" (${subflowId}) contains a nested subflow ` +
+              `"${nestedName}" (${nested.id}) at depth ${depth}. ` +
+              `Nested subflows are supported but may increase compilation complexity.`,
+            nodeId: nested.id,
+          });
+        }
       }
     }
 
     return {
       valid: errors.length === 0,
       errors,
+      warnings,
     };
   },
 };

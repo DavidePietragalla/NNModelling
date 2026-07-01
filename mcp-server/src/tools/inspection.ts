@@ -16,17 +16,24 @@ import { NodeNotFoundError } from "../errors";
 /**
  * Compute the longest path depth in the graph using BFS from all input nodes.
  * Returns 0 if there are no input nodes or the graph is empty.
+ * Uses stereotype-based input detection for consistency with graph_statistics.
  */
-function computeMaxDepth(diagram: { nodes: Node[]; edges: Edge[] }): number {
+function computeMaxDepth(
+  graph: { nodes: Node[]; edges: Edge[] },
+  getStereotype: (name: string) => { isInput?: boolean; isLoss?: boolean } | undefined,
+): number {
   const adjacency = new Map<string, string[]>();
-  for (const edge of diagram.edges) {
+  for (const edge of graph.edges) {
     if (!adjacency.has(edge.source)) adjacency.set(edge.source, []);
     adjacency.get(edge.source)!.push(edge.target);
   }
 
-  const inputs = diagram.nodes.filter(
-    (n) => (n.data as Record<string, unknown> | undefined)?.isInput
-  );
+  const inputs = graph.nodes.filter((n) => {
+    const stereoName = (n.data as Record<string, unknown> | undefined)?.stereotype as string | undefined;
+    if (!stereoName) return false;
+    const stereo = getStereotype(stereoName);
+    return stereo?.isInput === true;
+  });
   if (inputs.length === 0) return 0;
 
   let maxDepth = 0;
@@ -54,16 +61,23 @@ function computeMaxDepth(diagram: { nodes: Node[]; edges: Edge[] }): number {
 /**
  * Compute the average number of outgoing edges per non-loss node.
  * Loss/output nodes are excluded since they typically have no outgoing edges.
+ * Uses stereotype-based loss detection for consistency with graph_statistics.
  */
-function computeAvgFanOut(diagram: { nodes: Node[]; edges: Edge[] }): number {
+function computeAvgFanOut(
+  graph: { nodes: Node[]; edges: Edge[] },
+  getStereotype: (name: string) => { isInput?: boolean; isLoss?: boolean } | undefined,
+): number {
   let totalOut = 0;
   let count = 0;
 
-  for (const node of diagram.nodes) {
-    const nodeData = node.data as Record<string, unknown> | undefined;
-    if (nodeData?.isLoss) continue;
+  for (const node of graph.nodes) {
+    const stereoName = (node.data as Record<string, unknown> | undefined)?.stereotype as string | undefined;
+    if (stereoName) {
+      const stereo = getStereotype(stereoName);
+      if (stereo?.isLoss) continue;
+    }
 
-    totalOut += diagram.edges.filter((e) => e.source === node.id).length;
+    totalOut += graph.edges.filter((e) => e.source === node.id).length;
     count++;
   }
 
@@ -219,9 +233,9 @@ export const graph_statistics = {
     let inputCount = 0;
     let lossCount = 0;
 
-    for (const node of nodes) {
-      const nodeData = node.data as Record<string, unknown> | undefined;
+    const getStereo = (name: string) => ctx.diagram.getStereotype(name);
 
+    for (const node of nodes) {
       if (node.type === "join") {
         joinCount++;
       } else if (node.type === "subflow") {
@@ -230,8 +244,12 @@ export const graph_statistics = {
         moduleCount++;
       }
 
-      if (nodeData?.isInput) inputCount++;
-      if (nodeData?.isLoss) lossCount++;
+      const stereoName = (node.data as Record<string, unknown> | undefined)?.stereotype as string | undefined;
+      if (stereoName) {
+        const stereo = getStereo(stereoName);
+        if (stereo?.isInput) inputCount++;
+        if (stereo?.isLoss) lossCount++;
+      }
     }
 
     return {
@@ -242,8 +260,8 @@ export const graph_statistics = {
       subflowCount,
       inputCount,
       lossCount,
-      maxDepth: computeMaxDepth(ctx.diagram),
-      avgFanOut: computeAvgFanOut(ctx.diagram),
+      maxDepth: computeMaxDepth(ctx.diagram, getStereo),
+      avgFanOut: computeAvgFanOut(ctx.diagram, getStereo),
       cycleFree: isCycleFree(ctx.diagram),
     };
   },
