@@ -262,7 +262,7 @@ MCP Server (thin proxy, no DiagramCore)
 ### Key Classes
 
 - **DiagramCore** (core/DiagramCore.ts) — Pure TypeScript state authority. Holds `nodes` and `edges` as plain arrays. All business logic: `addModule`, `addJoinNode`, `addSubGraph`, `deleteNodes`, `addEdge`, `moveNode`, `importFromJson`, `exportToJson`, `toggleSubflow`. Integrates `EventBus` — every mutation emits typed domain events.
-- **Diagram.svelte.ts** — Thin Svelte 5 wrapper extending `DiagramCore`. Overrides `nodes`/`edges` with `$state.raw` for reactive UI. Handles Svelte-specific concerns: auto-spawn Input node, re-hydrate subflow callbacks (onToggle, onResizeEnd) after JSON import.
+- **Diagram.svelte.ts** — Thin Svelte 5 wrapper extending `DiagramCore`. Overrides `nodes`/`edges` with `$state.raw` for reactive UI. Handles Svelte-specific concern: auto-spawn Input node. (No callback re-hydration needed — SubflowNode uses `getContext`.)
 - **StereotypeCore** (core/StereotypeCore.ts) — Pure TypeScript stereotype with dual loader: `loadFromDirectory()` uses Vite's `import.meta.glob` for browser; `loadFromDirectoryNode(path)` uses `fs.readdirSync` for Node.js/MCP server.
 - **Stereotype** (stereotype.ts) — Thin wrapper extending `StereotypeCore`. Delegates to Vite loader via `StereotypeCore.loadFromDirectory()`.
 - **NNTree** (conversion/nnTree.ts) — Converts visual graph to tree representation. Handles sequential chains, joins (multiple parents), loss nodes, and subflow containers with Kahn's topological sort. Subflows are type `"subflow"` with `entryNode` + internal `nodes` map (not flattened to sequential). Supports recursive nested subflows via `compileSubflowGraph`. Output JSON consumed by Python side.
@@ -430,7 +430,7 @@ Refactored frontend to extract pure TypeScript core — preparation for the MCP 
 - **core/StereotypeCore.ts**: Pure TS stereotype with dual loader: Vite's import.meta.glob for browser, fs.readdirSync for Node.js/MCP server.
 - **core/types.ts**: Shared type definitions: DomainEvent<T> with 12 event types, WebSocket delta protocol types (WSSnapshotMessage, WSDeltaMessage, DeltaOperation), config interfaces.
 - **core/validation.ts**: Standalone checkValidConnection on plain Edge[] (was coupled to Diagram instance).
-- **Diagram.svelte.ts**: Reduced from 346 to 129 lines. Now a thin Svelte wrapper extending DiagramCore — only adds $state.raw reactivity and Svelte-specific callbacks.
+- **Diagram.svelte.ts**: Reduced from 346 to 22 lines (latest: callback elimination). Now a thin Svelte wrapper extending DiagramCore — only adds $state.raw reactivity and auto-spawn Input.
 - **stereotype.ts**: Reduced from 93 to 17 lines. Stereotype extends StereotypeCore.
 - **nnTree.ts**: Now accepts DiagramCore (type-only import) instead of Diagram.
 - **utils.ts**: Delegates checkValidConnection to core/validation.ts.
@@ -455,7 +455,7 @@ Removed server-side state duplication. The server is now a thin proxy:
 
 | File | Purpose |
 |------|---------|
-| `front-end/src/Diagram.svelte.ts` | Thin Svelte wrapper: $state.raw, auto-spawn Input, callback re-hydration |
+| `front-end/src/Diagram.svelte.ts` | Thin Svelte wrapper: $state.raw, auto-spawn Input |
 | `front-end/src/stereotype.ts` | Stereotype extends StereotypeCore, Vite loader |
 | `front-end/src/core/DiagramCore.ts` | Pure TS state management + EventBus integration |
 | `front-end/src/core/EventBus.ts` | Typed event emitter with monotonic sequencing |
