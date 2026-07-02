@@ -28,8 +28,13 @@
   import { NNTree } from "./conversion/nnTree";
 
   // 1. Importiamo la classe Diagram
-  import { Diagram } from "./Diagram.svelte"; // Modifica il path se necessario
+  import { Diagram } from "./Diagram.svelte";
   import { toPng } from "html-to-image";
+
+  // Context per SubflowNode — gli permette di chiamare diagram.toggleSubflow
+  // senza bisogno di callback nel node data
+  import { setContext } from "svelte";
+  import type { DiagramCore } from "./core/DiagramCore";
 
   // RPC handler — receives MCP server requests and dispatches to Diagram
   import { BrowserRPCHandler } from "./sync/BrowserRPCHandler";
@@ -43,6 +48,9 @@
   // 2. Istanziamo il nostro "Controller/Model"
   // Grazie a Svelte 5, le sue proprietà interne $state saranno reattive qui dentro!
   const diagram = new Diagram();
+
+  // Esponiamo il diagram via context per SubflowNode e altri componenti
+  setContext<DiagramCore>("diagram", diagram);
 
   // --- SVELTE 5: Stato derivato per abilitare/disabilitare i pulsanti ---
   // Ora peschiamo direttamente dall'istanza diagram

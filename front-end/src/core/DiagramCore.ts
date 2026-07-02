@@ -156,8 +156,7 @@ export class DiagramCore {
         isCollapsed: false,
         oldWidth: 400,
         oldHeight: 300,
-        // NOTE: onToggle and onResizeEnd are Svelte-specific callbacks.
-        // They are NOT stored here — the Diagram wrapper re-hydrates them.
+        // Dimensions are saved at collapse time in toggleSubflow.
       },
       width: 400,
       height: 300
@@ -309,15 +308,31 @@ export class DiagramCore {
       }
 
       if (node.id === parentId) {
-        return {
-          ...node,
-          width: willCollapse ? 250 : node.data.oldWidth,
-          height: willCollapse ? 50 : node.data.oldHeight,
-          data: {
-            ...node.data,
-            isCollapsed: willCollapse
-          }
-        } as Node;
+        if (willCollapse) {
+          const w = node.width ?? (node.data?.oldWidth as number | undefined) ?? 400;
+          const h = node.height ?? (node.data?.oldHeight as number | undefined) ?? 300;
+          return {
+            ...node,
+            width: 250,
+            height: 50,
+            data: {
+              ...node.data,
+              oldWidth: w,
+              oldHeight: h,
+              isCollapsed: true
+            }
+          } as Node;
+        } else {
+          return {
+            ...node,
+            width: (node.data?.oldWidth as number | undefined) ?? 400,
+            height: (node.data?.oldHeight as number | undefined) ?? 300,
+            data: {
+              ...node.data,
+              isCollapsed: false
+            }
+          } as Node;
+        }
       }
 
       return node;
@@ -554,8 +569,7 @@ export class DiagramCore {
       const parsedData = JSON.parse(jsonString);
 
       if (Array.isArray(parsedData.nodes) && Array.isArray(parsedData.edges)) {
-        // NOTE: Callbacks (onToggle, onResizeEnd) are NOT re-hydrated here.
-        // That is a Svelte-specific concern handled by the Diagram wrapper.
+        // No callbacks needed — SubflowNode uses getContext to access diagram.
         this.nodes = parsedData.nodes;
         this.edges = parsedData.edges;
       } else {
