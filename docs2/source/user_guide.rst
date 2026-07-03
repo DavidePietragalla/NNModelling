@@ -58,12 +58,14 @@ Start the development server:
 
 Open the URL printed by Vite (typically ``http://localhost:5173``).
 
-### The Canvas
+The Canvas
+~~~~~~~~~~
 
 The editor shows a blank canvas with a **sidebar** on the left. The canvas uses
 `Svelte Flow <https://www.svelteflow.dev/>`_ for interactive node editing.
 
-### Adding Nodes
+Adding Nodes
+~~~~~~~~~~~~
 
 1. The canvas starts with an **Input** node (green circle). Every network needs
    exactly one Input node — it defines where data enters the graph.
@@ -71,7 +73,8 @@ The editor shows a blank canvas with a **sidebar** on the left. The canvas uses
    stereotypes: Linear, Conv2d, ReLU, Dropout, and many more.
 3. Select a stereotype to add it to the canvas. Drag it to position it.
 
-### Connecting Nodes
+Connecting Nodes
+~~~~~~~~~~~~~~~~~~
 
 Each node has connection handles:
 
@@ -91,7 +94,8 @@ To connect two nodes:
 * Source handles allow unlimited outgoing connections (forks are implicit)
 * You cannot create cycles or connect a node to itself
 
-### Join Nodes
+Join Nodes
+~~~~~~~~~~~~
 
 Standard modules accept only one input. When you need to merge multiple
 branches, use a **Join node** from the sidebar (Addition, Concat, Einsum,
@@ -100,7 +104,8 @@ MatMul, ScaledDotProduct, MaskedScaledDotProduct).
 Join nodes have multiple input handles (``in-0``, ``in-1``, ...) and one
 output handle.
 
-### Subflow Nodes
+Subflow Nodes
+~~~~~~~~~~~~~~~
 
 A **Subflow** is a container that holds a sub-graph of nodes. Use subflows to:
 
@@ -114,7 +119,8 @@ To create a subflow:
 2. Drag nodes into the subflow container to add them
 3. Double-click the subflow to expand/collapse its contents
 
-### Configuring Parameters
+Configuring Parameters
+~~~~~~~~~~~~~~~~~~~~~~
 
 Select any node to edit its parameters in the sidebar:
 
@@ -128,7 +134,8 @@ Parameters are serialized with the diagram and used during code generation.
 Save and Load
 -------------
 
-### Save a Diagram
+Save a Diagram
+~~~~~~~~~~~~~~~~
 
 The toolbar includes **Save** and **Load** buttons:
 
@@ -139,7 +146,8 @@ The toolbar includes **Save** and **Load** buttons:
 Diagrams are plain JSON — they can be version-controlled with Git, shared,
 and edited programmatically.
 
-### Example Diagrams
+Example Diagrams
+~~~~~~~~~~~~~~~~~~
 
 The ``examples/`` directory contains pre-built diagrams you can load:
 
@@ -175,7 +183,8 @@ The core workflow is: **Visual Diagram → NNTree → Python Code → Training**
 | Inference        | infer.py         | Run predictions on new data        |
 +------------------+------------------+------------------------------------+
 
-### Step 1: Export NNTree JSON
+Step 1: Export NNTree JSON
+~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
 
 In the editor toolbar, click **Convert**. This compiles the diagram to an
 NNTree JSON representation and downloads it.
@@ -183,7 +192,8 @@ NNTree JSON representation and downloads it.
 The NNTree is an intermediate representation that captures the graph topology
 as a tree structure with sequential chains, joins, and subflow boundaries.
 
-### Step 2: Generate Hydra Configs
+Step 2: Generate Hydra Configs
+~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
 
 .. code-block:: bash
 
@@ -218,7 +228,8 @@ Additional CLI options:
    # Configure early stopping
    uv run python src/convert.py diagram.json ./configs --early-stop-patience 10
 
-### Step 3: Train the Model
+Step 3: Train the Model
+~~~~~~~~~~~~~~~~~~~~~~~~~~~
 
 .. code-block:: bash
 
@@ -240,7 +251,8 @@ Override Hydra configs from the command line:
        trainer.max_epochs=10 \
        optimizer.lr=0.001
 
-### Step 4: Run Inference
+Step 4: Run Inference
+~~~~~~~~~~~~~~~~~~~~~~~~~~~
 
 .. code-block:: bash
 
@@ -264,7 +276,8 @@ This saves per-sample image strips and a montage for inspection.
 Testing
 -------
 
-### Front-end Unit Tests
+Front-end Unit Tests
+~~~~~~~~~~~~~~~~~~~~~~~~~
 
 .. code-block:: bash
 
@@ -276,7 +289,8 @@ Testing
    # Run with watch mode
    pnpm run test:watch
 
-### Integration Tests (5 tiers)
+Integration Tests (5 tiers)
+~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
 
 Integration tests exercise the full pipeline from diagram compilation through
 training and inference:
@@ -314,7 +328,8 @@ training and inference:
      - ``test:integration:infer``
      - Inference output validation
 
-### Python Tests
+Python Tests
+~~~~~~~~~~~~~~
 
 .. code-block:: bash
 
