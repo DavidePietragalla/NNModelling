@@ -32,6 +32,40 @@ export class DiagramCore {
     this.events = new EventBus();
   }
 
+  // ── Undo/Redo ──────────────────────────────────────────────────
+  protected _undoStack: DiagramCoreSnapshot[] = [];
+  protected _redoStack: DiagramCoreSnapshot[] = [];
+  private _captureEnabled = true;
+
+  private _captureUndoState(): void {
+    if (!this._captureEnabled) return;
+    this._undoStack.push(this.getSnapshot());
+    // Limit stack size to prevent memory issues
+    if (this._undoStack.length > 50) this._undoStack.shift();
+    // New action clears redo history
+    this._redoStack = [];
+  }
+
+  /** Undo the last mutation. Returns true if an undo was performed. */
+  public undo(): boolean {
+    if (this._undoStack.length === 0) return false;
+    this._captureEnabled = false;
+    this._redoStack.push(this.getSnapshot());
+    this.restoreSnapshot(this._undoStack.pop()!);
+    this._captureEnabled = true;
+    return true;
+  }
+
+  /** Redo the last undone mutation. Returns true if a redo was performed. */
+  public redo(): boolean {
+    if (this._redoStack.length === 0) return false;
+    this._captureEnabled = false;
+    this._undoStack.push(this.getSnapshot());
+    this.restoreSnapshot(this._redoStack.pop()!);
+    this._captureEnabled = true;
+    return true;
+  }
+
   /** Inject stereotypes (called by Diagram wrapper or MCP server after construction). */
   public initStereotypes(stereotypes: StereotypeCore[]): void {
     this.stereotypes = stereotypes;
@@ -64,6 +98,7 @@ export class DiagramCore {
     y: number,
     customConfig?: { name?: string; color?: string; width?: number; height?: number; params?: any }
   ) {
+    this._captureUndoState();
     // 1. Name logic: if user provided a name use it, otherwise auto-generate (e.g. Tanh_0)
     let finalName = customConfig?.name;
 
@@ -116,6 +151,7 @@ export class DiagramCore {
     y: number,
     config?: { name?: string; inputsCount?: number; color?: string; params?: any }
   ) {
+    this._captureUndoState();
     const id = `join_${crypto.randomUUID()}`;
 
     const newJoinNode: Node = {
@@ -146,6 +182,7 @@ export class DiagramCore {
   }
 
   public addSubGraph(x: number, y: number) {
+    this._captureUndoState();
     const id = `subflow_${Date.now()}`;
     const newSubgraph: Node = {
       id,
@@ -179,6 +216,7 @@ export class DiagramCore {
     id: string,
     config: { name?: string; label?: string; color?: string; width?: number; height?: number; params?: any; stereotype?: string }
   ) {
+    this._captureUndoState();
     const changes: Record<string, unknown> = {};
     if (config.name !== undefined) changes.name = config.name;
     if (config.label !== undefined) changes.label = config.label;
@@ -221,6 +259,7 @@ export class DiagramCore {
   }
 
   public deleteNodes(ids: string[]) {
+    this._captureUndoState();
     // 1. Use a Set for fast lookups and a Map of ALL nodes before deletion
     const nodesToDelete = new Set(ids);
     const allNodesMap = new Map(this.nodes.map(n => [n.id, n]));
@@ -278,6 +317,7 @@ export class DiagramCore {
   }
 
   public deleteEdges(edgesIds: string[]) {
+    this._captureUndoState();
     this.edges = this.edges.filter((e) => edgesIds.find(id => id == e.id) === undefined);
     this.events.emit("edge_deleted", { edgeIds: edgesIds });
     this.events.emit("graph_changed", {
@@ -287,6 +327,7 @@ export class DiagramCore {
   }
 
   public deleteEdge(edgeId: string) {
+    this._captureUndoState();
     this.edges = this.edges.filter((e) => e.id !== edgeId);
     this.events.emit("edge_deleted", { edgeIds: [edgeId] });
     this.events.emit("graph_changed", {
@@ -296,9 +337,14 @@ export class DiagramCore {
   }
 
   public toggleSubflow(parentId: string, willCollapse: boolean) {
+    this._captureUndoState();
+    this._toggleSubflowRecursive(parentId, willCollapse);
+  }
+
+  private _toggleSubflowRecursive(parentId: string, willCollapse: boolean) {
     for (const child of this.nodes.filter(n => n.parentId === parentId)) {
       if (child.type === "subflow") {
-        this.toggleSubflow(child.id, willCollapse);
+        this._toggleSubflowRecursive(child.id, willCollapse);
       }
     }
 
@@ -397,11 +443,12 @@ export class DiagramCore {
     sourceHandle: string = "out",
     targetHandle: string = "in"
   ): Edge {
-    // Validate
+    // Validate before capturing undo state — don't waste an undo slot on a rejected connection
     const validation = coreCheckValidConnection(this.edges, source, target, sourceHandle, targetHandle);
     if (!validation.valid) {
       throw new Error(validation.reason);
     }
+    this._captureUndoState();
 
     const newEdge: Edge = {
       id: `edge_${crypto.randomUUID()}`,
@@ -428,6 +475,7 @@ export class DiagramCore {
   }
 
   public removeEdge(source: string, target: string, targetHandle?: string): void {
+    this._captureUndoState();
     const removedEdges = this.edges.filter(e =>
       e.source === source &&
       e.target === target &&
@@ -451,6 +499,7 @@ export class DiagramCore {
     newSourceHandle?: string,
     newTargetHandle?: string
   ): void {
+    this._captureUndoState();
     this.edges = this.edges.map(e => {
       if (e.id === edgeId) {
         return {
@@ -480,6 +529,7 @@ export class DiagramCore {
   // ── Position / Movement ──────────────────────────────────────
 
   public moveNode(id: string, x: number, y: number): void {
+    this._captureUndoState();
     this.nodes = this.nodes.map(n =>
       n.id === id ? { ...n, position: { x, y } } : n
     );
@@ -491,6 +541,7 @@ export class DiagramCore {
   }
 
   public moveNodes(positions: Array<{ id: string; x: number; y: number }>): void {
+    this._captureUndoState();
     const posMap = new Map(positions.map(p => [p.id, { x: p.x, y: p.y }]));
     this.nodes = this.nodes.map(n => {
       const pos = posMap.get(n.id);
@@ -565,6 +616,7 @@ export class DiagramCore {
   }
 
   public importFromJson(jsonString: string) {
+    this._captureUndoState();
     try {
       const parsedData = JSON.parse(jsonString);
 

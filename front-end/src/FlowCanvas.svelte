@@ -85,6 +85,25 @@
     return () => syncClient.disconnect();
   });
 
+  function handleKeyDown(e: KeyboardEvent) {
+    const target = e.target as HTMLElement;
+    if (target.tagName === 'INPUT' || target.tagName === 'TEXTAREA' || target.isContentEditable) {
+      return;
+    }
+    // Ctrl+Alt+Z = Redo (check BEFORE Ctrl+Z)
+    if (e.ctrlKey && e.altKey && e.key === 'z') {
+      e.preventDefault();
+      diagram.redo();
+      return;
+    }
+    // Ctrl+Z = Undo
+    if (e.ctrlKey && e.key === 'z') {
+      e.preventDefault();
+      diagram.undo();
+      return;
+    }
+  }
+
   function getSpawnPosition() {
     // Troviamo il centro della finestra e lo convertiamo in coordinate del canvas
     const center = screenToFlowPosition({
@@ -162,6 +181,8 @@
     URL.revokeObjectURL(url);
   }
 </script>
+
+<svelte:window onkeydown={handleKeyDown} />
 
 <div class="editor-layout">
   <div class="canvas-container" bind:this={canvasRef}>

@@ -77,6 +77,7 @@ NNModelling/
 │   │   ├── nnTree.test.ts      # NNTree regression tests
 │   │   ├── utils.test.ts       # checkValidConnection tests
 │   │   ├── BrowserRPCHandler.test.ts  # RPC handler tests
+│   │   ├── undoRedo.test.ts     # Undo/redo snapshot-based tests
 │   │   └── integration/        # Integration test suite (tiered, Python pipeline)
 │   │       ├── helpers.ts      # Shared helpers (manifest, uvRun, pipeline stages)
 │   │       ├── smoke.test.ts   # Tier 0: nnTree compilation
@@ -188,7 +189,7 @@ NNModelling/
 - **Pattern**: Pure TS unit tests, no DOM/browser
 - **Real Diagram**: Tests use real `Diagram` class (Svelte `$state.raw` compiled by Vite plugin). Stub `globalThis.window` before construction.
 - **Helpers**: `node(id, stereo, name, params, overrides?)` and `edge(id, source, target, handles?)` for concise fixtures.
-- **Coverage**: **91 tests** — sequential chain, skip/joins, autoencoder, subflow compilation, nested subflows, hidden nodes, error handling, connection validation, Fork node, BrowserRPCHandler
+- **Coverage**: **96 tests** — sequential chain, skip/joins, autoencoder, subflow compilation, nested subflows, hidden nodes, error handling, connection validation, Fork node, BrowserRPCHandler, undo/redo
 
 ### Testing — Integration (Vitest + Python Pipeline)
 
@@ -261,7 +262,7 @@ MCP Server (thin proxy, no DiagramCore)
 
 ### Key Classes
 
-- **DiagramCore** (core/DiagramCore.ts) — Pure TypeScript state authority. Holds `nodes` and `edges` as plain arrays. All business logic: `addModule`, `addJoinNode`, `addSubGraph`, `deleteNodes`, `addEdge`, `moveNode`, `importFromJson`, `exportToJson`, `toggleSubflow`. Integrates `EventBus` — every mutation emits typed domain events.
+- **DiagramCore** (core/DiagramCore.ts) — Pure TypeScript state authority. Holds `nodes` and `edges` as plain arrays. All business logic: `addModule`, `addJoinNode`, `addSubGraph`, `deleteNodes`, `addEdge`, `moveNode`, `importFromJson`, `exportToJson`, `toggleSubflow`, `undo`, `redo`. Integrates `EventBus` — every mutation emits typed domain events. Snapshot-based undo/redo (Ctrl+Z/Ctrl+Alt+Z) via `getSnapshot`/`restoreSnapshot` with 50-entry stack limit.
 - **Diagram.svelte.ts** — Thin Svelte 5 wrapper extending `DiagramCore`. Overrides `nodes`/`edges` with `$state.raw` for reactive UI. Handles Svelte-specific concern: auto-spawn Input node. (No callback re-hydration needed — SubflowNode uses `getContext`.)
 - **StereotypeCore** (core/StereotypeCore.ts) — Pure TypeScript stereotype with dual loader: `loadFromDirectory()` uses Vite's `import.meta.glob` for browser; `loadFromDirectoryNode(path)` uses `fs.readdirSync` for Node.js/MCP server.
 - **Stereotype** (stereotype.ts) — Thin wrapper extending `StereotypeCore`. Delegates to Vite loader via `StereotypeCore.loadFromDirectory()`.
@@ -441,7 +442,7 @@ Refactored frontend to extract pure TypeScript core — preparation for the MCP 
 
 Built the initial MCP server with DiagramCore on server + delta sync. Included: 43 tools, 14 resources, EventBus, TransactionManager, HistoryManager, ws-server delta broadcast, DiagramSyncClient.
 
-### Phase 11 — MCP Server Simplification (current)
+### Phase 11 — MCP Server Simplification (phase1-complete)
 
 Removed server-side state duplication. The server is now a thin proxy:
 - Deleted server-side DiagramCore, EventBus, TransactionManager, HistoryManager
@@ -508,3 +509,16 @@ Removed server-side state duplication. The server is now a thin proxy:
 | `mcp-server/src/errors.ts` | Error classes (5: base + 4 pipeline) |
 | `mcp-server/src/pipeline.ts` | Python subprocess interface |
 | `pnpm-workspace.yaml` | pnpm monorepo config |
+
+### Phase 12 — Undo/Redo System (current)
+
+Snapshot-based undo/redo for the visual editor:
+
+- **Undo/Redo engine**: Added to DiagramCore — `_undoStack`, `_redoStack`, `_captureEnabled` flag, `undo()`, `redo()` methods. Every mutation method captures state via `_captureUndoState()` before modifying.
+- **Snapshot-based**: Uses existing `getSnapshot()`/`restoreSnapshot()` — no per-event revert functions needed.
+- **Keyboard shortcuts**: Ctrl+Z (undo) and Ctrl+Alt+Z (redo) in FlowCanvas.svelte, with input field guard.
+- **Stack limit**: 50 entries max; `_redoStack` cleared on new mutations.
+- **Bug fix**: `toggleSubflow` recursive calls no longer duplicate undo captures (extracted `_toggleSubflowRecursive` helper).
+- **Bug fix**: `addEdge` captures only after validation pass (no undo slot wasted on rejected connections).
+- **Initial state**: Auto-spawned Input node is excluded from undo history.
+- **Test count**: 86 → 96 tests (10 new undo/redo tests)

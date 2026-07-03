@@ -18,5 +18,9 @@ export class Diagram extends DiagramCore {
       const centerX = (typeof window !== "undefined" ? window.innerWidth : 1024) / 2 - 15;
       this.addModule(inputStereotype, centerX, 50);
     }
+    // Clear the undo snapshot captured during auto-spawn of Input node —
+    // the initial Input should not be undoable.
+    this._undoStack = [];
+    this._redoStack = [];
   }
 }
