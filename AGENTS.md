@@ -48,6 +48,12 @@ npm run test:integration:infer     # Tier 4: infer.py output validation
 npm run test:integration:all       # All integration tiers
 NNM_DIAGRAM=mninst npm run test:example  # Single diagram through all tiers
 NNM_DEVICE=gpu NNM_DIAGRAM=mninst npm run test:integration:train  # GPU training
+
+# Documentation (Sphinx + TypeDoc)
+cd docs2 && uv run make html  # Build Sphinx HTML docs
+# Or from root:
+pnpm run docs               # Full build: TypeDoc + Sphinx
+bash gendocs.sh             # Sphinx-only build (auto-creates uv venv)
 ```
 
 ```bash
@@ -149,6 +155,7 @@ NNModelling/
 │   ├── package.json
 │   ├── tsconfig.json
 │   ├── vitest.config.ts
+│   ├── typedoc.json                 # TypeDoc configuration
 │   └── src/
 │       ├── index.ts                   # Entry point (stdio transport)
 │       ├── server.ts                  # MCP server setup + tool registration
@@ -179,6 +186,22 @@ NNModelling/
 │   ├── horizontal_multihead_attention.json  # 4-head attention via HorizontalRepeat
 │   ├── transformer_classifier.json  # Full transformer: embed, posenc, encoder×2, pool, linear
 │   └── .qwen/                      # Qwen AI settings (legacy)
+├── docs2/                       # Sphinx documentation infrastructure
+│   ├── Makefile                 # Sphinx build targets (html, clean)
+│   ├── requirements.txt        # Sphinx + theme dependencies
+│   ├── source/
+│   │   ├── conf.py             # Sphinx configuration (autodoc, napoleon, rtd theme)
+│   │   ├── index.rst           # Root toctree
+│   │   ├── user_guide.rst      # Educational user guide
+│   │   ├── architecture.rst    # System architecture explanation
+│   │   ├── stereotypes.rst     # All 35 stereotypes with params and examples
+│   │   ├── python_api.rst      # Auto-generated Python API docs
+│   │   ├── typescript_api.rst  # TypeDoc integration page
+│   │   ├── examples.rst        # Walkthrough of all 10 example diagrams
+│   │   └── _static/            # Static assets
+│   └── build/                  # Build output (generated)
+├── package.json                # Root workspace scripts (docs, etc.)
+├── gendocs.sh                  # Documentation build script (auto-creates venv)
 ```
 
 ## Architecture

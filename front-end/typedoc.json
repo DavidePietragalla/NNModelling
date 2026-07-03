@@ -1,0 +1,21 @@
+{
+  "name": "NNModelling Frontend API",
+  "entryPoints": [
+    "src/core/index.ts",
+    "src/sync/index.ts"
+  ],
+  "out": "../docs2/build/typedoc",
+  "tsconfig": "tsconfig.json",
+  "excludePrivate": true,
+  "excludeProtected": true,
+  "excludeExternals": true,
+  "includeVersion": true,
+  "categorizeByGroup": true,
+  "defaultCategory": "Modules",
+  "categoryOrder": [
+    "Core",
+    "Sync",
+    "Other"
+  ],
+  "readme": "none"
+}
