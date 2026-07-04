@@ -27,6 +27,7 @@ The project consists of three main packages:
    python_api
    typescript_api
    examples
+   license
 
 Indices and tables
 ==================

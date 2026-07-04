@@ -16,8 +16,8 @@ autodoc_mock_imports = [
 ]
 
 project = 'NNModelling'
-copyright = '2026, NNModelling Contributors'
-author = 'NNModelling Contributors'
+copyright = '2026, Luca Sforza'
+author = 'Luca Sforza'
 release = '0.1.0'
 
 extensions = [
