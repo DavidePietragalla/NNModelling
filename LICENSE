@@ -1,21 +1,32 @@
-                    NNModelling — GNU GPL v3
+                    NNModelling — Dual License
           DSL for designing neural networks via visual node editor
                Copyright (C) 2026  Luca Sforza
 
- This program is free software: you can redistribute it and/or modify
- it under the terms of the GNU General Public License as published by
- the Free Software Foundation, either version 3 of the License, or
- (at your option) any later version.
+ NNModelling is available under two license options:
+
+ 1. **GNU General Public License v3 or later** (the "Open Source License")
+    — Free for open source and personal use.
+    See the full GPLv3 text below.
+
+ 2. **Commercial License** — For proprietary use, modification,
+    and integration without GPL obligations.
+    Contact Luca Sforza to negotiate terms.
+
+ Unless you have agreed to a commercial license with Luca Sforza,
+ you may use this software under the terms of the GNU General Public
+ License v3 or later, as published by the Free Software Foundation.
 
  This program is distributed in the hope that it will be useful,
  but WITHOUT ANY WARRANTY; without even the implied warranty of
- MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
- GNU General Public License for more details.
-
- You should have received a copy of the GNU General Public License
- along with this program.  If not, see <https://www.gnu.org/licenses/>.
+ MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.
 
 ----------------------------------------------------------------------
+                    GNU GENERAL PUBLIC LICENSE
+                       Version 3, 29 June 2007
+
+ Copyright (C) 2007 Free Software Foundation, Inc. <https://fsf.org/>
+ Everyone is permitted to copy and distribute verbatim copies
+ of this license document, but changing it is not allowed.
 
                      GNU GENERAL PUBLIC LICENSE
                         Version 3, 29 June 2007
