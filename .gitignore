@@ -4,3 +4,13 @@
 .qwen/
 skills-lock.json
 .glimpse/
+
+# Dependencies
+node_modules/
+
+# Build output
+dist/
+front-end/dist/
+mcp-server/dist/
+
+

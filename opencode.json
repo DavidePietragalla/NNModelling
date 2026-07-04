@@ -9,6 +9,10 @@
     "glimpse": {
       "type": "local",
       "command": ["npx", "-y", "glimpse-mcp"]
+    },
+    "nnmodelling-mcp": {
+      "type": "local",
+      "command": ["npx", "-y", "tsx", "mcp-server/src/index.ts"]
     }
   }
 }

@@ -28,8 +28,16 @@
   import { NNTree } from "./conversion/nnTree";
 
   // 1. Importiamo la classe Diagram
-  import { Diagram } from "./Diagram.svelte"; // Modifica il path se necessario
+  import { Diagram } from "./Diagram.svelte";
   import { toPng } from "html-to-image";
+
+  // Context per SubflowNode — gli permette di chiamare diagram.toggleSubflow
+  // senza bisogno di callback nel node data
+  import { setContext } from "svelte";
+  import type { DiagramCore } from "./core/DiagramCore";
+
+  // RPC handler — receives MCP server requests and dispatches to Diagram
+  import { BrowserRPCHandler } from "./sync/BrowserRPCHandler";
 
   const nodeTypes = {
     custom: CustomNode,
@@ -40,6 +48,9 @@
   // 2. Istanziamo il nostro "Controller/Model"
   // Grazie a Svelte 5, le sue proprietà interne $state saranno reattive qui dentro!
   const diagram = new Diagram();
+
+  // Esponiamo il diagram via context per SubflowNode e altri componenti
+  setContext<DiagramCore>("diagram", diagram);
 
   // --- SVELTE 5: Stato derivato per abilitare/disabilitare i pulsanti ---
   // Ora peschiamo direttamente dall'istanza diagram
@@ -64,6 +75,34 @@
       isSidebarOpen = true;
     }
   });
+
+  // Connessione WebSocket per gestire richieste RPC dal MCP server
+  let syncClient: BrowserRPCHandler;
+
+  $effect(() => {
+    syncClient = new BrowserRPCHandler(diagram);
+    syncClient.connect();
+    return () => syncClient.disconnect();
+  });
+
+  function handleKeyDown(e: KeyboardEvent) {
+    const target = e.target as HTMLElement;
+    if (target.tagName === 'INPUT' || target.tagName === 'TEXTAREA' || target.isContentEditable) {
+      return;
+    }
+    // Ctrl+Alt+Z = Redo (check BEFORE Ctrl+Z)
+    if (e.ctrlKey && e.altKey && e.key === 'z') {
+      e.preventDefault();
+      diagram.redo();
+      return;
+    }
+    // Ctrl+Z = Undo
+    if (e.ctrlKey && e.key === 'z') {
+      e.preventDefault();
+      diagram.undo();
+      return;
+    }
+  }
 
   function getSpawnPosition() {
     // Troviamo il centro della finestra e lo convertiamo in coordinate del canvas
@@ -142,6 +181,8 @@
     URL.revokeObjectURL(url);
   }
 </script>
+
+<svelte:window onkeydown={handleKeyDown} />
 
 <div class="editor-layout">
   <div class="canvas-container" bind:this={canvasRef}>

@@ -5,7 +5,11 @@
     NodeResizer,
     type NodeProps,
   } from "@xyflow/svelte";
-  import { type Node, type OnResizeEnd } from "@xyflow/svelte";
+  import { type Node } from "@xyflow/svelte";
+  import { getContext } from "svelte";
+  import type { DiagramCore } from "../core/DiagramCore";
+
+  const diagram = getContext<DiagramCore>("diagram");
 
   type SubflowData = {
     label: string;
@@ -13,8 +17,6 @@
     color: any;
     params: Object;
     stereotype: any;
-    onToggle: (id: string, collapse: boolean) => void;
-    onResizeEnd: (id: string, width: number, height: number) => void;
   };
 
   type MySubflowNode = Node<SubflowData, "subflow">;
@@ -32,17 +34,12 @@
       ([_, p]: any) => p?.position === "bottom",
     ),
   );
-
-  const handleResize: OnResizeEnd = (event, params) => {
-    data.onResizeEnd(id, params.width, params.height);
-  };
 </script>
 
 <NodeResizer
   minWidth={200}
   minHeight={50}
   isVisible={selected}
-  onResizeEnd={handleResize}
 />
 
 <Handle type="target" position={Position.Top} />
@@ -55,7 +52,7 @@
     {data.label || ""}
     <button
       class="collapse-btn"
-      onclick={() => data.onToggle(id, !data.isCollapsed)}
+      onclick={() => diagram.toggleSubflow(id, !data.isCollapsed)}
     >
       {data.isCollapsed ? "+" : "-"}
     </button>

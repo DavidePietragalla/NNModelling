@@ -1,4 +1,4 @@
-import { Diagram } from "../Diagram.svelte";
+import type { DiagramCore } from "../core/DiagramCore";
 import { type Node } from "@xyflow/svelte";
 
 export class NNTree {
@@ -6,7 +6,7 @@ export class NNTree {
   public root: string;
   public lossNode: ModuleData | null = null;
 
-  constructor(diagram: Diagram) {
+  constructor(diagram: DiagramCore) {
     this.nodes = new Map();
     const inputNodes: Node[] = diagram.nodes.filter(n => n.data.stereotype === "Input");
     if (inputNodes.length !== 1) {
@@ -17,12 +17,12 @@ export class NNTree {
     this.root = new_root;
   }
 
-  private getPythonClassName(diagram: Diagram, node: Node): string {
+  private getPythonClassName(diagram: DiagramCore, node: Node): string {
     const stereo = diagram.getStereotype(node.data.stereotype as string);
     return stereo?.pythonClassName || "";
   }
 
-  private getTaskType(diagram: Diagram, node: Node): string {
+  private getTaskType(diagram: DiagramCore, node: Node): string {
     const stereo = diagram.getStereotype(node.data.stereotype as string);
     return stereo?.taskType || "";
   }
@@ -31,7 +31,7 @@ export class NNTree {
     return node.type === "subflow";
   }
 
-  private nodeToModule(node: Node, diagram: Diagram): ModuleData {
+  private nodeToModule(node: Node, diagram: DiagramCore): ModuleData {
     return {
       type: "module",
       name: node.data.name,
@@ -41,7 +41,7 @@ export class NNTree {
     } as ModuleData;
   }
 
-  private compileSubflowGraph(diagram: Diagram, subflowId: string): SubflowGraph {
+  private compileSubflowGraph(diagram: DiagramCore, subflowId: string): SubflowGraph {
     const internalNodes = diagram.nodes.filter((n: any) => n.parentId === subflowId);
     if (internalNodes.length === 0) {
       console.warn("Subflow " + subflowId + " has no internal nodes");
@@ -95,28 +95,29 @@ export class NNTree {
       const n = internalNodes.find((m: any) => m.id === id)!;
       const children = adj.get(id) || [];
 
+      const nd = n.data as Record<string, unknown>;
       if (this.isSubflowNode(n)) {
         const nested = this.compileSubflowGraph(diagram, n.id);
         nodesMap[id] = {
           type: "subflow",
-          name: n.data.name,
-          stereotype: n.data.stereotype,
+          name: nd.name as string,
+          stereotype: nd.stereotype as string,
           pythonClassName: this.getPythonClassName(diagram, n),
-          params: n.data.params,
+          params: nd.params,
           children,
           entryNode: nested.entryNode,
           nodes: nested.nodes,
         };
       } else {
         const isJoinNode = n.type === "join"
-          || diagram.getStereotype(n.data.stereotype as string)?.category === "Join";
+          || diagram.getStereotype(nd.stereotype as string)?.category === "Join";
         nodesMap[id] = {
           type: isJoinNode ? "join" : "module",
-          name: n.data.name,
-          stereotype: n.data.stereotype,
+          name: nd.name as string,
+          stereotype: nd.stereotype as string,
           pythonClassName: this.getPythonClassName(diagram, n),
           taskType: this.getTaskType(diagram, n),
-          params: n.data.params,
+          params: nd.params,
           children,
           ...(isJoinNode ? { inputs: targetInputs[id] || [] } : {}),
         };
@@ -126,7 +127,7 @@ export class NNTree {
     return { entryNode: sorted[0], nodes: nodesMap };
   }
 
-  private processSubflow(node: Node, diagram: Diagram, visited: Set<string>): string {
+  private processSubflow(node: Node, diagram: DiagramCore, visited: Set<string>): string {
     const graph = this.compileSubflowGraph(diagram, node.id);
 
     const outerChilds = diagram.getChilds(node.id);
@@ -151,7 +152,7 @@ export class NNTree {
     return node.id;
   }
 
-  private createSequential(node: Node, diagram: Diagram, visited: Set<string>, childs: Node[]): string {
+  private createSequential(node: Node, diagram: DiagramCore, visited: Set<string>, childs: Node[]): string {
     let seq = [];
     seq.push(this.nodeToModule(node, diagram))
     do {
@@ -198,7 +199,7 @@ export class NNTree {
 
   }
 
-  private handleJoin(node: Node, diagram: Diagram, visited: Set<string>): string {
+  private handleJoin(node: Node, diagram: DiagramCore, visited: Set<string>): string {
     let childs = diagram.getChilds(node.id);
     let next_tree_nodes: string[] = [];
     for (const child of childs) {
@@ -217,7 +218,7 @@ export class NNTree {
 
   }
 
-  private processNode(node: Node, diagram: Diagram, visited: Set<string>): string | undefined {
+  private processNode(node: Node, diagram: DiagramCore, visited: Set<string>): string | undefined {
     if (visited.has(node.id)) {
       console.warn("Node with id " + node.id + "is visited, there is a loop");
       return node.id;

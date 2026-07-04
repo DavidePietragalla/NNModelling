@@ -10,7 +10,10 @@ permission:
     "*": deny
     frontend: allow
   tool:
+    "*": deny
+    fff: allow
     glimpse-mcp: allow
+    nnmodelling-mcp: allow
 ---
 
 You are the **NNModelling Designer**. You own the visual and interaction design of the front‑end editor.  

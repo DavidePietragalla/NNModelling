@@ -1,5 +1,6 @@
 import { type Connection, type Edge, type InternalNode, type Node } from "@xyflow/svelte";
 import type { Diagram } from "./Diagram.svelte";
+import { checkValidConnection as coreCheckValidConnection } from "./core/validation";
 
 // Tipo esatto per il payload dell'evento di trascinamento
 export type NodeDragPayload = {
@@ -171,15 +172,14 @@ export function onNodeDragStop(
 
 // --- VALIDAZIONE CONNESSIONI ---
 export function checkValidConnection(diagram: Diagram, connection: Connection | Edge): boolean {
-  // I collegamenti in uscita (source) possono essere infiniti, quindi li ignoriamo.
-  // Controlliamo SOLO se l'Handle di entrata (target) del nodo di arrivo è già occupato.
-
-  const isTargetTaken = diagram.edges.some(
-    (e) => e.target === connection.target && e.targetHandle == connection.targetHandle
+  const result = coreCheckValidConnection(
+    diagram.edges,
+    connection.source,
+    connection.target,
+    connection.sourceHandle ?? undefined,
+    connection.targetHandle ?? undefined
   );
-
-  // La connessione è valida se l'entrata è ancora libera
-  return !isTargetTaken;
+  return result.valid;
 }
 
 // --- LOGICA DI SALVATAGGIO (Download File) ---
