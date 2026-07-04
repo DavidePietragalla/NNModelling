@@ -343,6 +343,50 @@ Or run specific test files:
    uv run pytest src/tests/test_ops.py
    uv run pytest src/tests/test_convert.py
 
+Fuzz Testing
+~~~~~~~~~~~~~
+
+Fuzz tests use `fast-check <https://github.com/nicoespeon/fast-check>`_ to
+validate invariants through random input generation. Three fuzzers are
+implemented — they run alongside the existing unit tests:
+
+.. code-block:: bash
+
+   cd front-end
+
+   # Run all tests (unit + fuzz)
+   pnpm run test
+
+   # Run fuzz tests only
+   npx vitest run fuzz/
+
+   # Run with seed for failure reproduction
+   npx vitest run fuzz/ --seed=<seed>
+
+.. list-table::
+   :header-rows: 1
+
+   * - Fuzzer
+     - File
+     - Invariant
+     - Runs
+   * - #1 — Graph Compilability
+     - ``fuzz/compilability.test.ts``
+     - Every graph with exactly 1 Input compiles to a valid NNTree; 0 or 2+ Inputs throw
+     - 500
+   * - #3 — Serialization Idempotence
+     - ``fuzz/serialization.test.ts``
+     - ``export → import → export`` produces identical JSON
+     - 200
+   * - #4 — Operation Commutativity
+     - ``fuzz/operations.test.ts``
+     - After every operation the graph is consistent; undo/redo returns to exact state; 50-entry stack limit
+     - 200
+
+Fuzzer #2 (Forward Pass) is not yet implemented — it would generate random
+NNTree JSON with compatible shapes and verify the Python pipeline
+(``convert.py`` → ``Net.forward()``).
+
 MCP Server
 ----------
 
