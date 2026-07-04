@@ -157,7 +157,7 @@ Loads trained model, runs test set, optionally saves predictions as JSON (classi
 uv run pytest src/tests/ -v
 ```
 
-107 tests across 6 files:
+109 tests across 6 files:
 
 | File | Tests | Coverage |
 |------|-------|----------|
@@ -166,7 +166,7 @@ uv run pytest src/tests/ -v
 | `test_base.py` | 21 | Net.__init__ dispatch, BFS forward, in_degrees, join/subflow execution |
 | `test_integration.py` | 11 | Full pipeline: JSON → convert → Net.forward using real fixtures |
 | `test_main.py` | 2 | Training smoke tests (autoencoder + MNIST classifier) |
-| `test_infer.py` | 2 | Inference validation (autoencoder + MNIST classifier) |
+| `test_infer.py` | 4 | Inference validation (autoencoder + MNIST classifier) |
 
 ## Project Structure
 

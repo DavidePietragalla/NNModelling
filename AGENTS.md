@@ -312,13 +312,19 @@ MCP Server (thin proxy, no DiagramCore)
 
 ### Categories
 
-Each JSON in `Stereotypes/Modules/` has a `category` field that determines node behavior:
+The `category` field in every stereotype JSON determines the node's role and handle configuration:
 
-- `"Input"` — Single input node (auto-spawned). No input handle, green circle
-- `"Linear"`, `"Conv2d"`, etc. — Standard modules. Input handle on top, output on bottom
-- `"Join"` (in `Stereotypes/Joins/`) — Multi-input merge nodes
-- `"SubFlow"` (in `Stereotypes/SubFlows/`) — Container templates with params like `iterations`/`n`
-- Categories ending in `"Loss"` — Output nodes (no output handle, sets taskType for metric selection)
+| Category | Role | Handles |
+|----------|------|---------|
+| `"Input"` | Network entry point (auto-spawned) | 0 in, 1 out |
+| `"Fork"` | Passthrough for explicit branching inside subflows | 1 in, 1 out |
+| `"Layer"` | Standard module (Linear, Conv2d, ReLU, Dropout, ...) | 1 in, 1 out |
+| `"Loss"` | Loss function / output node (BCELoss, CrossEntropyLoss, ...) | 1 in, 0 out |
+| `"Join"` | Multi-input merge node (Addition, Concat, MatMul, ...) | N in, 1 out |
+| `"Subflow"` | Container holding a sub-graph with structural transformation | 1 in, 1 out |
+| `"Module"` | Generic; reserved for future use | Depends |
+
+**Note**: `"expr"` top-level field was removed from all stereotypes (Einsum's `params.expr` is preserved as a user parameter). Categories like `"Activation"`, `"Normalization"`, `"Pooling"`, etc. were consolidated into `"Layer"`.
 
 The StereotypeCore class provides two loaders: `loadFromDirectory()` (Vite glob, for browser) and `loadFromDirectoryNode(path)` (Node fs, for MCP server).
 
@@ -545,3 +551,16 @@ Snapshot-based undo/redo for the visual editor:
 - **Bug fix**: `addEdge` captures only after validation pass (no undo slot wasted on rejected connections).
 - **Initial state**: Auto-spawned Input node is excluded from undo history.
 - **Test count**: 86 → 96 tests (10 new undo/redo tests)
+
+### Phase 13 — Category Cleanup + Documentation Rewrite (current)
+
+Fixed the stereotype category system and rewrote the documentation:
+
+- **Fork.json**: category changed from `"Layer"` to `"Fork"` (no code changes needed — Fork is identified by stereotype name, not category)
+- **`"expr"` field**: removed unused top-level `"expr": ""` from all 25 stereotype JSONs (Einsum's `params.expr` preserved as a user parameter)
+- **`stereotypes.rst`**: full rewrite from 696 lines of repetitive per-stereotype listings to a 210-line educational Sphinx reference doc. New format:
+  - Categories table with handle configuration
+  - JSON Field Reference table (all 11 fields: type, required, default, description)
+  - 3 exemplary stereotypes (Linear, Concat, Repeat) instead of all 35
+  - Notes section with gotchas (loss nodes, flatten, join ordering, etc.)
+- **No code changes needed**: all category-driven logic uses stereotype name or dedicated flags (`isLoss`, `isInput`, etc.), not raw category strings
