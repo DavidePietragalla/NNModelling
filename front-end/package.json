@@ -36,7 +36,6 @@
     "check": "svelte-check --tsconfig ./tsconfig.json",
     "test": "vitest run",
     "test:watch": "vitest",
-
     "test:integration": "vitest run --config vitest.integration.config.ts",
     "test:integration:smoke": "NNM_TIER=smoke vitest run --config vitest.integration.config.ts",
     "test:integration:convert": "NNM_TIER=convert vitest run --config vitest.integration.config.ts",
@@ -44,13 +43,13 @@
     "test:integration:train": "NNM_TIER=train vitest run --config vitest.integration.config.ts",
     "test:integration:infer": "NNM_TIER=infer vitest run --config vitest.integration.config.ts",
     "test:integration:all": "NNM_TIER=all vitest run --config vitest.integration.config.ts",
-
     "test:example": "vitest run --config vitest.integration.config.ts"
   },
   "devDependencies": {
     "@sveltejs/vite-plugin-svelte": "^7.0.0",
     "@tsconfig/svelte": "^5.0.8",
     "@types/node": "^26.0.1",
+    "fast-check": "^4.8.0",
     "svelte": "^5.55.1",
     "svelte-check": "^4.4.6",
     "tslib": "^2.8.1",

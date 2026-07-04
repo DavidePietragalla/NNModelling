@@ -14,3 +14,5 @@ front-end/dist/
 mcp-server/dist/
 
 
+docs2/build/
+docs2/venv/
