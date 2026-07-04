@@ -67,11 +67,6 @@ Every stereotype JSON can use these fields:
      - yes
      -
      - Fully qualified Python class path, e.g. ``nn.Linear``, ``ops.Addition``, ``ops.Repeat``. Set to ``""`` or ``"None"`` for nodes with no Python counterpart (Input, Fork).
-   * - ``expr``
-     - string
-     - no
-     - ``""``
-     - Expression language string for defining custom behavior at the node level. Reserved for future use.
    * - ``taskType``
      - string
      - no
@@ -126,7 +121,6 @@ Layer: Linear
    {
      "category": "Layer",
      "pythonClassName": "nn.Linear",
-     "expr": "",
      "view": {
        "color": "#4779c4",
        "width": 140,
@@ -190,7 +184,6 @@ Subflow: Repeat
    {
      "category": "Subflow",
      "pythonClassName": "ops.Repeat",
-     "expr": "",
      "view": {
        "color": "#9b59b6",
        "width": 400,

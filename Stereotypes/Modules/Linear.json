@@ -1,7 +1,6 @@
 {
   "category": "Layer",
   "pythonClassName": "nn.Linear",
-  "expr": "",
   "view": {
     "color": "#4779c4",
     "width": 140,

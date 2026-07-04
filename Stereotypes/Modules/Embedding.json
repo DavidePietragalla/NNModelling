@@ -1,7 +1,6 @@
 {
   "category": "Layer",
   "pythonClassName": "nn.Embedding",
-  "expr": "",
   "view": {
     "color": "#4169e1",
     "width": 160,

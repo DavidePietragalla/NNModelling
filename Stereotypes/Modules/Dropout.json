@@ -1,7 +1,6 @@
 {
   "category": "Layer",
   "pythonClassName": "nn.Dropout",
-  "expr": "",
   "view": {
     "color": "#a9a9a9",
     "width": 100,

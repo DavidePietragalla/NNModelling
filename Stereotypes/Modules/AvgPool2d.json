@@ -1,7 +1,6 @@
 {
   "category": "Layer",
   "pythonClassName": "nn.AvgPool2d",
-  "expr": "",
   "view": {
     "color": "#48d1cc",
     "width": 120,

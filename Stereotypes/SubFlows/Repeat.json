@@ -1,7 +1,6 @@
 {
   "category": "Subflow",
   "pythonClassName": "ops.Repeat",
-  "expr": "",
   "view": {
     "color": "#9b59b6",
     "width": 400,
