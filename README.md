@@ -31,7 +31,9 @@ NNModelling/
 ```bash
 cd front-end
 npm install
-npm run dev
+npm run dev         # Development server with hot reload
+npm run build       # Production build
+npm run preview     # Preview production build
 ```
 
 ### Backend (Training)
@@ -47,8 +49,9 @@ uv run python src/main.py --config-dir <dir>
 
 ```bash
 cd mcp-server
-pnpm install && pnpm run build
-pnpm run start
+pnpm install
+pnpm run build      # Compile TypeScript
+pnpm run start      # Start server (node dist/index.js)
 ```
 
 ## Key Concepts
@@ -61,10 +64,38 @@ pnpm run start
 - **Stereotypes**: JSON files defining node category, Python class mapping, view defaults, and configurable parameters.
 - **MCP Server**: Thin proxy that enables LLM agents to manipulate the diagram via WebSocket RPC to the browser.
 
+## Building from Source
+
+```bash
+# Install dependencies
+pnpm install
+
+# Build all packages
+cd front-end && npm run build    # Visual editor
+cd ../mcp-server && pnpm run build  # MCP server
+
+# Build documentation
+cd ../docs2 && uv run make html  # Sphinx HTML docs (open docs2/build/html/index.html)
+```
+
 ## Documentation
 
-- `CLAUDE.md` / `AGENTS.md` — Full project guide for AI agents (architecture, test patterns, stereotype list)
-- `docs2/build/html/index.html` — Sphinx documentation (open in browser): user guide, architecture, API reference, examples
+For full documentation, build and open the Sphinx docs:
+
+```bash
+cd docs2 && uv run make html
+open build/html/index.html
+```
+
+The Sphinx docs cover:
+- **User Guide** — how to use the visual editor
+- **Architecture** — system design, data flow, components
+- **Stereotypes Reference** — JSON format, categories, all parameters
+- **Python API Reference** — convert.py, main.py, infer.py, Net, ops
+- **TypeScript API Reference** — DiagramCore, StereotypeCore, BrowserRPCHandler
+- **Examples** — walkthrough of all 10 example diagrams
+
+See also `CLAUDE.md` / `AGENTS.md` for the AI agent project guide.
 
 ## Testing
 
