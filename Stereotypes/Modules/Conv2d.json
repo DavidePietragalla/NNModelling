@@ -1,7 +1,6 @@
 {
   "category": "Layer",
   "pythonClassName": "nn.Conv2d",
-  "expr": "",
   "view": {
     "color": "#20b2aa",
     "width": 140,

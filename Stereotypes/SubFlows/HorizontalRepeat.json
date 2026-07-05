@@ -1,7 +1,6 @@
 {
   "category": "Subflow",
   "pythonClassName": "ops.HorizontalRepeat",
-  "expr": "",
   "view": {
     "color": "#8e44ad",
     "width": 400,

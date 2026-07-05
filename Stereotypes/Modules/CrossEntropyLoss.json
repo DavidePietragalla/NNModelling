@@ -2,7 +2,6 @@
   "category": "Loss",
   "pythonClassName": "nn.CrossEntropyLoss",
   "taskType": "classification",
-  "expr": "",
   "view": {
     "color": "#cd5c5c",
     "width": 160,

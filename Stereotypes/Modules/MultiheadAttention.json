@@ -1,7 +1,6 @@
 {
   "category": "Layer",
   "pythonClassName": "nn.MultiheadAttention",
-  "expr": "",
   "view": {
     "color": "#8a2be2",
     "width": 220,

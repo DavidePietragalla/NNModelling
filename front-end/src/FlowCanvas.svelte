@@ -1,3 +1,16 @@
+<!--
+NNModelling — DSL for designing neural networks via visual node editor
+Copyright (C) 2026  Luca Sforza
+
+Licensed under the GNU General Public License v3 or later.
+Commercial licenses are available — contact Luca Sforza.
+See the LICENSE file for details.
+
+This program is distributed in the hope that it will be useful,
+but WITHOUT ANY WARRANTY; without even the implied warranty of
+MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.
+-->
+
 <script lang="ts">
   import {
     SvelteFlow,
@@ -12,7 +25,7 @@
 
   import Sidebar from "./components/Sidebar.svelte";
 
-  const { getInternalNode, getIntersectingNodes, screenToFlowPosition } =
+  const { getInternalNode, getIntersectingNodes, screenToFlowPosition, fitView, setCenter } =
     useSvelteFlow();
 
   import CustomNode from "./nodes/CustomNode.svelte";
@@ -29,9 +42,16 @@
   import { TypeEngine } from "./conversion/typeEngine";
 
   // 1. Importiamo la classe Diagram
-  import { Diagram, DIAGRAM_CONTEXT_KEY } from "./Diagram.svelte"; // Modifica il path se necessario
+  import { Diagram, DIAGRAM_CONTEXT_KEY } from "./Diagram.svelte";
   import { setContext, onMount } from "svelte";
   import { toPng } from "html-to-image";
+
+  // Context per SubflowNode — gli permette di chiamare diagram.toggleSubflow
+  // senza bisogno di callback nel node data
+  import type { DiagramCore } from "./core/DiagramCore";
+
+  // RPC handler — receives MCP server requests and dispatches to Diagram
+  import { BrowserRPCHandler } from "./sync/BrowserRPCHandler";
 
   const nodeTypes = {
     custom: CustomNode,
@@ -43,6 +63,9 @@
   // Grazie a Svelte 5, le sue proprietà interne $state saranno reattive qui dentro!
   const diagram = new Diagram();
   setContext(DIAGRAM_CONTEXT_KEY, diagram);
+
+  // Esponiamo il diagram via context per SubflowNode e altri componenti
+  setContext<DiagramCore>("diagram", diagram);
 
   // --- SVELTE 5: Stato derivato per abilitare/disabilitare i pulsanti ---
   // Ora peschiamo direttamente dall'istanza diagram
@@ -73,6 +96,41 @@
     diagram.typeResult = TypeEngine.infer(diagram);
   });
 
+  // Connessione WebSocket per gestire richieste RPC dal MCP server
+  let syncClient: BrowserRPCHandler;
+
+  $effect(() => {
+    syncClient = new BrowserRPCHandler(diagram, undefined, { fitView, setCenter });
+    syncClient.connect();
+    return () => syncClient.disconnect();
+  });
+
+  // Forziamo il ricalcolo della vista su ogni cambiamento strutturale
+  $effect(() => {
+    diagram.events.on("graph_changed", () => {
+      fitView();
+    });
+    return () => diagram.events.off("graph_changed");
+  });
+
+  function handleKeyDown(e: KeyboardEvent) {
+    const target = e.target as HTMLElement;
+    if (target.tagName === 'INPUT' || target.tagName === 'TEXTAREA' || target.isContentEditable) {
+      return;
+    }
+    // Ctrl+Alt+Z = Redo (check BEFORE Ctrl+Z)
+    if (e.ctrlKey && e.altKey && e.key === 'z') {
+      e.preventDefault();
+      diagram.redo();
+      return;
+    }
+    // Ctrl+Z = Undo
+    if (e.ctrlKey && e.key === 'z') {
+      e.preventDefault();
+      diagram.undo();
+      return;
+    }
+  }
   function getSpawnPosition() {
     // Troviamo il centro della finestra e lo convertiamo in coordinate del canvas
     const center = screenToFlowPosition({
@@ -150,6 +208,8 @@
     URL.revokeObjectURL(url);
   }
 </script>
+
+<svelte:window onkeydown={handleKeyDown} />
 
 <div class="editor-layout">
   <div class="canvas-container" bind:this={canvasRef}>

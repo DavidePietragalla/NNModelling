@@ -1,7 +1,6 @@
 {
   "category": "Layer",
   "pythonClassName": "nn.TransformerDecoderLayer",
-  "expr": "",
   "view": {
     "color": "#8a2be2",
     "width": 220,

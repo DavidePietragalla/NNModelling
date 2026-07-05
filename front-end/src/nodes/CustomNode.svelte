@@ -1,3 +1,16 @@
+<!--
+NNModelling — DSL for designing neural networks via visual node editor
+Copyright (C) 2026  Luca Sforza
+
+Licensed under the GNU General Public License v3 or later.
+Commercial licenses are available — contact Luca Sforza.
+See the LICENSE file for details.
+
+This program is distributed in the hope that it will be useful,
+but WITHOUT ANY WARRANTY; without even the implied warranty of
+MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.
+-->
+
 <script lang="ts">
   import {
     Handle,
@@ -67,7 +80,7 @@
 />
 
 {#if !data.isInput}
-  <Handle type="target" position={Position.Top} {isConnectable} />
+  <Handle type="target" id="in" position={Position.Top} {isConnectable} />
 {/if}
 
 {#if data.isInput}
@@ -113,13 +126,14 @@
 {#if !data.isLoss}
   <!-- svelte-ignore a11y_no_static_element_interactions -->
   <div class="output-handle-wrapper" onmouseenter={showTooltip} onmouseleave={hideTooltip}>
-    <Handle type="source" position={Position.Bottom} {isConnectable} />
+    <Handle type="source" id="out" position={Position.Bottom} {isConnectable} />
     {#if tooltipVisible && outputShape}
       <div class="shape-tooltip">[{outputShape}]</div>
     {/if}
   </div>
+{:else}
+  <Handle type="source" position={Position.Bottom} {isConnectable} />
 {/if}
-
 <style>
   @import "../styles/node.css";
 </style>

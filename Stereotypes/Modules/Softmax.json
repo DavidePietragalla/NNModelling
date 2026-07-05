@@ -1,7 +1,6 @@
 {
   "category": "Layer",
   "pythonClassName": "nn.Softmax",
-  "expr": "",
   "view": {
     "color": "#f4a460",
     "width": 100,

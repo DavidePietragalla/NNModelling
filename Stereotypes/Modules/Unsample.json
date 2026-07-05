@@ -1,7 +1,6 @@
 {
   "category": "Layer",
   "pythonClassName": "nn.Upsample",
-  "expr": "",
   "view": {
     "color": "#48d1cc",
     "width": 120,

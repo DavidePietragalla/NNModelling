@@ -1,0 +1,15 @@
+{
+  "name": "nnmodelling",
+  "private": true,
+  "version": "0.1.0",
+  "description": "DSL for designing neural networks via visual node editor",
+  "scripts": {
+    "docs": "pnpm run docs:typedoc && pnpm run docs:sphinx",
+    "docs:typedoc": "pnpm --filter @nnmodelling/front-end exec typedoc --options typedoc.json",
+    "docs:sphinx": "bash gendocs.sh",
+    "docs:clean": "rm -rf docs2/build"
+  },
+  "engines": {
+    "node": ">=18"
+  }
+}

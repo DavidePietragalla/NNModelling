@@ -1,7 +1,6 @@
 {
   "category": "Layer",
   "pythonClassName": "nn.Flatten",
-  "expr": "",
   "view": {
     "color": "#a9a9a9",
     "width": 100,

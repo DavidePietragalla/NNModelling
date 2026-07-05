@@ -6,9 +6,14 @@
     }
   },
   "mcp": {
-    "glimpse": {
+    "nnmodelling-mcp": {
       "type": "local",
-      "command": ["npx", "-y", "glimpse-mcp"]
+      "command": [
+        "npx",
+        "-y",
+        "tsx",
+        "mcp-server/src/index.ts"
+      ]
     }
   }
 }
