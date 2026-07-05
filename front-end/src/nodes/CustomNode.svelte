@@ -82,6 +82,8 @@ MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.
 
 {#if !data.isLoss}
   <Handle type="source" id="out" position={Position.Bottom} {isConnectable} />
+{:else}
+  <Handle type="source" position={Position.Bottom} {isConnectable} />
 {/if}
 
 <style>
