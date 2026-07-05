@@ -201,4 +201,102 @@ describe("BrowserRPCHandler", () => {
 
     expect(mockSend).not.toHaveBeenCalled();
   });
+
+  // ── create_node with params ──────────────────────────────────────────
+  // BUG: create_node via RPC passes params as Record<string, string>,
+  // but addModule uses all-or-nothing — if any user params exist,
+  // stereotype defaults are discarded.
+
+  it("BUG: create_node with partial params should preserve stereotype defaults", () => {
+    const { handler, diagram, mockSend } = createHandler();
+
+    // Simulate RPC: create a Linear node with only in_features and out_features
+    (handler as any).handleMessage({
+      data: JSON.stringify({
+        id: "req-create-linear",
+        method: "create_node",
+        params: {
+          stereotype: "Linear",
+          position: { x: 100, y: 200 },
+          config: {
+            params: { in_features: "128", out_features: "64" },
+          },
+        },
+      }),
+    });
+
+    expect(mockSend).toHaveBeenCalledTimes(1);
+    const response = JSON.parse(mockSend.mock.calls[0][0]);
+    expect(response.id).toBe("req-create-linear");
+    expect(response.result).toBeDefined();
+    expect(response.result.nodeId).toBeDefined();
+    expect(response.result.stereotype).toBe("Linear");
+
+    // Verify the created node has params
+    const node = diagram.getNodeById(response.result.nodeId);
+    expect(node).toBeDefined();
+
+    const params = (node!.data.params as Record<string, { value: string }>) ?? {};
+
+    // User values should be applied
+    expect(params.in_features).toBeDefined();
+    expect(params.in_features?.value).toBe("128");
+    expect(params.out_features?.value).toBe("64");
+
+    // BUG: Stereotype defaults (bias="True", device="None", dtype="None")
+    // are currently LOST because addModule uses all-or-nothing params.
+    // These assertions should pass after the fix:
+    expect(params.bias).toBeDefined();
+    expect(params.bias?.value).toBe("True");
+    expect(params.device).toBeDefined();
+    expect(params.device?.value).toBe("None");
+    expect(params.dtype).toBeDefined();
+    expect(params.dtype?.value).toBe("None");
+  });
+
+  // ── fit_view / center_view stubs ─────────────────────────────────────
+  // BUG: handleFitView and handleCenterView are no-ops.
+  // They return { success: true } but don't call any viewport API.
+  // After the fix, BrowserRPCHandler should accept viewport callbacks
+  // and call them when these RPC methods are invoked.
+
+  it("BUG: fit_view handler exists but is a no-op (should call viewport callback)", () => {
+    // NOTE: Currently BrowserRPCHandler does NOT accept viewport callbacks.
+    // This test documents the desired behavior after the fix.
+    // For now, it only verifies the handler doesn't throw and returns.
+    const { handler, mockSend } = createHandler();
+
+    (handler as any).handleMessage({
+      data: JSON.stringify({
+        id: "req-fit",
+        method: "fit_view",
+        params: {},
+      }),
+    });
+
+    expect(mockSend).toHaveBeenCalledTimes(1);
+    const response = JSON.parse(mockSend.mock.calls[0][0]);
+    expect(response.id).toBe("req-fit");
+    expect(response.result).toEqual({ success: true, note: "fit_view executed" });
+    // NOTE: This is a no-op — no actual viewport adjustment happens.
+    // After the fix, a viewport callback should be invoked.
+  });
+
+  it("BUG: center_view handler exists but is a no-op (should call viewport callback)", () => {
+    const { handler, mockSend } = createHandler();
+
+    (handler as any).handleMessage({
+      data: JSON.stringify({
+        id: "req-center",
+        method: "center_view",
+        params: { x: 300, y: 400, zoom: 1.5 },
+      }),
+    });
+
+    expect(mockSend).toHaveBeenCalledTimes(1);
+    const response = JSON.parse(mockSend.mock.calls[0][0]);
+    expect(response.id).toBe("req-center");
+    expect(response.result).toEqual({ success: true, note: "center_view executed" });
+    // NOTE: This is a no-op — x, y, zoom are ignored.
+  });
 });
