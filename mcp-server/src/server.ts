@@ -159,8 +159,8 @@ export async function createServer(
 
   // ── Step 2: Create BrowserRPCClient and start listening ────────────
   const browser = new BrowserRPCClient();
-  browser.start();  // Non-blocking — opens port, returns immediately
-  console.error("[nnmodelling-mcp] Browser WebSocket server started (non-blocking)");
+  await browser.start();
+  console.error("[nnmodelling-mcp] Browser WebSocket server ready");
 
   // ── Step 3: Build ServerContext ──────────────────────────────────────
   const ctx: ServerContext = {

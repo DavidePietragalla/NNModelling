@@ -83,28 +83,43 @@ export class BrowserRPCClient {
   }
 
   /**
-   * Start the WebSocket server — non-blocking.
-   * Opens the port and returns immediately. Browser connections
-   * are handled asynchronously.
+   * Start the WebSocket server.
+   * Returns a promise that resolves when the server is listening,
+   * or rejects if the port is already in use (stale process).
    */
-  start(): void {
+  start(): Promise<void> {
     if (this.wss) {
-      return; // Already started
+      return Promise.resolve(); // Already started
     }
 
     this.wss = new WebSocketServer({ host: this.host, port: this.port });
 
-    this.wss.on("connection", (ws: WebSocket) => {
-      this.handleConnection(ws);
-    });
+    return new Promise<void>((resolve, reject) => {
+      this.wss!.on("listening", () => {
+        console.error(
+          `[browser-client] Listening on ws://${this.host}:${this.port}`,
+        );
+        resolve();
+      });
 
-    this.wss.on("error", (err: Error) => {
-      console.error("[browser-client] WebSocket server error:", err.message);
-    });
+      this.wss!.on("error", (err: Error) => {
+        const msg = err.message.toLowerCase();
+        if (msg.includes("eaddrinuse")) {
+          reject(
+            new Error(
+              `Port ${this.port} already in use — another MCP server instance may be running. ` +
+              `Kill the stale process (PID matching ${this.port}) and restart.`,
+            ),
+          );
+        } else {
+          reject(new Error(`WebSocket server error: ${err.message}`));
+        }
+      });
 
-    console.error(
-      `[browser-client] Listening on ws://${this.host}:${this.port}`,
-    );
+      this.wss!.on("connection", (ws: WebSocket) => {
+        this.handleConnection(ws);
+      });
+    });
   }
 
   /** Close the WebSocket server, disconnect all tabs, reject pending. */
