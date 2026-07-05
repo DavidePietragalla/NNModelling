@@ -35,5 +35,11 @@ export class Diagram extends DiagramCore {
     // the initial Input should not be undoable.
     this._undoStack = [];
     this._redoStack = [];
+
+    // Force Svelte 5 reactivity when the Core state is mutated via RPC
+    this.events.on("graph_changed", () => {
+      this.nodes = [...this.nodes];
+      this.edges = [...this.edges];
+    });
   }
 }

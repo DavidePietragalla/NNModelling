@@ -25,7 +25,7 @@ MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.
 
   import Sidebar from "./components/Sidebar.svelte";
 
-  const { getInternalNode, getIntersectingNodes, screenToFlowPosition } =
+  const { getInternalNode, getIntersectingNodes, screenToFlowPosition, fitView, setCenter } =
     useSvelteFlow();
 
   import CustomNode from "./nodes/CustomNode.svelte";
@@ -93,9 +93,17 @@ MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.
   let syncClient: BrowserRPCHandler;
 
   $effect(() => {
-    syncClient = new BrowserRPCHandler(diagram);
+    syncClient = new BrowserRPCHandler(diagram, undefined, { fitView, setCenter });
     syncClient.connect();
     return () => syncClient.disconnect();
+  });
+
+  // Forziamo il ricalcolo della vista su ogni cambiamento strutturale
+  $effect(() => {
+    diagram.events.on("graph_changed", () => {
+      fitView();
+    });
+    return () => diagram.events.off("graph_changed");
   });
 
   function handleKeyDown(e: KeyboardEvent) {

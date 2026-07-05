@@ -172,6 +172,9 @@ NNModelling/
 │           ├── inspection.ts          # get_graph, get_node, statistics, etc.
 │           ├── connection.ts          # list_browser_tabs, select_browser_tab
 │           └── lifecycle.ts           # reset_diagram, ping
+├── docs/
+│   ├── report/                 # Bug reports (mcp_issues.md, etc.)
+│   └── designs/                # Design plans (mcp-sync-fixes/plan.md, etc.)
 ├── analysis/
 │   ├── requirements/reqs.md    # DSL requirements specification
 │   └── uml/nn.vpp              # UML model (Visual Paradigm)
@@ -212,7 +215,7 @@ NNModelling/
 - **Pattern**: Pure TS unit tests, no DOM/browser
 - **Real Diagram**: Tests use real `Diagram` class (Svelte `$state.raw` compiled by Vite plugin). Stub `globalThis.window` before construction.
 - **Helpers**: `node(id, stereo, name, params, overrides?)` and `edge(id, source, target, handles?)` for concise fixtures.
-- **Coverage**: **96 tests** — sequential chain, skip/joins, autoencoder, subflow compilation, nested subflows, hidden nodes, error handling, connection validation, Fork node, BrowserRPCHandler, undo/redo
+- **Coverage**: **120 tests** — sequential chain, skip/joins, autoencoder, subflow compilation, nested subflows, hidden nodes, error handling, connection validation, Fork node, BrowserRPCHandler, undo/redo, param merging, edge handle defaults, viewport injection
 
 ### Testing — Integration (Vitest + Python Pipeline)
 
@@ -552,7 +555,7 @@ Snapshot-based undo/redo for the visual editor:
 - **Initial state**: Auto-spawned Input node is excluded from undo history.
 - **Test count**: 86 → 96 tests (10 new undo/redo tests)
 
-### Phase 13 — Category Cleanup + Documentation Rewrite (current)
+### Phase 13 — Category Cleanup + Documentation Rewrite
 
 Fixed the stereotype category system and rewrote the documentation:
 
@@ -564,3 +567,23 @@ Fixed the stereotype category system and rewrote the documentation:
   - 3 exemplary stereotypes (Linear, Concat, Repeat) instead of all 35
   - Notes section with gotchas (loss nodes, flatten, join ordering, etc.)
 - **No code changes needed**: all category-driven logic uses stereotype name or dedicated flags (`isLoss`, `isInput`, etc.), not raw category strings
+
+### Phase 14 — MCP Sync Fixes (current)
+
+Three MCP synchronization bugs fixed, discovered during agent-driven diagram creation:
+
+| Bug | Severity | Root Cause | Fix |
+|-----|----------|------------|-----|
+| Edges invisible on canvas | High | Handle ID mismatch — `CustomNode.svelte` Handles had no `id`, SvelteFlow defaults to `null`; `DiagramCore.addEdge` defaults to `"out"`/`"in"` | Added `id="in"` / `id="out"` to CustomNode.svelte Handles |
+| `fit_view`/`center_view` no-ops | Medium | `BrowserRPCHandler` stubs returned `{ success: true }` without calling SvelteFlow API | Injected `ViewportController` (fitView/setCenter) via constructor from FlowCanvas.svelte |
+| `create_node` params lost | High | `addModule`/`addJoinNode` used all-or-nothing param assignment, discarding stereotype defaults | Added `_mergeNodeParams()` helper — starts from `getDefaultParams()` and overlays user values preserving `position` metadata |
+
+**Key changes by file:**
+
+- **`CustomNode.svelte`**: Added `id="in"` on target Handle, `id="out"` on source Handle. Removed duplicate `<Handle type="source">`.
+- **`DiagramCore.ts`**: Added `_mergeNodeParams(stereotype, userParams?)` — deep merge: stereotype defaults → user overlay. Used in both `addModule` and `addJoinNode`.
+- **`BrowserRPCHandler.ts`**: New `ViewportController` interface with `fitView()` and `setCenter()`. Constructor accepts optional third parameter. `handleFitView`/`handleCenterView` now call real SvelteFlow methods when available, with graceful no-op fallback.
+- **`Diagram.svelte.ts`**: Added `graph_changed` event listener that forces Svelte 5 reactivity by spreading `this.nodes`/`this.edges` into new arrays — necessary because RPC mutates plain arrays, which `$state.raw` doesn't detect.
+- **`FlowCanvas.svelte`**: Extracts `fitView`/`setCenter` from `useSvelteFlow()` and passes to `BrowserRPCHandler`. Added `$effect` calling `fitView()` on every `graph_changed` event for auto-centering after RPC mutations.
+
+**Test count**: 96 → 120 (+24 tests for param merging, edge handle defaults, viewport injection)
