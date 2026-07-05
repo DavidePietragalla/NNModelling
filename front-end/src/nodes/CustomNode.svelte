@@ -42,7 +42,7 @@ MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.
 />
 
 {#if !data.isInput}
-  <Handle type="target" position={Position.Top} {isConnectable} />
+  <Handle type="target" id="in" position={Position.Top} {isConnectable} />
 {/if}
 
 {#if data.isInput}
@@ -81,10 +81,8 @@ MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.
 {/if}
 
 {#if !data.isLoss}
-  <Handle type="source" position={Position.Bottom} {isConnectable} />
+  <Handle type="source" id="out" position={Position.Bottom} {isConnectable} />
 {/if}
-
-<Handle type="source" position={Position.Bottom} {isConnectable} />
 
 <style>
   @import "../styles/node.css";

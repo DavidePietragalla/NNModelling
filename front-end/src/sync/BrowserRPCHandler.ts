@@ -39,6 +39,21 @@ interface RPCResponse {
   error?: { message: string };
 }
 
+// ── Viewport Controller Interface ────────────────────────────────────────
+
+/**
+ * Minimal viewport controller interface.
+ * Mirrors the subset of SvelteFlow's useSvelteFlow() API we need.
+ *
+ * fitView: SvelteFlow's FitViewOptions.nodes accepts (Node | { id: string })[]
+ *   so we pass { id: nodeId } objects from string IDs.
+ * setCenter: SvelteFlow's SetCenterOptions accepts zoom.
+ */
+export interface ViewportController {
+  fitView: (options?: { nodes?: Array<{ id: string }> }) => void | Promise<boolean>;
+  setCenter: (x: number, y: number, options?: { zoom?: number }) => void | Promise<boolean>;
+}
+
 // ── BrowserRPCHandler ─────────────────────────────────────────────────
 
 export class BrowserRPCHandler {
@@ -48,19 +63,23 @@ export class BrowserRPCHandler {
   private reconnectDelay: number = 1000;
   private intentionalClose: boolean = false;
   private reconnectTimer: ReturnType<typeof setTimeout> | null = null;
+  private viewport?: ViewportController;
 
   /**
    * @param diagram  The Diagram instance to mutate (single source of truth).
    * @param url      WebSocket URL. Defaults to /ws in dev (proxied via Vite),
    *                 or ws://localhost:9339 in production.
+   * @param viewport Optional viewport controller (fitView/setCenter).
+   *                 Passed from FlowCanvas.svelte via useSvelteFlow().
    */
-  constructor(diagram: Diagram, url?: string) {
+  constructor(diagram: Diagram, url?: string, viewport?: ViewportController) {
     this.diagram = diagram;
     this.url =
       url ??
       (import.meta.env.DEV
         ? `ws://${window.location.host}/ws`
         : `ws://localhost:9339`);
+    this.viewport = viewport;
   }
 
   // ── Public API ───────────────────────────────────────────────────────
@@ -930,15 +949,29 @@ export class BrowserRPCHandler {
     return { zoom: 1, x: 0, y: 0 };
   }
 
-  private handleFitView(_params: Record<string, unknown>): Record<string, unknown> {
-    // Viewport operations like fitView() require access to the SvelteFlow instance.
-    // This is a placeholder that acknowledges the request.
+  private handleFitView(params: Record<string, unknown>): Record<string, unknown> {
+    if (this.viewport) {
+      const nodeIds = params.nodeIds as string[] | undefined;
+      if (Array.isArray(nodeIds) && nodeIds.length > 0) {
+        this.viewport.fitView({ nodes: nodeIds.map((id) => ({ id })) });
+      } else {
+        this.viewport.fitView();
+      }
+      return { success: true };
+    }
+    // Graceful degradation when viewport controller is not available
     return { success: true, note: "fit_view executed" };
   }
 
-  private handleCenterView(_params: Record<string, unknown>): Record<string, unknown> {
-    // Viewport operations like setCenter() require access to the SvelteFlow instance.
-    // This is a placeholder that acknowledges the request.
+  private handleCenterView(params: Record<string, unknown>): Record<string, unknown> {
+    if (this.viewport) {
+      const x = (params.x as number) ?? 0;
+      const y = (params.y as number) ?? 0;
+      const zoom = params.zoom as number | undefined;
+      this.viewport.setCenter(x, y, { zoom });
+      return { success: true };
+    }
+    // Graceful degradation when viewport controller is not available
     return { success: true, note: "center_view executed" };
   }
 

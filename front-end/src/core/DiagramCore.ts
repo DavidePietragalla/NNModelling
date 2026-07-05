@@ -138,7 +138,7 @@ export class DiagramCore {
         stereotype: stereotype.name,
         name: finalName,
         color: customConfig?.color || stereotype.view?.color || '#ffffff',
-        params: customConfig?.params ? JSON.parse(JSON.stringify(customConfig.params)) : {},
+        params: this._mergeNodeParams(stereotype, customConfig?.params),
         isInput: isInput,
         isLoss: stereotype.isLoss,
       }
@@ -176,7 +176,7 @@ export class DiagramCore {
         name: stereotype.name,
         inputsCount: config?.inputsCount || 2,
         color: config?.color || stereotype.view?.color || "#333",
-        params: config?.params ? JSON.parse(JSON.stringify(config.params)) : {}
+        params: this._mergeNodeParams(stereotype, config?.params)
       }
     };
 
@@ -605,7 +605,7 @@ export class DiagramCore {
 
   // ── Private Helpers ───────────────────────────────────────────
 
-  private getDefaultParams(stereotype: StereotypeCore): Record<string, any> {
+  private getDefaultParams(stereotype: StereotypeCore): Record<string, { value: string; position?: string }> {
     if (!stereotype.parameters) {
       return {};
     }
@@ -616,6 +616,35 @@ export class DiagramCore {
         { value: paramDef.default, position: paramDef.position }
       ])
     );
+  }
+
+  /**
+   * Merge user-supplied params (plain strings) with stereotype defaults.
+   * Always starts with getDefaultParams() output ({ value, position } objects),
+   * then overlays each user key as { value: userVal, position: previous?.position }.
+   * This ensures stereotype defaults are preserved for keys not in userParams.
+   */
+  private _mergeNodeParams(
+    stereotype: StereotypeCore,
+    userParams?: Record<string, string | { value: string; position?: string }>
+  ): Record<string, { value: string; position?: string }> {
+    const merged = this.getDefaultParams(stereotype);
+    if (userParams) {
+      for (const [key, value] of Object.entries(userParams)) {
+        const existing = merged[key];
+        // Handle both formats: plain string (from create_node RPC) and
+        // { value } wrapper (from duplicateNodes RPC)
+        const innerValue =
+          typeof value === 'object' && value !== null && 'value' in value
+            ? String((value as { value: string }).value)
+            : String(value);
+        merged[key] = {
+          value: innerValue,
+          ...(existing?.position ? { position: existing.position } : {}),
+        };
+      }
+    }
+    return merged;
   }
 
   // ── Serialization ─────────────────────────────────────────────

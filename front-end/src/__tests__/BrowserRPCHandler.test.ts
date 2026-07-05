@@ -299,4 +299,104 @@ describe("BrowserRPCHandler", () => {
     expect(response.result).toEqual({ success: true, note: "center_view executed" });
     // NOTE: This is a no-op — x, y, zoom are ignored.
   });
+
+  // ── Viewport injection tests (Bug 2 fix verification) ───────────────
+
+  it("fit_view calls fitView callback when viewport is provided", () => {
+    const diagram = new Diagram();
+    diagram.nodes = [];
+    diagram.edges = [];
+
+    const fitViewMock = vi.fn();
+    const syncClient = new BrowserRPCHandler(diagram, "ws://localhost:0", {
+      fitView: fitViewMock,
+      setCenter: vi.fn(),
+    });
+
+    // Stub WebSocket to capture responses
+    const mockSend = vi.fn();
+    (syncClient as any).ws = { send: mockSend, readyState: WebSocket.OPEN, close: vi.fn() };
+
+    (syncClient as any).handleMessage({
+      data: JSON.stringify({ id: "req-fit-vp", method: "fit_view", params: {} }),
+    });
+
+    expect(fitViewMock).toHaveBeenCalledTimes(1);
+    expect(mockSend).toHaveBeenCalledTimes(1);
+    const response = JSON.parse(mockSend.mock.calls[0][0]);
+    expect(response.result).toEqual({ success: true });
+  });
+
+  it("fit_view with nodeIds passes them to fitView", () => {
+    const diagram = new Diagram();
+    diagram.nodes = [];
+    diagram.edges = [];
+
+    const fitViewMock = vi.fn();
+    const syncClient = new BrowserRPCHandler(diagram, "ws://localhost:0", {
+      fitView: fitViewMock,
+      setCenter: vi.fn(),
+    });
+
+    const mockSend = vi.fn();
+    (syncClient as any).ws = { send: mockSend, readyState: WebSocket.OPEN, close: vi.fn() };
+
+    (syncClient as any).handleMessage({
+      data: JSON.stringify({
+        id: "req-fit-ids",
+        method: "fit_view",
+        params: { nodeIds: ["n1", "n2"] },
+      }),
+    });
+
+    expect(fitViewMock).toHaveBeenCalledTimes(1);
+    // Should pass node objects to fitView
+    expect(fitViewMock).toHaveBeenCalledWith({ nodes: [{ id: "n1" }, { id: "n2" }] });
+  });
+
+  it("center_view calls setCenter callback with x,y,zoom when viewport is provided", () => {
+    const diagram = new Diagram();
+    diagram.nodes = [];
+    diagram.edges = [];
+
+    const setCenterMock = vi.fn();
+    const syncClient = new BrowserRPCHandler(diagram, "ws://localhost:0", {
+      fitView: vi.fn(),
+      setCenter: setCenterMock,
+    });
+
+    const mockSend = vi.fn();
+    (syncClient as any).ws = { send: mockSend, readyState: WebSocket.OPEN, close: vi.fn() };
+
+    (syncClient as any).handleMessage({
+      data: JSON.stringify({
+        id: "req-center-vp",
+        method: "center_view",
+        params: { x: 300, y: 400, zoom: 1.5 },
+      }),
+    });
+
+    expect(setCenterMock).toHaveBeenCalledTimes(1);
+    expect(setCenterMock).toHaveBeenCalledWith(300, 400, { zoom: 1.5 });
+    expect(mockSend).toHaveBeenCalledTimes(1);
+    const response = JSON.parse(mockSend.mock.calls[0][0]);
+    expect(response.result).toEqual({ success: true });
+  });
+
+  it("viewport handlers don't throw when viewport is undefined (graceful degradation)", () => {
+    const { handler, mockSend } = createHandler();
+    // createHandler() doesn't provide viewport — should not throw
+
+    expect(() => {
+      (handler as any).handleMessage({
+        data: JSON.stringify({ id: "r1", method: "fit_view", params: {} }),
+      });
+    }).not.toThrow();
+
+    expect(() => {
+      (handler as any).handleMessage({
+        data: JSON.stringify({ id: "r2", method: "center_view", params: { x: 0, y: 0, zoom: 1 } }),
+      });
+    }).not.toThrow();
+  });
 });
