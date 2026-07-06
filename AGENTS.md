@@ -218,8 +218,7 @@ NNModelling/
 - **Pattern**: Pure TS unit tests, no DOM/browser
 - **Real Diagram**: Tests use real `Diagram` class (Svelte `$state.raw` compiled by Vite plugin). Stub `globalThis.window` before construction.
 - **Helpers**: `node(id, stereo, name, params, overrides?)` and `edge(id, source, target, handles?)` for concise fixtures.
-<<<<<<< HEAD
-- **Coverage**: **120 tests** — sequential chain, skip/joins, autoencoder, subflow compilation, nested subflows, hidden nodes, error handling, connection validation, Fork node, type inference (Input, Linear, ReLU, Conv2d, Flatten, MaxPool2d, wildcards, mismatches, edge cases, computed dimensions, join type checking), BrowserRPCHandler, undo/redo, param merging, edge handle defaults, viewport injection
+- **Coverage**: **146 tests** — sequential chain, skip/joins, autoencoder, subflow compilation, nested subflows, hidden nodes, error handling, connection validation, Fork node, type inference (Input, Linear, ReLU, Conv2d, Flatten, MaxPool2d, wildcards, mismatches, edge cases, computed dimensions, join type checking), BrowserRPCHandler, undo/redo, param merging, edge handle defaults, viewport injection, invalid parameter validation
 
 ### Testing — Integration (Vitest + Python Pipeline)
 
@@ -304,7 +303,9 @@ MCP Server (thin proxy, no DiagramCore)
   **Phase 3 (join type checking)**: Join nodes with `kind: "join"` in their type_signature undergo multi-input pattern matching. Symbolic unification validates constraints (e.g., `MatMul`: K must match across inputs). The `Concat` constraint type sums dimensions on a specified axis. ScaledDotProduct validates Q/K/V shape compatibility.
 
   **Phase 5 (editor integration)**: The TypeEngine is wired into the visual editor. Edge connections, parameter changes, and diagram loads trigger real-time type inference. Errors appear as red badges on nodes and in a panel at the bottom of the Sidebar. Hovering an output handle shows the inferred output shape via tooltip.
-- **Tensor Types** (conversion/tensortypes.ts) — Type model: ShapeDimension (const/symbolic/param_ref/wildcard discriminated union), TensorType (shape + dtype), TypeSignature (declarative input/output patterns), TypeEnvironment (symbolic bindings), TypeResult (annotations + errors).
+
+  **Parameter validation**: `resolveParamRef` returns a `ParamResolution` discriminated union (`unset` | `invalid` | `resolved`). Invalid parameter values (e.g. "cazz" for an int param) generate type errors instead of being silently treated as unset.
+- **Tensor Types** (conversion/tensortypes.ts) — Type model: ShapeDimension (const/symbolic/param_ref/wildcard discriminated union), TensorType (shape + dtype), TypeSignature (declarative input/output patterns), TypeEnvironment (symbolic bindings), TypeResult (annotations + errors), ParamResolution (unset/invalid/resolved for parameter validation).
 - **FlowCanvas.svelte** — Main editor component. Renders SvelteFlow canvas, toolbar (Save/Load/Convert), and Sidebar. Three node types: `custom`, `subflow`, `join`.
 - **Sidebar.svelte** — Node create/edit form. Resizable. Updates Diagram state reactively.
 
@@ -586,7 +587,7 @@ Removed server-side state duplication. The server is now a thin proxy:
 | `mcp-server/src/pipeline.ts` | Python subprocess interface |
 | `pnpm-workspace.yaml` | pnpm monorepo config |
 
-### Phase 12 — Undo/Redo System (current)
+### Phase 12 — Undo/Redo System
 
 Snapshot-based undo/redo for the visual editor:
 
@@ -612,7 +613,7 @@ Fixed the stereotype category system and rewrote the documentation:
   - Notes section with gotchas (loss nodes, flatten, join ordering, etc.)
 - **No code changes needed**: all category-driven logic uses stereotype name or dedicated flags (`isLoss`, `isInput`, etc.), not raw category strings
 
-### Phase 14 — MCP Sync Fixes (current)
+### Phase 14 — MCP Sync Fixes
 
 Three MCP synchronization bugs fixed, discovered during agent-driven diagram creation:
 
@@ -631,3 +632,13 @@ Three MCP synchronization bugs fixed, discovered during agent-driven diagram cre
 - **`FlowCanvas.svelte`**: Extracts `fitView`/`setCenter` from `useSvelteFlow()` and passes to `BrowserRPCHandler`. Added `$effect` calling `fitView()` on every `graph_changed` event for auto-centering after RPC mutations.
 
 **Test count**: 96 → 120 (+24 tests for param merging, edge handle defaults, viewport injection)
+
+### Phase 15 — Type System Improvements (current)
+
+Two type system improvements:
+
+1. **Invalid parameter validation**: Previously, non-numeric parameter values (e.g. "cazz" for `in_features`) were silently treated as "unset", creating symbolic variables instead of reporting errors. Now `resolveParamRef` returns a `ParamResolution` discriminated union (`unset` | `invalid` | `resolved`), and invalid values generate type errors in the Type Check panel.
+
+2. **Output handle alignment**: Fixed output handle centering (was `display: inline-block`, now `width: 100%; display: flex; justify-content: center`). Fixed shape tooltip positioning — always shown above the handle to avoid overlapping with node body.
+
+**Test count**: 120 → 146 (+26 tests for invalid parameter validation and other improvements)
