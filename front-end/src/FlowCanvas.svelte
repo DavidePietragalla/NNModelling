@@ -107,10 +107,10 @@ MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.
 
   // Forziamo il ricalcolo della vista su ogni cambiamento strutturale
   $effect(() => {
-    diagram.events.on("graph_changed", () => {
+    const unsubscribe = diagram.events.on("graph_changed", () => {
       fitView();
     });
-    return () => diagram.events.off("graph_changed");
+    return unsubscribe;
   });
 
   function handleKeyDown(e: KeyboardEvent) {

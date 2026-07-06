@@ -18,7 +18,7 @@ MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.
     NodeResizer,
     type NodeProps,
   } from "@xyflow/svelte";
-  import { type Node, type OnResizeEnd } from "@xyflow/svelte";
+  import { type Node } from "@xyflow/svelte";
   import { getContext } from "svelte";
   import { DIAGRAM_CONTEXT_KEY, type Diagram } from "../Diagram.svelte";
 
@@ -61,9 +61,6 @@ MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.
     return { severity: errs.some(e => e.severity === 'error') ? 'error' : 'warning', message: errs[0].message };
   });
 
-  const handleResize: OnResizeEnd = (event, params) => {
-    data.onResizeEnd(id, params.width, params.height);
-  };
 </script>
 
 <NodeResizer

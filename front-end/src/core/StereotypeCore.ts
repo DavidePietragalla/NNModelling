@@ -13,6 +13,8 @@
 
 // front-end/src/core/StereotypeCore.ts
 
+import type { TypeSignature, ShapeDimPattern, ShapePattern } from "../conversion/tensortypes";
+
 export interface ModuleParameter {
   type: string;
   default: string;
@@ -32,6 +34,7 @@ export interface StereotypeJson {
   expr?: string;
   view?: Partial<StereotypeView>;
   params?: Record<string, ModuleParameter>;
+  type_signature?: TypeSignature;
 }
 
 export class StereotypeCore {
@@ -43,6 +46,7 @@ export class StereotypeCore {
   public readonly expr: string;
   public readonly parameters: Record<string, ModuleParameter>;
   public readonly view: StereotypeView;
+  public readonly typeSignature?: TypeSignature;
   public readonly isJoin: boolean;
   public readonly isInput: boolean;
   public readonly isLoss: boolean;
@@ -79,6 +83,8 @@ export class StereotypeCore {
       width: view.width || 140,
       height: view.height || 60,
     };
+
+    this.typeSignature = StereotypeCore.parseTypeSignature(data.type_signature);
 
     // Category flags
     this.isJoin   = data.category === "Join"   || filePath.includes("/Joins/");
@@ -136,5 +142,37 @@ export class StereotypeCore {
 
     walkDir(stereotypesDir);
     return loaded.sort((a, b) => a.name.localeCompare(b.name));
+  }
+
+  // ── Type signature parsing ────────────────────────
+
+  /**
+   * Deep-clone and strip $ from symbolic names in the type signature.
+   * $B → { kind: 'symbolic', name: 'B' }
+   */
+  private static parseTypeSignature(raw: TypeSignature | undefined): TypeSignature | undefined {
+    if (!raw) return undefined;
+    // Distinguish join input (ShapePattern[]) from module input (ShapePattern):
+    // join input's first element is itself an array.
+    const joined = Array.isArray(raw.input[0]);
+    return {
+      kind: raw.kind,
+      input: joined
+        ? (raw.input as ShapePattern[]).map((pat) => pat.map((d) => StereotypeCore.stripDollar(d)))
+        : (raw.input as ShapePattern).map((d) => StereotypeCore.stripDollar(d)),
+      output: raw.output.map((d) => StereotypeCore.stripDollar(d)),
+      dtype: raw.dtype ? { ...raw.dtype } : undefined,
+      constraints: raw.constraints ? { ...raw.constraints } : undefined,
+    };
+  }
+
+  private static stripDollar(dim: ShapeDimPattern): ShapeDimPattern {
+    if (dim.kind === "symbolic" && dim.name.startsWith("$")) {
+      return { ...dim, name: dim.name.slice(1) };
+    }
+    if (dim.kind === "computed") {
+      return { ...dim, args: dim.args.map((a) => (a.startsWith("$") ? a.slice(1) : a)) };
+    }
+    return dim;
   }
 }
