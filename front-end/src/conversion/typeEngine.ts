@@ -24,6 +24,7 @@ import type {
   NodeTypeAnnotation,
   TypeResult,
   TypeEnvironment,
+  ParamResolution,
 } from "./tensortypes";
 
 // ─────────────────────────────────────────────────────────────────────────────
@@ -511,12 +512,12 @@ export class TypeEngine {
     const parts = dimSpec.split(".");
     if (parts.length === 2 && parts[0] === "params") {
       const dim = this.resolveParamRef(parts[1], params);
-      if (dim === undefined) return undefined;
-      if (dim < 0 && inputTypes.length > 0) {
+      if (dim.status !== 'resolved') return undefined;
+      if (dim.value < 0 && inputTypes.length > 0) {
         // Wrap negative dim (e.g. -1 → last dim)
-        return inputTypes[0].shape.length + dim;
+        return inputTypes[0].shape.length + dim.value;
       }
-      return dim;
+      return dim.value;
     }
     // Direct number
     const parsed = Number(dimSpec);
@@ -600,8 +601,8 @@ export class TypeEngine {
 
     // ── Parameter reference (e.g. kernel_size, stride) ──────────────
     const val = this.resolveParamRef(arg, params);
-    if (val !== undefined) {
-      return { resolved: true, value: val };
+    if (val.status === 'resolved') {
+      return { resolved: true, value: val.value };
     }
     return { resolved: false };
   }
@@ -745,12 +746,20 @@ export class TypeEngine {
         // ── param_ref ────────────────────────────────────────
         case "param_ref": {
           const resolved = this.resolveParamRef(p.name, params);
-          if (resolved === undefined) {
+          if (resolved.status === 'unset') {
             // Param is "Undefined"/missing — treat as symbolic
             captured.push({ kind: "symbolic", name: `?${p.name}` });
             i++;
             j++;
+          } else if (resolved.status === 'invalid') {
+            // Param has a non-numeric value — type error
+            return {
+              nodeId: "",
+              message: `parameter ${p.name} has invalid value "${resolved.value}", expected a number`,
+              severity: "error",
+            } satisfies TypeError;
           } else {
+            // resolved.status === 'resolved'
             if (i >= inputDims.length) {
               return {
                 nodeId: "",
@@ -761,11 +770,11 @@ export class TypeEngine {
             const paramDim = inputDims[i];
             if (
               paramDim.kind !== "const" ||
-              paramDim.value !== resolved
+              paramDim.value !== resolved.value
             ) {
               return {
                 nodeId: "",
-                message: `dimension mismatch: param ${p.name}=${resolved}, got ${this.describeDim(paramDim)}`,
+                message: `dimension mismatch: param ${p.name}=${resolved.value}, got ${this.describeDim(paramDim)}`,
                 severity: "error",
               } satisfies TypeError;
             }
@@ -868,9 +877,10 @@ export class TypeEngine {
 
         case "param_ref": {
           const val = this.resolveParamRef(p.name, params);
-          if (val !== undefined) {
-            result.push({ kind: "const", value: val });
+          if (val.status === 'resolved') {
+            result.push({ kind: "const", value: val.value });
           } else {
+            // unset or invalid — keep as symbolic (error already reported in patternMatch)
             result.push({ kind: "symbolic", name: `?${p.name}` });
           }
           break;
@@ -952,15 +962,17 @@ export class TypeEngine {
    * Handles both flat values (`params[name] === "784"`) and wrapped objects
    * (`params[name] === { value: "784", position: "top" }`).
    *
-   * Returns undefined if the parameter is "Undefined", missing, or cannot be
-   * parsed as a number.
+   * Returns a discriminated union:
+   * - `{ status: 'unset' }` — parameter is "Undefined", "", or "None"
+   * - `{ status: 'invalid', value }` — parameter has a non-numeric string value
+   * - `{ status: 'resolved', value }` — parameter resolved to a number
    */
   static resolveParamRef(
     name: string,
     params: Record<string, unknown>,
-  ): number | undefined {
+  ): ParamResolution {
     const raw = params[name];
-    if (raw === undefined || raw === null) return undefined;
+    if (raw === undefined || raw === null) return { status: 'unset' };
 
     // Handle wrapped parameter objects: { value: "784", position: "top" }
     const val: unknown =
@@ -968,7 +980,7 @@ export class TypeEngine {
         ? (raw as Record<string, unknown>).value
         : raw;
 
-    if (typeof val === "number") return val;
+    if (typeof val === "number") return { status: 'resolved', value: val };
     if (typeof val === "string") {
       if (
         val === "Undefined" ||
@@ -977,12 +989,15 @@ export class TypeEngine {
         val === "True" ||
         val === "False"
       ) {
-        return undefined;
+        return { status: 'unset' };
       }
       const parsed = Number(val);
-      return isNaN(parsed) ? undefined : parsed;
+      if (isNaN(parsed)) {
+        return { status: 'invalid', value: val };
+      }
+      return { status: 'resolved', value: parsed };
     }
-    return undefined;
+    return { status: 'unset' };
   }
 
   /**

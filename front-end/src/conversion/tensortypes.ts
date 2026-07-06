@@ -203,3 +203,20 @@ export interface TypeResult {
  * `ShapeDimension` they have been unified with.
  */
 export type TypeEnvironment = Map<string, ShapeDimension>;
+
+// ─────────────────────────────────────────────────────────────────────────────
+// 12. ParamResolution — result of resolving a parameter reference
+// ─────────────────────────────────────────────────────────────────────────────
+
+/**
+ * Discriminated union for parameter resolution results.
+ *
+ * - `'unset'` — parameter is "Undefined", "", or "None" (user hasn't set it yet).
+ * - `'invalid'` — parameter has a value but it cannot be parsed as a number
+ *   (e.g. "cazz", "hello"). This is a type error.
+ * - `'resolved'` — parameter resolved to a concrete numeric value.
+ */
+export type ParamResolution =
+  | { status: 'unset' }
+  | { status: 'invalid'; value: string }
+  | { status: 'resolved'; value: number };
