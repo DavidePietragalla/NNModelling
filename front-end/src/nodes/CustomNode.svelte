@@ -23,6 +23,7 @@ MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.
 
   let { data, selected, isConnectable, id }: NodeProps = $props();
   const diagram = getContext<Diagram>(DIAGRAM_CONTEXT_KEY);
+  let isNodeHovered = $state(false);
 
   // Svelte 5: Filtriamo dinamicamente i parametri per posizione
   let topParams = $derived(
@@ -53,24 +54,11 @@ MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.
   });
 
   // --- Shape tooltip on output handle ---
-  let tooltipVisible = $state(false);
-  let tooltipTimer: ReturnType<typeof setTimeout>;
-
   let outputShape = $derived.by(() => {
     const ann = diagram?.typeResult?.annotations.get(id);
     if (!ann) return null;
     return ann.outputType.shape.map(d => d.kind === 'const' ? String(d.value) : d.kind === 'symbolic' ? '$' + d.name : d.kind).join(',');
   });
-
-  function showTooltip() {
-    clearTimeout(tooltipTimer);
-    tooltipTimer = setTimeout(() => tooltipVisible = true, 200);
-  }
-
-  function hideTooltip() {
-    clearTimeout(tooltipTimer);
-    tooltipVisible = false;
-  }
 </script>
 
 <NodeResizer
@@ -88,13 +76,15 @@ MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.
     <div class="input-label">{data.name}</div>
   </div>
 {:else}
-  <div
-    class="node-body"
-    style="background-color: {(data.color as string) || 'white'};
-           color: {(data.color as string) ? 'white' : 'black'};
-           text-shadow: {(data.color as string) ? '1px 1px 2px rgba(0,0,0,0.8)' : 'none'};
-           position: relative;"
-  >
+   <div
+     class="node-body"
+     style="background-color: {(data.color as string) || 'white'};
+            color: {(data.color as string) ? 'white' : 'black'};
+            text-shadow: {(data.color as string) ? '1px 1px 2px rgba(0,0,0,0.8)' : 'none'};
+            position: relative;"
+     onmouseenter={() => isNodeHovered = true}
+     onmouseleave={() => isNodeHovered = false}
+   >
     <div class="params-container top-params">
       {#each topParams as [key, param]}
         <div class="param-row">
@@ -125,9 +115,9 @@ MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.
 
 {#if !data.isLoss}
   <!-- svelte-ignore a11y_no_static_element_interactions -->
-  <div class="output-handle-wrapper" onmouseenter={showTooltip} onmouseleave={hideTooltip}>
+  <div class="output-handle-wrapper" onmouseenter={() => isNodeHovered = true} onmouseleave={() => isNodeHovered = false}>
     <Handle type="source" id="out" position={Position.Bottom} {isConnectable} />
-    {#if tooltipVisible && outputShape}
+    {#if isNodeHovered && outputShape}
       <div class="shape-tooltip">[{outputShape}]</div>
     {/if}
   </div>
