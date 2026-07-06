@@ -963,8 +963,8 @@ export class TypeEngine {
    * (`params[name] === { value: "784", position: "top" }`).
    *
    * Returns a discriminated union:
-   * - `{ status: 'unset' }` — parameter is "Undefined", "", or "None"
-   * - `{ status: 'invalid', value }` — parameter has a non-numeric string value
+   * - `{ status: 'unset' }` — parameter is "None" or truly missing
+   * - `{ status: 'invalid', value }` — parameter has a non-numeric value ("Undefined", "", "cazz", etc.)
    * - `{ status: 'resolved', value }` — parameter resolved to a number
    */
   static resolveParamRef(
@@ -982,14 +982,12 @@ export class TypeEngine {
 
     if (typeof val === "number") return { status: 'resolved', value: val };
     if (typeof val === "string") {
-      if (
-        val === "Undefined" ||
-        val === "" ||
-        val === "None" ||
-        val === "True" ||
-        val === "False"
-      ) {
+      if (val === "None") {
         return { status: 'unset' };
+      }
+      // "Undefined", "" (empty), and any other non-numeric string are invalid
+      if (val === "Undefined" || val === "") {
+        return { status: 'invalid', value: val };
       }
       const parsed = Number(val);
       if (isNaN(parsed)) {
