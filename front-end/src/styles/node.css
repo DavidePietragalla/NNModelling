@@ -84,12 +84,15 @@
 
 .output-handle-wrapper {
   position: relative;
-  display: inline-block;
+  width: 100%;
+  display: flex;
+  justify-content: center;
 }
 
 .shape-tooltip {
   position: absolute;
-  bottom: -24px;
+  bottom: auto;
+  top: -36px;
   left: 50%;
   transform: translateX(-50%);
   background-color: rgba(31, 41, 55, 0.9);
