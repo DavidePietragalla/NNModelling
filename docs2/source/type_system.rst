@@ -1,38 +1,24 @@
-Understanding Tensor Types
-==========================
+Tensor Type System
+==================
 
-Have you ever connected a ``Linear(784 → 256)`` to a ``Conv2d`` in the visual
-editor, clicked **Convert**, trained for an hour, and then seen this?
+A fundamental challenge in visual DSLs for neural network design is the lack
+of compile-time feedback about tensor shape compatibility. In NNModelling, a
+user may connect a ``Linear`` layer expecting 784 input features to a
+``Conv2d`` layer producing a 3D tensor without any editor-level warning. The
+shape mismatch is only discovered at runtime when PyTorch raises a dimension
+error during training.
 
-.. code-block:: text
+To address this, NNModelling includes a **static tensor type system** that
+verifies tensor shapes and dtypes during visual editing and front-end
+compilation. The type system is integrated into the DSL as a separate
+verification pass, preserving the existing architecture while extending the
+language with compile-time safety guarantees. It is **data-driven**: all
+module-specific logic is declared in ``type_signature`` fields inside
+stereotype JSON files, so adding a new module requires only a JSON change —
+never a TypeScript modification.
 
-   RuntimeError: mat1 and mat2 shapes cannot be multiplied (32x784 and 512x256)
-
-You stare at the error. You open your diagram. You trace connections manually.
-Where is the mismatch? It takes five minutes to find the node where you typed
-``512`` instead of ``784``. You fix it, reconvert, retrain. Five minutes of
-your life, gone.
-
-The **tensor type system** is here to catch that mistake the moment you make
-it — while you are still editing the diagram, before you even click Convert.
-
-.. code-block:: text
-
-   ┌─ Type Errors (1) ────────────────────────┐
-   │ ✗ Linear_1: dimension mismatch:          │
-   │   param in_features=512, got 784         │
-   └──────────────────────────────────────────┘
-
-The node turns red. You see the error immediately. You fix it, save, move on.
-No wasted training runs.
-
-What Problem Does It Solve?
----------------------------
-
-In a visual neural network editor, every node is a black box that transforms
-a tensor. The editor knows what parameters the user typed (e.g.
-``in_features=512``), but without a type system it cannot check whether those
-parameters make sense in context.
+How the Type System Helps
+-------------------------
 
 Consider this diagram:
 
@@ -40,155 +26,239 @@ Consider this diagram:
 
    Input ── Linear(784 → 256) ── ReLU ── Linear(300 → 10) ── CrossEntropyLoss
 
-The second Linear expects ``in_features=300``. But the ReLU outputs 256
-features. This is a shape mismatch — PyTorch will crash at runtime.
+The second Linear expects 300 input features, but the ReLU outputs 256. This
+is a shape mismatch that would cause a runtime crash. Without a type system,
+you would only discover this after clicking Convert, training, and reading a
+PyTorch error trace.
 
-The type system detects this automatically. It follows the tensor shape
-through every node and flags the mismatch the moment you connect the second
-Linear.
+With the type system, the error appears the moment you connect the second
+Linear:
+
+.. code-block:: text
+
+   ✗ Linear_2: dimension mismatch: param in_features=300, got 256
+
+The node turns red. You fix the parameter immediately and move on.
 
 Following a Tensor Through the Graph
 -------------------------------------
 
-Let us walk through a simple example to see how the type system thinks.
-
-We have this diagram:
+Let us walk through a well-typed diagram to see how the engine processes
+shapes:
 
 .. code-block:: text
 
    Input(out_features=784) ── Linear(784→256) ── ReLU ── Linear(256→10) ── Loss
 
-**Step 1: Input**. The Input node says: "I produce a tensor with shape
-[B, 784] and dtype float32." The B is a symbolic batch dimension — we do
-not know its value yet, but we know it exists.
+**Step 1 — Input**. The Input node is a source: it has no predecessor. Its
+type signature declares an output shape :math:`[B, \text{out\_features}]`
+where :math:`B` is a fresh symbolic variable representing the batch dimension
+and ``out_features`` is read from the node's parameter. With
+``out_features=784``, the output type is:
 
-   ``output: [B, 784] (float32)``
+.. code-block:: text
 
-**Step 2: Linear(784→256)**. The Linear node says: "I expect input shape
-[B, *, in_features=784]. The wildcard * means I can handle zero or more
-intermediate dimensions." It looks at the incoming [B, 784], finds that the
-last dimension 784 matches its ``in_features`` parameter, and produces
-[B, 256]:
+   Tensor([B, 784], float32)
 
-   ``output: [B, 256] (float32)``
+**Step 2 — Linear(784→256)**. The Linear node declares its contract as
+:math:`[B, *, \text{in\_features}] \rightarrow [B, *, \text{out\_features}]`.
+The wildcard :math:`*` matches zero or more intermediate dimensions. The
+engine checks that the incoming last dimension equals the node's
+``in_features`` parameter (784 = 784), then produces:
 
-**Step 3: ReLU**. The ReLU says: "I don't change shapes. Whatever comes
-in, I pass through." It outputs the same [B, 256].
+.. code-block:: text
 
-**Step 4: Linear(256→10)**. It expects [B, *, in_features=256]. The incoming
-shape is [B, 256]. Last dimension 256 matches ``in_features=256``. Output:
-[B, 10].
+   Tensor([B, 256], float32)
 
-Everything works. The type system reports no errors.
+**Step 3 — ReLU**. ReLU is shape-preserving: its signature is
+:math:`[*] \rightarrow [*]`. The wildcard captures the entire input shape
+:math:`[B, 256]` and reproduces it unchanged in the output.
 
-**Now let us introduce an error.** Change the first Linear to
-``in_features=512``:
+**Step 4 — Linear(256→10)**. The engine checks that :math:`256 = 256`
+(``in_features`` matches), producing:
+
+.. code-block:: text
+
+   Tensor([B, 10], float32)
+
+The entire graph is well-typed: no errors.
+
+Now change the first Linear's ``in_features`` to 512:
 
 .. code-block:: text
 
    Input ── Linear(512→256) ── ReLU ── Linear(256→10) ── Loss
 
-The Input still produces [B, 784]. The Linear says "I expect
-[B, *, in_features=512]". It looks at the incoming last dimension: it is 784,
-not 512. Mismatch.
+The Input still produces :math:`[B, 784]`. The first Linear expects its last
+dimension to be 512, but the incoming shape is :math:`[B, 784]`. The engine
+reports a type error at the Linear node:
 
-   ``✗ Linear_1: dimension mismatch: param in_features=512, got 784``
+.. code-block:: text
 
-The node turns red. The error panel shows the message. You fix it instantly.
+   ✗ dimension mismatch: param in_features=512, got 784
 
-The Language of Shapes
-----------------------
+The error surfaces immediately in the editor's error panel, and the node
+acquires a red border.
 
-Every module declares its tensor shape contract using a small language of
-**dimension kinds**. There are five of them:
+Formal Definition
+-----------------
 
-``const`` — a fixed number
-   Dimensions like 784, 3, 64, 10. When a module expects a ``const`` dimension,
-   the incoming shape must match exactly.
+We now define the type system formally. The mathematical presentation
+follows the standard notation of type theory and is drawn from the project's
+academic report.
 
-   .. code-block:: json
+Tensor Types
+~~~~~~~~~~~~
 
-      { "kind": "const", "value": 784 }
+A tensor type :math:`\tau` is a pair consisting of a shape and a data type:
 
-``symbolic`` — a named variable
-   Symbolic dimensions connect matching values across a module. When a module
-   uses the same symbolic name in both input and output (e.g. ``$B`` for batch
-   size), it means "whatever value this dimension has on the input, keep it
-   unchanged on the output."
+.. math::
 
-   In JSON, symbolic names are written with a ``$`` prefix (``"$B"``, ``"$H"``,
-   ``"$W"``) to distinguish them from parameter references. The prefix is
-   stripped when loaded into the engine.
+   \tau ::= \text{Tensor}(\sigma, \delta)
 
-   .. code-block:: json
+where :math:`\sigma` is a tensor shape and :math:`\delta` is a tensor data
+type (e.g. ``float32``, ``float64``, ``int64``).
 
-      { "kind": "symbolic", "name": "$B" }
+Shape Dimensions
+~~~~~~~~~~~~~~~~
 
-``param_ref`` — a value from the node's parameters
-   When a module refers to a parameter like ``in_features`` or ``out_channels``,
-   it means "read the value from this node's configuration." If the user typed
-   ``512`` for ``in_features``, the engine checks that the incoming dimension
-   equals 512.
+A shape :math:`\sigma` is a finite sequence of dimensions
+:math:`d_1, d_2, \ldots, d_n`. Each dimension :math:`d` belongs to one of
+the following categories:
 
-   .. code-block:: json
+.. math::
 
-      { "kind": "param_ref", "name": "in_features" }
+   d ::= c \mid x \mid p \mid *
 
-``wildcard`` — "I do not care about these dimensions"
-   A wildcard matches zero or more arbitrary dimensions. It captures them from
-   the input and reproduces them at the corresponding position in the output.
-   This is how modules like Linear can preserve intermediate dimensions while
-   transforming only the last one.
+where:
 
-   The pattern ``[B, *, in_features]`` means: match a batch dim, then skip
-   any number of intermediate dims, then match the last dim against
-   ``in_features``. If the input is ``[B, 128, 784]``, the wildcard captures
-   ``128`` and passes it through to the output. If the input is ``[B, 784]``,
-   the wildcard captures nothing.
+* :math:`c \in \mathbb{N}` is a **constant** dimension (e.g. 3, 784, 1)
+* :math:`x \in \mathcal{X}` is a **symbolic** dimension variable (e.g.
+  :math:`B` for batch size, :math:`H` for height, :math:`W` for width) —
+  these represent unknown dimensions whose values are determined during
+  type inference but remain symbolic in the type representation
+* :math:`p \in \mathcal{P}` is a **parameter reference** (e.g.
+  ``in_features``, ``out_channels``) — these refer to node parameter values
+  that are resolved at inference time
+* :math:`*` is the **wildcard** dimension, matching zero or more arbitrary
+  dimensions. A wildcard in an input pattern consumes matching dimensions
+  from the actual tensor; in an output pattern, it reproduces the dimensions
+  consumed during input matching
 
-   .. code-block:: json
+This representation allows the type system to express partially known shapes
+— containing symbolic variables and wildcards — rather than requiring every
+dimension to be a concrete integer. This is essential for modelling neural
+network architectures, where the batch size is unknown at definition time
+and intermediate feature dimensions depend on upstream layers.
 
-      { "kind": "wildcard" }
+Typing Context
+~~~~~~~~~~~~~~
 
-``computed`` — a dimension calculated by formula
-   Some modules (like Conv2d) produce dimensions that depend on parameters and
-   input dimensions in non-trivial ways. The output height of a Conv2d depends
-   on the input height, kernel size, stride, padding, and dilation.
+The typing context :math:`\Gamma` is a partial mapping from symbolic
+dimension names to their resolved values:
 
-   Computed dimensions use named formulas (``conv2d_hw``, ``pool2d_hw``,
-   ``flatten_prod``) that are resolved when all arguments are known.
+.. math::
 
-   .. code-block:: json
+   \Gamma ::= \{ x_1 \mapsto d_1,\; x_2 \mapsto d_2,\; \ldots \}
 
-      { "kind": "computed", "formula": "conv2d_hw",
-        "args": ["$H", "kernel_size", "stride", "padding", "dilation"] }
+The context is populated incrementally during type inference as symbolic
+dimensions are bound to concrete values. In addition, :math:`\Gamma` carries
+dtype information and maintains a mapping from node identifiers to their
+inferred tensor types.
 
-The ``$`` prefix rule
-~~~~~~~~~~~~~~~~~~~~~
+Typing Judgments
+~~~~~~~~~~~~~~~~
 
-In stereotype JSON, symbolic names start with ``$`` (``"$B"``, ``"$H"``).
-Parameter references never have ``$`` (``"in_features"``, ``"out_channels"``).
-This distinction makes the JSON self-documenting — you can see at a glance
-which names are variables and which are parameter lookups.
+The central judgment form for node-level type inference is:
 
-The ``$`` is stripped when the JSON is loaded into the engine: ``"$B"`` becomes
-``{ kind: 'symbolic', name: 'B' }``.
+.. math::
 
-How Modules Describe Their Shape Contracts
-------------------------------------------
+   \Gamma, P \vdash M : (\tau_{\text{in}} \rightarrow \tau_{\text{out}})
 
-Every module declares its expected input shape and produced output shape in its
-stereotype JSON, in a field called ``type_signature``.
+meaning: "in context :math:`\Gamma` with parameter values :math:`P`,
+module :math:`M` maps input type :math:`\tau_{\text{in}}` to output type
+:math:`\tau_{\text{out}}`."
 
-Think of the type signature as the module's **contract**: "If you give me a
-tensor that matches this input pattern, I will give you a tensor matching this
-output pattern."
+For graph-level inference, the judgment extends to:
 
-Input — the entry point
-~~~~~~~~~~~~~~~~~~~~~~~
+.. math::
 
-The Input node has no predecessors. It produces a tensor with a symbolic batch
-dimension and a feature dimension controlled by its parameter:
+   \Gamma \vdash G : \Gamma'
+
+meaning: "graph :math:`G` is well-typed, producing the extended environment
+:math:`\Gamma'` containing type annotations for every node."
+
+Inference Rules
+~~~~~~~~~~~~~~~
+
+The typing rules are defined per module type. Each rule is derived
+declaratively from the ``type_signature`` field in the module's stereotype
+JSON, rather than being hardcoded in the inference engine. This data-driven
+approach ensures that adding a new module requires only extending its
+stereotype definition, with no changes to the TypeScript implementation.
+
+**Input Node.** The Input node is a source in the computation graph. It
+produces a tensor whose last dimension is determined by its
+``out_features`` parameter and whose batch dimension is a fresh symbolic
+variable:
+
+.. math::
+
+   \frac{
+     \text{stereotype}(v) = \text{Input}
+     \qquad
+     P = \text{params}(v)
+   }{
+     \Gamma \vdash v :
+     \text{Tensor}((B,\, P.\text{out\_features}),\, \text{float32})
+   }
+
+where :math:`B` is a fresh symbolic dimension variable introduced into
+:math:`\Gamma`.
+
+**Linear Layer.** A Linear layer applies an affine transformation to the
+last dimension of its input:
+
+.. math::
+
+   \frac{
+     \Gamma \vdash x :
+     \text{Tensor}((B, \alpha_1, \ldots, \alpha_k, F), \delta)
+     \qquad
+     F = P.\text{in\_features}
+   }{
+     \Gamma \vdash \text{Linear}(P)(x) :
+     \text{Tensor}((B, \alpha_1, \ldots, \alpha_k, P.\text{out\_features}), \delta)
+   }
+
+where :math:`\alpha_1, \ldots, \alpha_k` are intermediate dimensions matched
+by a wildcard pattern and carried forward unchanged. The last dimension
+:math:`F` must equal the declared ``in_features`` parameter; if this
+constraint is violated, a type error is emitted.
+
+**ReLU Activation (Shape-Preserving).** Activation functions are
+shape-preserving and dtype-preserving:
+
+.. math::
+
+   \frac{
+     \Gamma \vdash x : \text{Tensor}(\sigma, \delta)
+   }{
+     \Gamma \vdash \text{ReLU}(x) : \text{Tensor}(\sigma, \delta)
+   }
+
+The same rule applies to all shape-preserving modules: Tanh, Sigmoid,
+Softmax, Dropout, BatchNorm1d, BatchNorm2d, LayerNorm.
+
+How Modules Declare Their Contracts
+------------------------------------
+
+Every stereotype JSON can include a ``type_signature`` field that declares
+the module's shape contract. This is the bridge between the formal type
+system above and the concrete implementation.
+
+Input
+~~~~~
 
 .. code-block:: json
 
@@ -202,14 +272,12 @@ dimension and a feature dimension controlled by its parameter:
      "dtype": { "output": "float32" }
    }
 
-The empty ``input`` array means "I have no input — I am a source."
-The ``output`` says "I produce [B, out_features] with dtype float32."
+The empty ``input`` array means "I have no input — I am a source." The
+``output`` says "I produce :math:`[B, \text{out\_features}]` with dtype
+``float32``."
 
-Linear — transforming the last dimension
-~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
-
-Linear applies an affine transformation to the last dimension of its input.
-It keeps the batch dimension and any intermediate dimensions:
+Linear
+~~~~~~
 
 .. code-block:: json
 
@@ -227,16 +295,19 @@ It keeps the batch dimension and any intermediate dimensions:
      ]
    }
 
-This pattern says: "I need a batch dim, then I do not care how many
-intermediate dimensions there are, and the last dimension must equal
-my ``in_features``. I preserve the batch, preserve the intermediate dims,
-and change the last dimension to ``out_features``."
+The pattern :math:`[B, *, \text{in\_features}]` means: match a batch
+dimension, then zero or more intermediate dimensions captured by the
+wildcard, then require the last dimension to equal the ``in_features``
+parameter. The output preserves the batch and intermediate dimensions while
+replacing the last dimension with ``out_features``.
 
-ReLU and friends — shape-preserving modules
-~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+A naming convention applies to all JSON type signatures: symbolic names
+start with ``$`` (``"$B"``, ``"$H"``, ``"$W"``) to distinguish them from
+parameter references, which never have the prefix. The ``$`` is stripped
+when the JSON is loaded into the engine.
 
-Activation functions, dropout, and normalization layers do not change shapes.
-Their contract is simply: "whatever comes in goes out unchanged":
+ReLU and Shape-Preserving Modules
+~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
 
 .. code-block:: json
 
@@ -247,411 +318,260 @@ Their contract is simply: "whatever comes in goes out unchanged":
    }
 
 The wildcard on both input and output means "I accept any shape, and the
-output has the same shape as the input."
+output shape equals the input shape." This single pattern covers ReLU, Tanh,
+Sigmoid, Softmax, Dropout, BatchNorm1d, BatchNorm2d, and LayerNorm.
 
-This single pattern covers: ReLU, Tanh, Sigmoid, Softmax, Dropout,
-BatchNorm1d, BatchNorm2d, LayerNorm.
+The Notation Rule for ``$``
+~~~~~~~~~~~~~~~~~~~~~~~~~~~
 
-Conv2d — computed output dimensions
-~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+In JSON, symbolic dimension names start with ``$`` (``"$B"``, ``"$H"``,
+``"$W"``). Parameter references never have ``$`` (``"in_features"``,
+``"out_channels"``). When loaded, ``"$B"`` becomes ``{ kind: 'symbolic',
+name: 'B' }`` — the ``$`` is stripped, leaving only the canonical name.
 
-Convolutional layers change the spatial dimensions of their input. The output
-height and width are computed from the input dimensions and parameters:
+The Inference Engine
+--------------------
 
-.. code-block:: json
+The type engine (``TypeEngine`` in ``typeEngine.ts``) implements the formal
+rules above as a constraint-based algorithm operating in two phases:
 
-   "type_signature": {
-     "kind": "module",
-     "input": [
-       { "kind": "symbolic", "name": "$B" },
-       { "kind": "param_ref", "name": "in_channels" },
-       { "kind": "symbolic", "name": "$H" },
-       { "kind": "symbolic", "name": "$W" }
-     ],
-     "output": [
-       { "kind": "symbolic", "name": "$B" },
-       { "kind": "param_ref", "name": "out_channels" },
-       { "kind": "computed", "formula": "conv2d_hw",
-         "args": ["$H", "kernel_size", "stride", "padding", "dilation"] },
-       { "kind": "computed", "formula": "conv2d_hw",
-         "args": ["$W", "kernel_size", "stride", "padding", "dilation"] }
-     ]
-   }
+**1. Constraint Generation.** For each node visited in topological order,
+the engine reads the node's ``type_signature`` and generates constraints by
+pattern-matching the actual input shape against the declared input pattern.
+This produces:
 
-The ``computed`` dimensions use the formula:
+* **Bindings**: symbolic dimensions in the pattern are bound to their
+  matched concrete values
+* **Substitutions**: wildcard dimensions capture a suffix of the actual
+  shape for reuse in the output pattern
+* **Resolutions**: parameter references are resolved to the node's current
+  parameter values
+
+**2. Constraint Solving.** The engine substitutes bound variables and
+captured wildcards into the output pattern, producing the output tensor
+type. If any constraint is violated (a constant dimension does not match,
+a dtype constraint fails, a parameter reference cannot be resolved), a
+``TypeError`` is recorded.
+
+The algorithm in pseudocode:
+
+.. code-block:: text
+
+   TypeEngine.infer(diagram):
+     1. Build topological order (Kahn's algorithm on top-level nodes)
+     2. For each node in order:
+        a. Read stereotype and typeSignature
+        b. If no typeSignature → warning, treat output as "unknown"
+        c. Determine input type(s) from predecessor annotations
+        d. Call patternMatch(inputShape, inputPattern, params, env)
+        e. If match fails → record TypeError, continue
+        f. Resolve output: substitute bindings + captured wildcards
+        g. Store annotation, update environment
+     3. Return { ok, annotations, errors }
+
+Pattern Matching
+~~~~~~~~~~~~~~~~
+
+The core pattern matching algorithm walks input dimensions and pattern
+elements with a two-pointer approach:
+
++-------------+----------------------------------------------------------+
+| Kind        | Behaviour                                                |
++=============+==========================================================+
+| ``const``   | The input dimension at this position must equal the      |
+|             | constant value. E.g.: pattern expects 3, input has 1 →   |
+|             | ``dimension mismatch: expected 3, got 1``                |
++-------------+----------------------------------------------------------+
+| ``symbolic``| If the name is already bound in :math:`\Gamma`, the      |
+|             | input dimension must equal the bound value (unification). |
+|             | If unbound, a new binding is added. E.g.: ``symbolic $B  |
+|             | already bound to 784, cannot unify with 128``            |
++-------------+----------------------------------------------------------+
+|``param_ref``| The parameter is resolved from the node's parameter map. |
+|             | The input dimension must equal the resolved value. If    |
+|             | the value is non-numeric (e.g. "cazz"), a type error is  |
+|             | reported rather than silently treating it as unset.      |
++-------------+----------------------------------------------------------+
+| ``wildcard``| Consumes zero or more input dimensions, with lookahead   |
+|             | for subsequent required pattern elements. The consumed   |
+|             | dimensions are captured and substituted into the output.  |
++-------------+----------------------------------------------------------+
+| ``computed``| Pass-through on the input side (exact value is not       |
+|             | validated); the formula is resolved on the output side.  |
++-------------+----------------------------------------------------------+
+
+**Wildcard lookahead.** The wildcard does not blindly consume all remaining
+dimensions. It computes how many are needed for subsequent non-wildcard
+pattern elements and reserves them. For the pattern :math:`[B, *,
+\text{in\_features}]` on input :math:`[B, 128, 784]`: the wildcard consumes
+one dimension (128), leaving the last for ``in_features``. On input
+:math:`[B, 784]` it consumes zero dimensions.
+
+**Symbolic unification.** When a symbolic name appears in multiple positions
+(e.g. :math:`\$K` in both MatMul input patterns), the engine verifies that
+all occurrences bind to the same concrete value. If they conflict, a
+unification error is reported.
+
+Computed Dimensions
+-------------------
+
+Some modules produce output dimensions that depend on their parameters in
+non-trivial ways. These are expressed through the ``computed`` dimension
+kind with named formulas.
+
+Conv2d
+~~~~~~
+
+The output height and width of a convolution are computed from the input
+size, kernel size, stride, padding, and dilation:
 
 .. math::
 
    H_{\text{out}} = \left\lfloor \frac{H + 2p - d(k - 1) - 1}{s} + 1 \right\rfloor
 
-The engine resolves this formula when all arguments (``$H``, ``kernel_size``,
-``stride``, etc.) are known. If any argument is still symbolic (e.g. the input
-height is not yet known), the dimension remains as a deferred computation.
-
-Embedding — adding a dimension
-~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
-
-Embedding takes token indices and produces dense vectors:
+The type signature declares this as:
 
 .. code-block:: json
 
-   "type_signature": {
-     "kind": "module",
-     "input": [
-       { "kind": "symbolic", "name": "$B" },
-       { "kind": "symbolic", "name": "$L" }
-     ],
-     "output": [
-       { "kind": "symbolic", "name": "$B" },
-       { "kind": "symbolic", "name": "$L" },
-       { "kind": "param_ref", "name": "embedding_dim" }
-     ]
-   }
+   "output": [
+     { "kind": "symbolic", "name": "$B" },
+     { "kind": "param_ref", "name": "out_channels" },
+     { "kind": "computed", "formula": "conv2d_hw",
+       "args": ["$H", "kernel_size", "stride", "padding", "dilation"] },
+     { "kind": "computed", "formula": "conv2d_hw",
+       "args": ["$W", "kernel_size", "stride", "padding", "dilation"] }
+   ]
 
-The input is ``[B, L]`` (batch and sequence length). The output adds a third
-dimension: ``[B, L, embedding_dim]``.
+For a 3×3 convolution with stride 1 and padding 1 on a 32×32 input:
+:math:`(32 + 2(1) - 1(3-1) - 1) / 1 + 1 = 32` (the output is the same size).
 
-When Two Branches Meet: Join Nodes
------------------------------------
+MaxPool2d and AvgPool2d
+~~~~~~~~~~~~~~~~~~~~~~~
 
-Joins are nodes that accept multiple inputs and merge them into one. The type
-system must check that all incoming branches produce compatible shapes.
+.. math::
 
-Addition — everything must match
-~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+   H_{\text{out}} = \left\lfloor \frac{H + 2p - k}{s} + 1 \right\rfloor
 
-Element-wise addition requires all inputs to have identical shapes:
+For 2×2 pooling with stride 2 on a 32×32 input:
+:math:`(32 + 0 - 2) / 2 + 1 = 16` (halves the spatial dimensions).
 
-.. code-block:: json
+Flatten
+~~~~~~~
 
-   "type_signature": {
-     "kind": "join",
-     "input": [
-       [{ "kind": "wildcard" }],
-       [{ "kind": "wildcard" }]
-     ],
-     "output": [{ "kind": "wildcard" }]
-   }
+The flattened dimension is the product of all wildcard-captured dimensions
+(referenced as ``$*`` in the formula arguments):
 
-The engine captures the shape from the first input and checks that every
-subsequent input has the same captured dimensions. If one branch produces
-[B, 256] and another produces [B, 128]:
+.. math::
+
+   d_{\text{flat}} = \prod_i d_i
+
+For :math:`[B, 128, 7, 7]`: :math:`128 \times 7 \times 7 = 6272` →
+:math:`[B, 6272]`.
+
+Join Type Checking
+------------------
+
+Join nodes accept multiple inputs and merge them into one. The type engine
+validates multi-input shape compatibility through pattern matching and
+symbolic unification.
+
+**Addition** requires all inputs to have identical shapes. The engine
+captures dimensions from the first input's wildcard and verifies that
+subsequent inputs produce identical captured dimensions. If one branch
+produces :math:`[B, 256]` and another produces :math:`[B, 128]`:
 
 .. code-block:: text
 
    ✗ Addition: Input 1 dimension 1 mismatch: 256 vs 128
 
-Concat — summing on one axis
-~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+**Concat** concatenates along a specified dimension (:math:`d`). All other
+dimensions must match. The output on dimension :math:`d` is the sum of the
+input dimensions:
 
-Concatenation joins tensors along a specified dimension. All other dimensions
-must match:
+.. math::
 
-.. code-block:: json
+   \text{Concat}(\text{dim}=d)(x_1, \ldots, x_n)[d] = \sum_{i=1}^n x_i[d]
 
-   "type_signature": {
-     "kind": "join",
-     "input": [
-       [{ "kind": "wildcard" }],
-       [{ "kind": "wildcard" }]
-     ],
-     "output": [{ "kind": "wildcard" }],
-     "constraints": {
-       "concat": { "dim": "params.dim" }
-     }
-   }
+For :math:`[B, 128]` and :math:`[B, 64]` with ``dim=-1``, the output is
+:math:`[B, 192]`.
 
-The ``concat`` constraint says "the output dimension on this axis is the sum
-of the input dimensions." For two inputs [B, 128] and [B, 64] with
-``dim=-1``:
+**MatMul** constrains the inner dimensions to match through symbolic
+unification:
 
-.. code-block:: text
+.. math::
 
-   Input 0: [B, 128]
-   Input 1: [B,  64]
-   ─────────────────
-   Output:  [B, 192]
+   (M, K) \times (K, N) \rightarrow (M, N)
 
-MatMul — connecting two dimensions
-~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+If the first input is :math:`(32, 64)` and the second is
+:math:`(128, 64)`, the engine binds :math:`K = 64` from the first and
+cannot unify with 128 from the second.
 
-Matrix multiplication has a precise shape constraint:
+**ScaledDotProduct** validates the full attention shape pattern:
 
-.. code-block:: json
+.. math::
 
-   "type_signature": {
-     "kind": "join",
-     "input": [
-       [
-         { "kind": "symbolic", "name": "$M" },
-         { "kind": "symbolic", "name": "$K" }
-       ],
-       [
-         { "kind": "symbolic", "name": "$K" },
-         { "kind": "symbolic", "name": "$N" }
-       ]
-     ],
-     "output": [
-       { "kind": "symbolic", "name": "$M" },
-       { "kind": "symbolic", "name": "$N" }
-     ]
-   }
+   Q(B, H, L, D) \times K(B, H, S, D) \times V(B, H, S, D_{\text{out}}) \rightarrow (B, H, L, D_{\text{out}})
 
-The symbolic variable ``$K`` appears in both inputs — this means the engine
-**unifies** them: whatever value ``$K`` has in the first input must match its
-value in the second. If the first input is (M, 64) and the second is (128, N),
-the engine binds K=64 from the first and then detects that 64 ≠ 128 in the
-second, reporting:
+Symbolic unification ensures that :math:`B`, :math:`H`, and :math:`D` are
+consistent across Q, K, and V. The output preserves the query length
+:math:`L` and value depth :math:`D_{\text{out}}` from V.
 
-.. code-block:: text
-
-   ✗ MatMul: symbolic $K already bound to 64, cannot unify with 128
-
-ScaledDotProduct — attention shapes
-~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
-
-Attention requires careful shape coordination across three inputs:
-
-.. code-block:: json
-
-   "type_signature": {
-     "kind": "join",
-     "input": [
-       [
-         { "kind": "symbolic", "name": "$B" },
-         { "kind": "symbolic", "name": "$H" },
-         { "kind": "symbolic", "name": "$L" },
-         { "kind": "symbolic", "name": "$D" }
-       ],
-       [
-         { "kind": "symbolic", "name": "$B" },
-         { "kind": "symbolic", "name": "$H" },
-         { "kind": "symbolic", "name": "$S" },
-         { "kind": "symbolic", "name": "$D" }
-       ],
-       [
-         { "kind": "symbolic", "name": "$B" },
-         { "kind": "symbolic", "name": "$H" },
-         { "kind": "symbolic", "name": "$S" },
-         { "kind": "symbolic", "name": "$D_out" }
-       ]
-     ],
-     "output": [
-       { "kind": "symbolic", "name": "$B" },
-       { "kind": "symbolic", "name": "$H" },
-       { "kind": "symbolic", "name": "$L" },
-       { "kind": "symbolic", "name": "$D_out" }
-     ]
-   }
-
-The engine ensures that:
-* Batch (``$B``) and head count (``$H``) are consistent across Q, K, V
-* The key/value sequence lengths (``$S``) match between K and V
-* The query/key depth (``$D``) matches between Q and K
-* The output preserves the query length (``$L``) and value depth (``$D_out``)
-
-How the Engine Works
---------------------
-
-The type engine is a **pure, data-driven inference pass** over the diagram
-graph. It does not know about Svelte, the user interface, or the Python
-backend. It simply looks at nodes, edges, and stereotype JSONs, and produces
-type annotations.
-
-The algorithm is straightforward:
-
-1. **Sort the nodes in execution order** (topological sort). Start with nodes
-   that have no incoming edges (the Input node), then follow connections
-   forward.
-
-2. **Start at the Input node.** Its output shape is defined by its
-   ``type_signature`` and parameters.
-
-3. **For each subsequent node, check the contract.** Look at the incoming
-   tensor shape. Compare it against the node's declared input pattern. If
-   they match, compute the output shape from the output pattern. If they
-   do not match, record a type error.
-
-4. **Pass the output shape forward.** The next node receives this as its
-   input shape, and the process repeats.
-
-If a cycle is detected (rare — the editor prevents most cycles), the engine
-emits a warning and processes only the nodes reachable from the Input.
-
-What about modules that have no ``type_signature``? The engine emits a warning
-and treats their output as "unknown type." This is called **gradual typing** —
-modules without signatures still work, they just do not get checked.
-
-Here is what the full inference looks like for our example:
-
-.. code-block:: text
-
-   Input(out_features=784)
-     │
-     ▼ output: [B, 784] (float32)
-     │
-   Linear(in_features=784, out_features=256)
-     │ patternMatch: [B, 784] vs [B, *, in_features=784] → OK
-     │ output: [B, 256] (float32)
-     │
-     ▼
-   ReLU
-     │ patternMatch: [B, 256] vs [*] → captured [B, 256]
-     │ output: [B, 256] (float32)
-     │
-     ▼
-   Linear(in_features=300, out_features=10)
-     │ patternMatch: [B, 256] vs [B, *, in_features=300] → FAIL
-     │ "param in_features=300, got 256"
-     │
-     ▼
-   ✗ ERROR — node marked with red border
-
-Three core ideas make this engine work:
-
-**Data-driven design**: The engine never checks ``if (stereotype.name === 'Linear')``.
-It reads the ``type_signature`` from the JSON and follows whatever patterns
-it finds. Adding a new module requires only adding a ``type_signature``
-field to its JSON — never a code change.
-
-**Pattern matching with wildcard lookahead**: When the engine sees a wildcard
-in a pattern like ``[B, *, in_features]``, it does not blindly consume all
-remaining dimensions. It looks ahead to see what other pattern elements follow,
-reserves dimensions for them, and captures only the excess. A pattern like
-``[B, *, in_features]`` on input ``[B, 128, 784]`` captures one dimension
-(128) because the last dimension is needed for ``in_features``. On input
-``[B, 784]`` it captures nothing.
-
-**Parameter validation**: When the engine reads a parameter like
-``in_features``, it returns one of three results:
-
-* ``'resolved'`` — the parameter has a valid numeric value (e.g. 784)
-* ``'unset'`` — the parameter is ``"None"`` or missing (treated as a soft
-  warning, not an error)
-* ``'invalid'`` — the parameter has a non-numeric value like ``"cazz"`` or
-  ``"hello"`` (reported as a type error)
-
-Computed Dimensions: Conv2d and Flatten
----------------------------------------
-
-Some modules produce output dimensions that depend on their parameters in
-non-trivial ways. The type system handles these through **named formulas**.
-
-``conv2d_hw``: used by Conv2d
-   The output height and width of a convolution depend on the input size,
-   kernel size, stride, padding, and dilation:
-
-   .. math::
-
-      H_{\text{out}} = \left\lfloor \frac{H + 2p - d(k - 1) - 1}{s} + 1 \right\rfloor
-
-   For a 3×3 convolution with stride 1 and padding 1 on a 32×32 input:
-   ``(32 + 2*1 - 1*(3-1) - 1) / 1 + 1 = 32`` (the output is the same size).
-
-``pool2d_hw``: used by MaxPool2d, AvgPool2d
-   Pooling has a simpler formula:
-
-   .. math::
-
-      H_{\text{out}} = \left\lfloor \frac{H + 2p - k}{s} + 1 \right\rfloor
-
-   For 2×2 max pooling with stride 2 on a 32×32 input:
-   ``(32 + 0 - 2) / 2 + 1 = 16`` (halves the spatial dimensions).
-
-``flatten_prod``: used by Flatten
-   The flattened dimension is the product of all feature dimensions:
-
-   .. math::
-
-      d_{\text{flat}} = \prod_i d_i
-
-   For a ``[B, 128, 7, 7]`` tensor: ``128 * 7 * 7 = 6272`` → output ``[B, 6272]``.
-
-These formulas are resolved lazily: if an input dimension is still symbolic
-(e.g. you have not connected a source that fixes the width), the computed
-dimension remains as a deferred computation. Once all inputs are known, the
-formula is evaluated and the dimension becomes a concrete number.
+***Note.** Einsum has no type signature because its shape constraints depend
+on the equation string, which is a free-form parameter. The engine emits a
+warning and treats its type as unknown. This is a deliberate case of
+gradual typing.*
 
 Real-Time Feedback in the Editor
---------------------------------
+---------------------------------
 
-The type system is wired into the visual editor so you see errors as you work.
+The type engine is wired into the visual editor so that errors surface
+immediately as the user edits.
 
-When does the engine run?
-~~~~~~~~~~~~~~~~~~~~~~~~~
+**Trigger events.** ``TypeEngine.infer(diagram)`` is called every time an
+edge is added or removed, a parameter changes (debounced 300ms), or a
+diagram is loaded.
 
-Every time you:
+**Error panel.** A collapsible section at the bottom of the Sidebar lists
+all type problems. Errors (red) indicate shape mismatches that would cause
+runtime crashes. Warnings (amber) indicate missing type signatures or
+unresolved parameters. Clicking an error selects the offending node.
 
-* **Add or remove a connection** — the engine re-checks the affected path
-* **Change a parameter** — after a short delay (300ms debounce) to avoid
-  checking on every keystroke
-* **Load a diagram** — the engine checks the entire graph
+**Node indicators.** Nodes with errors display a red border (2px) with an
+✗ indicator in the top-right corner. Nodes with warnings display an amber
+border with a ⚠ indicator. Indicators disappear when the error is resolved.
 
-What do you see?
-~~~~~~~~~~~~~~~~
-
-**An error panel** at the bottom of the sidebar lists all type problems:
-
-.. code-block:: text
-
-   ┌─ Type Errors (2) ────────────────────────┐
-   │ ✗ Linear_1: dimension mismatch:          │
-   │   param in_features=512, got 784         │
-   │                                          │
-   │ ⚠ Fork_0: No type signature for "Fork"  │
-   └──────────────────────────────────────────┘
-
-* Red items are **errors** — shape mismatches that would crash training
-* Amber items are **warnings** — modules without type signatures, unset
-  parameters that the engine cannot check
-
-Clicking an error selects the offending node on the canvas, so you can fix
-it immediately.
-
-**Colored node borders** let you spot problems at a glance:
-
-* **Red border** with ✗ icon — this node has a type error
-* **Amber border** with ⚠ icon — this node has a warning
-
-**Shape tooltips** appear when you hover over a node's output handle:
+**Shape tooltips.** Hovering over a node's output handle shows a tooltip
+with the inferred output shape:
 
 .. code-block:: text
 
    Output: [B, 256]  float32
 
-This lets you check what shape a node actually produces before connecting
-it to the next layer.
+Implementation Phases
+---------------------
 
-What's Next?
-------------
+The type system was implemented incrementally over five phases:
 
-The type system was implemented in phases. Here is where we are and what
-is coming:
-
-+-------------+--------------------------------------------------+
-| Phase       | What Was Added                                   |
-+=============+==================================================+
-| Phase 1     | Core type model, basic pattern matching,         |
-|             | Input / Linear / ReLU type signatures            |
-+-------------+--------------------------------------------------+
-| Phase 2     | Computed dimensions (Conv2d, MaxPool2d,          |
-|             | Flatten), 10 shape-preserving modules,           |
-|             | Embedding                                        |
-+-------------+--------------------------------------------------+
-| Phase 3     | Join type checking (Addition, Concat, MatMul,    |
-|             | ScaledDotProduct, MaskedScaledDotProduct)        |
-+-------------+--------------------------------------------------+
-| Phase 4     | **(Future)** Subflow type inference (Repeat,     |
-|             | HorizontalRepeat, MultiheadAttention)            |
-+-------------+--------------------------------------------------+
-| Phase 5     | Editor integration: error panel, node borders,   |
-|             | shape tooltips, real-time checking               |
-+-------------+--------------------------------------------------+
-
-The most impactful near-term addition is Phase 4 — subflow type inference.
-Currently, subflows pass through as "unknown type." Once implemented, the
-engine will recursively check the internal graph of subflows, making the
-type system fully comprehensive.
++-------------+----------------------------------------------------------+
+| Phase       | What Was Added                                           |
++=============+==========================================================+
+| Phase 1     | Core type model (tensortypes.ts), pattern matching        |
+|             | engine, type signatures for Input/Linear/ReLU            |
++-------------+----------------------------------------------------------+
+| Phase 2     | Computed dimensions (conv2d_hw, pool2d_hw,               |
+|             | flatten_prod), Conv2d/MaxPool2d/AvgPool2d/Flatten,      |
+|             | 10 shape-preserving modules, Embedding                   |
++-------------+----------------------------------------------------------+
+| Phase 3     | Join type checking (Addition, Concat, MatMul,            |
+|             | ScaledDotProduct, MaskedScaledDotProduct),               |
+|             | multi-input pattern matching, symbolic unification       |
++-------------+----------------------------------------------------------+
+| Phase 4     | *(Not yet implemented)* Subflow type inference,          |
+|             | Repeat/HorizontalRepeat, MultiheadAttention              |
++-------------+----------------------------------------------------------+
+| Phase 5     | Editor integration: reactive ``typeResult`` state,       |
+|             | error panel, node indicators, shape tooltips             |
++-------------+----------------------------------------------------------+
 
 Further Reading
 ---------------
@@ -660,7 +580,7 @@ Further Reading
 * Source: ``front-end/src/conversion/tensortypes.ts`` — type model interfaces
 * Source: ``front-end/src/conversion/typeEngine.ts`` — inference engine
   implementation
-* Tests: ``front-end/src/__tests__/typeEngine.test.ts`` — 50+ tests covering
-  happy paths, mismatches, edge cases, computed dims, and joins
+* Tests: ``front-end/src/__tests__/typeEngine.test.ts`` — 50+ tests
+  covering all phases
 * Design docs: ``docs/designs/tensor-type-system/`` — full architectural
   design documents
