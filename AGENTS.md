@@ -203,6 +203,7 @@ NNModelling/
 │   │   ├── stereotypes.rst     # All 35 stereotypes with params and examples
 │   │   ├── python_api.rst      # Auto-generated Python API docs
 │   │   ├── typescript_api.rst  # TypeDoc integration page
+│   │   ├── type_system.rst     # Educational tensor type system guide
 │   │   ├── examples.rst        # Walkthrough of all 10 example diagrams
 │   │   └── _static/            # Static assets
 │   └── build/                  # Build output (generated)
@@ -633,12 +634,14 @@ Three MCP synchronization bugs fixed, discovered during agent-driven diagram cre
 
 **Test count**: 96 → 120 (+24 tests for param merging, edge handle defaults, viewport injection)
 
-### Phase 15 — Type System Improvements (current)
+### Phase 15 — Type System Improvements + Documentation (current)
 
 Two type system improvements:
 
 1. **Invalid parameter validation**: Previously, non-numeric parameter values (e.g. "cazz" for `in_features`) were silently treated as "unset", creating symbolic variables instead of reporting errors. Now `resolveParamRef` returns a `ParamResolution` discriminated union (`unset` | `invalid` | `resolved`), and invalid values generate type errors in the Type Check panel.
 
 2. **Output handle alignment**: Fixed output handle centering (was `display: inline-block`, now `width: 100%; display: flex; justify-content: center`). Fixed shape tooltip positioning — always shown above the handle to avoid overlapping with node body.
+
+3. **Educational documentation**: Added `docs2/source/type_system.rst` — a full educational guide to the tensor type system. Covers the problem statement (catching shape errors before PyTorch), example-guided walkthrough (following a tensor through the graph), the five dimension kinds, type signatures for all modules, join type checking, computed dimensions, real-time editor feedback, and phase roadmap. Uses plain language, narrative examples, and formal math only where it helps understanding.
 
 **Test count**: 120 → 146 (+26 tests for invalid parameter validation and other improvements)
