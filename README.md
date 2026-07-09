@@ -1,5 +1,7 @@
 # NNModelling
 
+[![CI](https://github.com/LucaSforza/NNModelling/actions/workflows/ci.yml/badge.svg)](https://github.com/LucaSforza/NNModelling/actions/workflows/ci.yml)
+
 DSL for designing neural networks via visual node editor. Diagrams convert to PyTorch/Lightning training pipelines.
 
 ```

@@ -1,0 +1,55 @@
+name: CI
+
+on:
+  push:
+    branches: [master, typeSystem]
+  pull_request:
+    branches: [master, typeSystem]
+
+jobs:
+  frontend-ci:
+    name: Frontend CI
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: pnpm/action-setup@v4
+        with:
+          version: 10
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 20
+          cache: pnpm
+      - run: pnpm install
+      - run: pnpm --filter @nnmodelling/front-end run check
+      - run: pnpm --filter @nnmodelling/front-end run test
+      - run: pnpm --filter @nnmodelling/front-end run build
+
+  backend-ci:
+    name: Backend CI
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+      - run: pip install uv
+      - run: uv sync
+        working-directory: converted
+      - run: uv run pytest src/tests/ -v
+        working-directory: converted
+
+  mcp-ci:
+    name: MCP Server CI
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: pnpm/action-setup@v4
+        with:
+          version: 10
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 20
+          cache: pnpm
+      - run: pnpm install
+      - run: pnpm --filter @nnmodelling/mcp-server run build
+      - run: pnpm --filter @nnmodelling/mcp-server run test
