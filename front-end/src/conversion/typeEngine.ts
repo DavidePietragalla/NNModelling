@@ -450,7 +450,7 @@ export class TypeEngine {
             } satisfies TypeError;
           }
           const outputShape = this.inferEinsumShape(equation, inputTypes, stereotype.name);
-          if (isTypeError(outputShape)) return outputShape;
+          if (!Array.isArray(outputShape)) return outputShape;
           return { shape: outputShape, dtype: inputTypes[0].dtype } satisfies TensorType;
         }
 
