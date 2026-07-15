@@ -1,7 +1,7 @@
 ---
 description: UI/UX designer — visual design, layout, color, typography, and user experience for the node editor. Works by inspecting the live app via glimpse-mcp (no screenshots) and nnmodelling-mcp tools, reading source files, and delegating implementation to @frontend.
 mode: all
-model: deepseek-v4-flash-free
+model: deepseek-v4-flash
 permission:
   edit: deny
   bash: deny

@@ -885,6 +885,10 @@ export class TypeEngine {
       case "flatten_prod": {
         return args.reduce((a, b) => a * b, 1);
       }
+      case "upsample_hw": {
+        const [h, scale] = args;
+        return h * scale;
+      }
       default:
         return undefined;
     }
@@ -1245,6 +1249,9 @@ export class TypeEngine {
     env: TypeEnvironment,
     captured: ShapeDimension[],
   ): ShapeDimension[] {
+    // Empty output pattern → terminal node (e.g. Loss nodes)
+    if (pattern.length === 0) return [];
+
     const result: ShapeDimension[] = [];
     let capIdx = 0;
 
@@ -1337,10 +1344,15 @@ export class TypeEngine {
       }
     }
 
-    // Safety: push any unconsumed captured dims (shouldn't happen with valid patterns)
-    while (capIdx < captured.length) {
-      result.push(captured[capIdx]);
-      capIdx++;
+    // Push any unconsumed captured dims only if the output pattern has a wildcard
+    // to consume them (e.g. ReLU [*]).  For patterns without wildcards (e.g.
+    // SequencePool [$B, $D]), captured dims are intentionally dropped.
+    const hasWildcard = pattern.some(p => p.kind === "wildcard");
+    if (hasWildcard) {
+      while (capIdx < captured.length) {
+        result.push(captured[capIdx]);
+        capIdx++;
+      }
     }
 
     return result;

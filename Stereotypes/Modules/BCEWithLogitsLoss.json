@@ -28,5 +28,14 @@
       "type": "Tensor",
       "default": "None"
     }
+  },
+  "type_signature": {
+    "kind": "module",
+    "input": [
+      { "kind": "symbolic", "name": "$B" },
+      { "kind": "wildcard" }
+    ],
+    "output": [],
+    "dtype": { "output": "float32" }
   }
 }

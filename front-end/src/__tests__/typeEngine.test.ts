@@ -255,7 +255,7 @@ describe("TypeEngine — Shape Mismatch Errors", () => {
 // ---------------------------------------------------------------------------
 
 describe("TypeEngine — Edge Cases", () => {
-  it("3.1: No type_signature (Fork) produces warning, not error", () => {
+  it("3.1: Fork type_signature passes through shape (no warning)", () => {
     const d = new Diagram();
     const inputId = d.nodes[0].id;
     d.updateModule(inputId, { params: { out_features: { value: "784" } } });
@@ -266,19 +266,17 @@ describe("TypeEngine — Edge Cases", () => {
     d.edges.push(edge("e1", inputId, forkId));
 
     const result = TypeEngine.infer(d);
-    // No hard errors — just a warning
     expectTypeSuccess(result);
 
-    // Warning about missing type signature
+    // No warning about missing type signature for Fork
     const forkWarnings = result.errors.filter(
-      (e) => e.severity === "warning" && e.nodeId === forkId,
+      (e) => e.severity === "warning" && e.nodeId === forkId && e.message.includes("No type signature"),
     );
-    expect(forkWarnings.length).toBeGreaterThan(0);
-    expect(forkWarnings[0].message).toContain("No type signature");
+    expect(forkWarnings.length).toBe(0);
 
-    // Fork output type is unknown placeholder
-    expect(result.annotations.get(forkId)!.outputType.dtype).toBe("unknown");
-    expect(result.annotations.get(forkId)!.outputType.shape).toEqual([]);
+    // Fork passes through shape: [B, 784]
+    expectOutputShape(result, forkId, ["$B", "784"]);
+    expect(result.annotations.get(forkId)!.outputType.dtype).toBe("float32");
   });
 
   it("3.2: Disconnected node (floating) is not traversed", () => {
@@ -603,18 +601,19 @@ describe("TypeEngine — Error Message Quality", () => {
     const inputId = d.nodes[0].id;
     d.updateModule(inputId, { params: { out_features: { value: "784" } } });
 
-    const forkStereo = d.stereotypes.find((s) => s.name === "Fork")!;
-    d.addModule(forkStereo, 200, 0);
-    const forkId = d.nodes[1].id;
-    d.edges.push(edge("e1", inputId, forkId));
+    // Einsum has no type_signature → produces warning with nodeId
+    const einsumStereo = d.stereotypes.find((s) => s.name === "Einsum")!;
+    d.addJoinNode(einsumStereo, 200, 0);
+    const einsumId = d.nodes[1].id;
+    d.edges.push(edge("e1", inputId, einsumId));
 
     const result = TypeEngine.infer(d);
-    const forkErrors = result.errors.filter((e) => e.nodeId === forkId);
-    expect(forkErrors.length).toBeGreaterThan(0);
+    const einsumErrors = result.errors.filter((e) => e.nodeId === einsumId);
+    expect(einsumErrors.length).toBeGreaterThan(0);
     // The nodeId must be a non-empty string
-    expect(forkErrors[0].nodeId).toBe(forkId);
-    expect(typeof forkErrors[0].nodeId).toBe("string");
-    expect(forkErrors[0].nodeId.length).toBeGreaterThan(0);
+    expect(einsumErrors[0].nodeId).toBe(einsumId);
+    expect(typeof einsumErrors[0].nodeId).toBe("string");
+    expect(einsumErrors[0].nodeId.length).toBeGreaterThan(0);
   });
 
   it("5.2: Error message is human-readable (no stack traces, > 10 chars)", () => {
@@ -622,21 +621,22 @@ describe("TypeEngine — Error Message Quality", () => {
     const inputId = d.nodes[0].id;
     d.updateModule(inputId, { params: { out_features: { value: "784" } } });
 
-    const forkStereo = d.stereotypes.find((s) => s.name === "Fork")!;
-    d.addModule(forkStereo, 200, 0);
-    const forkId = d.nodes[1].id;
-    d.edges.push(edge("e1", inputId, forkId));
+    // Einsum has no type_signature → produces warning with human-readable message
+    const einsumStereo = d.stereotypes.find((s) => s.name === "Einsum")!;
+    d.addJoinNode(einsumStereo, 200, 0);
+    const einsumId = d.nodes[1].id;
+    d.edges.push(edge("e1", inputId, einsumId));
 
     const result = TypeEngine.infer(d);
-    const forkErrors = result.errors.filter((e) => e.nodeId === forkId);
-    expect(forkErrors.length).toBeGreaterThan(0);
+    const einsumErrors = result.errors.filter((e) => e.nodeId === einsumId);
+    expect(einsumErrors.length).toBeGreaterThan(0);
 
     // Human-readable: more than 10 characters
-    expect(forkErrors[0].message.length).toBeGreaterThan(10);
+    expect(einsumErrors[0].message.length).toBeGreaterThan(10);
     // Should not contain stack traces or internal names
-    expect(forkErrors[0].message).not.toContain("at ");
-    expect(forkErrors[0].message).not.toContain("Error:");
-    expect(forkErrors[0].message).not.toContain("TypeError");
+    expect(einsumErrors[0].message).not.toContain("at ");
+    expect(einsumErrors[0].message).not.toContain("Error:");
+    expect(einsumErrors[0].message).not.toContain("TypeError");
   });
 });
 
@@ -1249,5 +1249,199 @@ describe("TypeEngine — Phase 4 Subflows", () => {
     );
     expect(hrErrors.length).toBeGreaterThanOrEqual(1);
     expect(hrErrors[0].message).toMatch(/requires parameter.*n.*to be set/i);
+  });
+});
+
+// ---------------------------------------------------------------------------
+// Group 9 — Phase 4: Complex Module Type Signatures
+// ---------------------------------------------------------------------------
+
+describe("TypeEngine — Phase 4 Complex Signatures", () => {
+  it("9.1: Fork passes through shape with type_signature, no warning", () => {
+    const d = new Diagram();
+    const inputId = d.nodes[0].id;
+    d.updateModule(inputId, { params: { out_features: { value: "784" } } });
+
+    const forkStereo = d.stereotypes.find((s) => s.name === "Fork")!;
+    d.addModule(forkStereo, 200, 0);
+    const forkId = d.nodes[1].id;
+    d.edges.push(edge("e1", inputId, forkId));
+
+    const result = TypeEngine.infer(d);
+    expectTypeSuccess(result);
+
+    // No warning about missing type_signature
+    const forkWarnings = result.errors.filter(
+      (e) => e.severity === "warning" && e.nodeId === forkId && e.message.includes("No type signature"),
+    );
+    expect(forkWarnings.length).toBe(0);
+
+    // Fork output = [B, 784]
+    expectOutputShape(result, forkId, ["$B", "784"]);
+  });
+
+  it("9.2: PositionalEncoding preserves 3D shape: Input(50)→Embedding(1000,256)→PosEnc ⇒ [B,50,256]", () => {
+    const d = new Diagram();
+    const inputId = d.nodes[0].id;
+    d.updateModule(inputId, { params: { out_features: { value: "50" } } });
+
+    // Embedding: [B, 50] → [B, 50, 256]
+    const embStereo = d.stereotypes.find((s) => s.name === "Embedding")!;
+    d.addModule(embStereo, 200, 0);
+    const embId = d.nodes[1].id;
+    d.edges.push(edge("e1", inputId, embId));
+    d.updateModule(embId, {
+      params: {
+        num_embeddings: { value: "1000" },
+        embedding_dim: { value: "256" },
+      },
+    });
+
+    // PositionalEncoding: [B, 50, 256] → [B, 50, 256]
+    const posEncStereo = d.stereotypes.find((s) => s.name === "PositionalEncoding")!;
+    d.addModule(posEncStereo, 200, 100);
+    const posEncId = d.nodes[2].id;
+    d.edges.push(edge("e2", embId, posEncId));
+
+    const result = TypeEngine.infer(d);
+    expectTypeSuccess(result);
+    expectOutputShape(result, posEncId, ["$B", "50", "256"]);
+  });
+
+  it("9.3: SequencePool reduces rank: Input(50)→Embedding(1000,256)→SeqPool ⇒ [B,256]", () => {
+    const d = new Diagram();
+    const inputId = d.nodes[0].id;
+    d.updateModule(inputId, { params: { out_features: { value: "50" } } });
+
+    // Embedding: [B, 50] → [B, 50, 256]
+    const embStereo = d.stereotypes.find((s) => s.name === "Embedding")!;
+    d.addModule(embStereo, 200, 0);
+    const embId = d.nodes[1].id;
+    d.edges.push(edge("e1", inputId, embId));
+    d.updateModule(embId, {
+      params: {
+        num_embeddings: { value: "1000" },
+        embedding_dim: { value: "256" },
+      },
+    });
+
+    // SequencePool: [B, L, D] → [B, D] (L dim collapsed)
+    const seqPoolStereo = d.stereotypes.find((s) => s.name === "SequencePool")!;
+    d.addModule(seqPoolStereo, 200, 100);
+    const seqPoolId = d.nodes[2].id;
+    d.edges.push(edge("e2", embId, seqPoolId));
+
+    const result = TypeEngine.infer(d);
+    expectTypeSuccess(result);
+    expectOutputShape(result, seqPoolId, ["$B", "256"]);
+  });
+
+  it("9.4: MultiheadAttention preserves 3D: Input(50)→Embedding(1000,512)→MHA(embed_dim=512) ⇒ [B,50,512]", () => {
+    const d = new Diagram();
+    const inputId = d.nodes[0].id;
+    d.updateModule(inputId, { params: { out_features: { value: "50" } } });
+
+    // Embedding: [B, 50] → [B, 50, 512]
+    const embStereo = d.stereotypes.find((s) => s.name === "Embedding")!;
+    d.addModule(embStereo, 200, 0);
+    const embId = d.nodes[1].id;
+    d.edges.push(edge("e1", inputId, embId));
+    d.updateModule(embId, {
+      params: {
+        num_embeddings: { value: "1000" },
+        embedding_dim: { value: "512" },
+      },
+    });
+
+    // MultiheadAttention: [B, 50, 512] → [B, 50, 512] (embed_dim=512)
+    const mhaStereo = d.stereotypes.find((s) => s.name === "MultiheadAttention")!;
+    d.addModule(mhaStereo, 200, 100);
+    const mhaId = d.nodes[2].id;
+    d.edges.push(edge("e2", embId, mhaId));
+    d.updateModule(mhaId, {
+      params: { embed_dim: { value: "512" } },
+    });
+
+    const result = TypeEngine.infer(d);
+    expectTypeSuccess(result);
+    expectOutputShape(result, mhaId, ["$B", "50", "512"]);
+  });
+
+  it("9.5: MultiheadAttention embed_dim mismatch: Input(50)→Embedding(1000,256)→MHA(embed_dim=512) ⇒ error", () => {
+    const d = new Diagram();
+    const inputId = d.nodes[0].id;
+    d.updateModule(inputId, { params: { out_features: { value: "50" } } });
+
+    // Embedding: [B, 50] → [B, 50, 256]
+    const embStereo = d.stereotypes.find((s) => s.name === "Embedding")!;
+    d.addModule(embStereo, 200, 0);
+    const embId = d.nodes[1].id;
+    d.edges.push(edge("e1", inputId, embId));
+    d.updateModule(embId, {
+      params: {
+        num_embeddings: { value: "1000" },
+        embedding_dim: { value: "256" },
+      },
+    });
+
+    // MultiheadAttention: expects embed_dim=512 but gets 256
+    const mhaStereo = d.stereotypes.find((s) => s.name === "MultiheadAttention")!;
+    d.addModule(mhaStereo, 200, 100);
+    const mhaId = d.nodes[2].id;
+    d.edges.push(edge("e2", embId, mhaId));
+    d.updateModule(mhaId, {
+      params: { embed_dim: { value: "512" } },
+    });
+
+    const result = TypeEngine.infer(d);
+    expect(result.ok).toBe(false);
+
+    const mhaErrors = result.errors.filter(
+      (e) => e.nodeId === mhaId && e.severity === "error",
+    );
+    expect(mhaErrors.length).toBeGreaterThanOrEqual(1);
+    expect(mhaErrors[0].message).toMatch(/embed_dim|512|256|mismatch|dimension/i);
+  });
+
+  it("9.6: Loss node (BCEWithLogitsLoss) accepts valid input and produces empty output", () => {
+    const d = new Diagram();
+    const inputId = d.nodes[0].id;
+    d.updateModule(inputId, { params: { out_features: { value: "10" } } });
+
+    // Linear: [B, 10] → [B, 5]
+    const linearStereo = d.stereotypes.find((s) => s.name === "Linear")!;
+    d.addModule(linearStereo, 200, 0);
+    const linearId = d.nodes[1].id;
+    d.edges.push(edge("e1", inputId, linearId));
+    d.updateModule(linearId, {
+      params: {
+        in_features: { value: "10" },
+        out_features: { value: "5" },
+      },
+    });
+
+    // BCEWithLogitsLoss: accepts [B, *] → empty output
+    const lossStereo = d.stereotypes.find((s) => s.name === "BCEWithLogitsLoss")!;
+    d.addModule(lossStereo, 200, 100);
+    const lossId = d.nodes[2].id;
+    d.edges.push(edge("e2", linearId, lossId));
+
+    const result = TypeEngine.infer(d);
+    expectTypeSuccess(result);
+
+    // Loss node should have empty output shape
+    const lossAnn = result.annotations.get(lossId);
+    expect(lossAnn).toBeDefined();
+    expect(lossAnn!.outputType.shape).toEqual([]);
+  });
+
+  it("9.7: Unsample upsample_hw formula resolves correctly: (32,2)→64, (16,1)→16", () => {
+    const resolveFormula = (TypeEngine as unknown as Record<string, unknown>)
+      .resolveFormula as (formula: string, args: number[]) => number | undefined;
+
+    expect(resolveFormula("upsample_hw", [32, 2])).toBe(64);
+    expect(resolveFormula("upsample_hw", [16, 1])).toBe(16);
+    expect(resolveFormula("upsample_hw", [8, 3])).toBe(24);
+    expect(resolveFormula("upsample_hw", [0, 2])).toBe(0);
   });
 });

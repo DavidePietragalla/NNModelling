@@ -6,5 +6,10 @@
     "width": 30,
     "height": 30
   },
-  "params": {}
+  "params": {},
+  "type_signature": {
+    "kind": "module",
+    "input": [{ "kind": "wildcard" }],
+    "output": [{ "kind": "wildcard" }]
+  }
 }

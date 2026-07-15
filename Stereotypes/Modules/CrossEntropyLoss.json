@@ -32,5 +32,14 @@
       "type": "float",
       "default": "0.0"
     }
+  },
+  "type_signature": {
+    "kind": "module",
+    "input": [
+      { "kind": "symbolic", "name": "$B" },
+      { "kind": "symbolic", "name": "$C" }
+    ],
+    "output": [],
+    "dtype": { "output": "float32" }
   }
 }
