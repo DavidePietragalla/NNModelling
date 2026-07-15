@@ -37,7 +37,7 @@ describe("BrowserRPCHandler", () => {
     const mockSend = vi.fn();
     (handler as any).ws = {
       send: mockSend,
-      readyState: WebSocket.OPEN,
+      readyState: 1, // WebSocket.OPEN
       close: vi.fn(),
     };
 
