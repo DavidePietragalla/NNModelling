@@ -566,8 +566,14 @@ The type system was implemented incrementally over five phases:
 |             | ScaledDotProduct, MaskedScaledDotProduct),               |
 |             | multi-input pattern matching, symbolic unification       |
 +-------------+----------------------------------------------------------+
-| Phase 4     | *(Not yet implemented)* Subflow type inference,          |
-|             | Repeat/HorizontalRepeat, MultiheadAttention              |
+| Phase 4     | Recursive subflow type inference (generic, Repeat,        |
+|             | HorizontalRepeat), type signatures for 7 complex modules |
+|             | (MultiheadAttention, Transformer, TransformerEncoderLayer,|
+|             | TransformerDecoderLayer, PositionalEncoding, SequencePool,|
+|             | Unsample), 4 loss nodes (BCELoss, BCEWithLogitsLoss,     |
+|             | CrossEntropyLoss, MSELoss), Fork, and the ``upsample_hw`` |
+|             | computed formula. 34 of 35 stereotypes now have type      |
+|             | signatures (Einsum is intentionally gradual typing).      |
 +-------------+----------------------------------------------------------+
 | Phase 5     | Editor integration: reactive ``typeResult`` state,       |
 |             | error panel, node indicators, shape tooltips             |
@@ -580,7 +586,7 @@ Further Reading
 * Source: ``front-end/src/conversion/tensortypes.ts`` — type model interfaces
 * Source: ``front-end/src/conversion/typeEngine.ts`` — inference engine
   implementation
-* Tests: ``front-end/src/__tests__/typeEngine.test.ts`` — 50+ tests
-  covering all phases
+* Tests: ``front-end/src/__tests__/typeEngine.test.ts`` — 170 tests
+  (165 passing, 5 skipped) covering all phases
 * Design docs: ``docs/designs/tensor-type-system/`` — full architectural
   design documents
