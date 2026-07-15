@@ -529,6 +529,188 @@ The pattern matching algorithm handles each dimension kind as follows:
 \end{itemize}
 
 
+\subsection{Computed Dimensions}
+
+Not all output dimensions can be expressed as direct parameter references or symbolic copies of input dimensions. Modules with spatial operations --- convolutions, pooling, flattening, and upsampling --- produce output sizes that depend on their configuration through well-known formulas. To handle these cases declaratively, the type system introduces a \textbf{computed} dimension kind.
+
+A computed dimension is declared in the \texttt{type\_signature} JSON with the structure:
+
+\[
+\{ \text{kind}: \text{computed},\; \text{formula}: f,\; \text{args}: [a_1, a_2, \ldots, a_n] \}
+\]
+
+where $f$ is a named formula identifier and each $a_i$ is an argument referencing either a symbolic dimension captured from the input pattern, a parameter value, or a literal constant. The formula is resolved on the output side during constraint solving; on the input side, the computed dimension acts as a pass-through (its exact value is not validated against the input pattern, since it is the output formula that determines it).
+
+\paragraph{Conv2d}
+
+The output height and width of a 2D convolution are computed from the input size, kernel size, stride, padding, and dilation:
+
+\[
+H_{\text{out}} = \left\lfloor \frac{H + 2p - d(k - 1) - 1}{s} + 1 \right\rfloor
+\]
+
+where $H$ is the input spatial dimension, $k$ is the kernel size, $s$ is the stride, $p$ is the padding, and $d$ is the dilation. The formula is registered under the name \texttt{conv2d\_hw}. For a $3 \times 3$ convolution with stride 1 and padding 1 on a $32 \times 32$ input, the output spatial dimensions remain $32 \times 32$.
+
+\paragraph{MaxPool2d and AvgPool2d}
+
+Pooling layers follow a similar formula with no dilation term:
+
+\[
+H_{\text{out}} = \left\lfloor \frac{H + 2p - k}{s} + 1 \right\rfloor
+\]
+
+The formula is registered under the name \texttt{pool2d\_hw}. For $2 \times 2$ max-pooling with stride 2 on a $32 \times 32$ input, the output is $16 \times 16$.
+
+\paragraph{Flatten}
+
+The Flatten module collapses all non-batch dimensions into a single dimension whose size is the product of the captured wildcard dimensions:
+
+\[
+d_{\text{flat}} = \prod_i d_i
+\]
+
+The formula is registered under the name \texttt{flatten\_prod}. For an input of shape $[B, 128, 7, 7]$, the wildcard captures the last three dimensions and the formula computes $128 \times 7 \times 7 = 6272$, producing $[B, 6272]$.
+
+\paragraph{Upsample}
+
+The Upsample module scales spatial dimensions by a user-specified scale factor:
+
+\[
+H_{\text{out}} = \lfloor H \times \text{scale\_factor} \rfloor
+\]
+
+The formula is registered under the name \texttt{upsample\_hw}.
+
+These computed dimension formulas are implemented as a registry within the type engine, indexed by formula name. Adding a new spatial operation requires only registering a new formula and updating the corresponding stereotype JSON --- no TypeScript changes to the engine are needed.
+
+\subsection{Join Type Checking}
+
+Join nodes accept multiple input tensors and merge them into a single output tensor. Unlike standard modules, which have a single input pattern, join nodes carry an array of input patterns --- one per incoming connection. The type engine validates multi-input shape compatibility by pattern-matching each input against its corresponding pattern and applying symbolic unification across all matches.
+
+\paragraph{Addition}
+
+The Addition join requires all input tensors to have identical shapes. The engine captures dimensions from the first input using the wildcard pattern and verifies that all subsequent inputs produce identical captured dimensions:
+
+\[
+\frac{
+\Gamma \vdash x_1 : \text{Tensor}(\sigma, \delta) \quad
+\Gamma \vdash x_i : \text{Tensor}(\sigma_i, \delta) \quad
+\sigma_i = \sigma \text{ for all } i
+}{
+\Gamma \vdash \text{Addition}(x_1, \ldots, x_n) : \text{Tensor}(\sigma, \delta)
+}
+\]
+
+If one branch produces $[B, 256]$ and another produces $[B, 128]$, a type error is reported at the Addition node.
+
+\paragraph{Concat}
+
+The Concat join concatenates along a user-specified dimension $d$. All other dimensions must match across inputs. The output size on dimension $d$ is the sum of the corresponding input dimensions:
+
+\[
+\text{Concat}(\text{dim}=d)(x_1, \ldots, x_n)[d] = \sum_{i=1}^n x_i[d]
+\]
+
+For $[B, 128]$ and $[B, 64]$ with $\text{dim}=-1$, the output is $[B, 192]$. A type error occurs if the non-concatenated dimensions do not match across inputs.
+
+\paragraph{MatMul}
+
+The MatMul join constrains the inner dimensions of two inputs to match through symbolic unification:
+
+\[
+(M, K) \times (K, N) \rightarrow (M, N)
+\]
+
+The symbolic variable $K$ appears in both input patterns. During constraint generation, the engine binds $K$ from the first input and unifies with the second. If the first input is $(32, 64)$ and the second is $(128, 64)$, $K$ is bound to 64 from the first input but the second input has 128 at the $K$ position --- a unification error is reported.
+
+\paragraph{ScaledDotProduct}
+
+ScaledDotProduct implements the attention shape contract with four symbolic variables shared across three inputs:
+
+\[
+Q(B, H, L, D) \times K(B, H, S, D) \times V(B, H, S, D_{\text{out}}) \rightarrow (B, H, L, D_{\text{out}})
+\]
+
+Symbolic unification ensures that $B$, $H$, and $D$ are consistent across Q, K, and V. The output preserves the query length $L$ from Q and the value depth $D_{\text{out}}$ from V.
+
+\paragraph{MaskedScaledDotProduct}
+
+MaskedScaledDotProduct extends ScaledDotProduct with an additional mask input. The mask is validated as a boolean tensor with shape compatible with the attention logits matrix $(B, H, L, S)$. The shape constraints on Q, K, and V are identical to the unmasked variant.
+
+\paragraph{Error Example}
+
+Consider an Addition join receiving $[B, 256]$ from one branch and $[B, 128]$ from another:
+
+\[
+\text{Addition}: \text{dimension 1 mismatch: 256 vs 128}
+\]
+
+The engine records this as a type error at the Addition node, marking it with a red indicator in the editor. Similarly, a MatMul join receiving $(32, 64)$ and $(128, 64)$ produces:
+
+\[
+\text{MatMul}: \text{symbolic unification failed: } K \text{ bound to 64, cannot unify with 128}
+\]
+
+Note that Einsum has no type signature because its shape constraints depend on a free-form equation string parameter. The engine emits a warning and treats its type as unknown --- a deliberate application of gradual typing.
+
+\subsection{Subflow Type Inference}
+
+Subflow nodes encapsulate an internal subgraph. Type inference for subflows proceeds recursively: the external input type is injected as the input type of the subflow's internal Input node, the internal graph is inferred in topological order, and the subflow's output type is the inferred type of its exit node.
+
+Formally, given a subflow $S$ with internal graph $G_S = (V_S, E_S)$, entry node $e \in V_S$, and exit node $x \in V_S$:
+
+\[
+\frac{
+\Gamma \vdash \tau_{\text{in}} \quad
+\Gamma[e \mapsto \tau_{\text{in}}] \vdash G_S : \Gamma_S \quad
+\Gamma_S(x) = \tau_{\text{out}}
+}{
+\Gamma \vdash S : (\tau_{\text{in}} \rightarrow \tau_{\text{out}})
+}
+\]
+
+where $\Gamma[e \mapsto \tau_{\text{in}}]$ denotes extending the context with the entry node's input type.
+
+\paragraph{Generic Subflows}
+
+For subflows without a behavioral stereotype, the internal graph defines the type transformation directly. The engine performs a full topological inference pass on the internal nodes, propagating types from entry to exit. This enables type checking of arbitrary nested architectures including subflows within subflows.
+
+\paragraph{Repeat}
+
+The Repeat behavioral stereotype instantiates $N$ sequential copies of the internal subgraph. Since the copies are executed in sequence with identical structure, the type transformation is shape-preserving:
+
+\[
+\text{Repeat}(N)(S) : \tau \rightarrow \tau
+\]
+
+The output shape equals the input shape. Type errors inside the repeated subgraph are detected during recursive inference and reported on the Repeat node.
+
+\paragraph{HorizontalRepeat}
+
+The HorizontalRepeat behavioral stereotype creates $N$ parallel copies of the internal subgraph, executed independently via \texttt{vmap} with \texttt{functional\_call}. The outputs are concatenated along the last dimension:
+
+\[
+\text{HorizontalRepeat}(N)(S) : \tau \rightarrow \tau'
+\]
+
+where $\tau'$ has the same shape as $\tau$ except the last dimension is multiplied by $N$. If the internal subgraph maps $[B, D]$ to $[B, D']$, then HorizontalRepeat produces $[B, N \cdot D']$.
+
+\subsection{Editor Integration}
+
+The type system is integrated into the visual editor to provide real-time feedback. The \texttt{TypeEngine.infer()} method is invoked automatically on every graph mutation: when edges are added or removed, when node parameters change (with 300\,ms debounce), and when a diagram is loaded from disk.
+
+The inference results are stored as reactive \texttt{typeResult} state, which drives three visual feedback mechanisms:
+
+\begin{itemize}
+	\item \textbf{Error Panel}: A collapsible section at the bottom of the Sidebar lists all type errors and warnings. Errors (displayed in red) indicate shape mismatches that would cause runtime crashes; warnings (displayed in amber) indicate missing type signatures or unresolved parameters. Clicking an error selects the offending node on the canvas.
+	\item \textbf{Node Indicators}: Nodes with type errors display a red border (2\,px) and an \texttt{✗} indicator in the top-right corner. Nodes with warnings display an amber border with a \texttt{⚠} indicator. Both indicators disappear when the underlying issue is resolved.
+	\item \textbf{Shape Tooltips}: Hovering over a node's output handle displays a tooltip showing the inferred output shape and dtype (e.g., \texttt{Output: [B, 256] float32}). This allows users to inspect intermediate tensor shapes without leaving the editor.
+\end{itemize}
+
+This integration makes the type system a practical tool for day-to-day diagram editing, catching shape mismatches at design time rather than at runtime. The inferred types also feed into the front-end compilation pipeline, guaranteeing that the generated NNTree is consistent with the visual diagram.
+
+The type system is fully documented in the project's user guide at \texttt{docs2/source/type\_system.rst}, which includes an educational walkthrough, formal definitions, and detailed examples for every module.
+
 \pagebreak
 
 \section{Implementation}
@@ -546,6 +728,8 @@ The central state manager is the \texttt{Diagram} class, implemented using Svelt
 The stereotype mechanism provides the bridge between the UML metamodel and the executable DSL. Each stereotype is stored as a JSON artifact that instantiates the concepts defined in the metamodel, specifying visual attributes, semantic category, and configurable parameters. At startup, all stereotype definitions are discovered and loaded from the \texttt{Stereotypes/**/*.json} directory.
 
 To simplify their use within the editor, the \texttt{Stereotype} class (\texttt{stereotype.ts}) wraps the raw JSON representation and exposes derived predicates such as \texttt{isJoin}, \texttt{isInput}, \texttt{isLoss}, and \texttt{isSubFlow}. This approach provides a type-safe interface and supports extensibility without requiring modifications to the compilation or rendering logic.
+
+The static tensor type system described in Section~4 is implemented as a separate verification pass within the front-end. The \texttt{TypeEngine} class provides constraint-based type inference using declarative \texttt{type\_signature} fields in the stereotype definitions. Currently, the system covers 15 module type signatures, 5 join type signatures, computed dimension formulas for spatial operations (Conv2d, MaxPool2d, AvgPool2d, Flatten, Upsample), and subflow type inference for generic and behavioral subflows (Repeat, HorizontalRepeat). The engine is invoked automatically on graph mutations and drives the real-time error feedback described in Section~4.11.
 
 \subsubsection{Node Rendering}
 
