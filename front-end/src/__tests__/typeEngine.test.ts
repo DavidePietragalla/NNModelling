@@ -1113,7 +1113,7 @@ describe("TypeEngine — Phase 3 Joins", () => {
 
 describe("TypeEngine — Phase E Einsum", () => {
   /** Local type guard: is the return value a successful ShapeDimension array? */
-  function isShapeOK(r: unknown[] | TypeError): r is ShapeDimension[] {
+  function isShapeOK(r: ShapeDimension[] | TypeError): r is ShapeDimension[] {
     return Array.isArray(r);
   }
 

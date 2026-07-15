@@ -1558,6 +1558,15 @@ export class TypeEngine {
     inputTypes: TensorType[],
     stereotypeName: string,
   ): ShapeDimension[] | TypeError {
+    // ── Early check: empty equation ────────────────────────────────
+    if (!equation || equation.trim().length === 0) {
+      return {
+        nodeId: "",
+        message: `"${stereotypeName}" equation is empty`,
+        severity: "error",
+      } satisfies TypeError;
+    }
+
     // ── Step 1: Parse equation string ─────────────────────────────
     if (equation.includes("...")) {
       return {
@@ -1844,7 +1853,10 @@ export class TypeEngine {
       return null;
     }
 
-    // Unknown/unparseable condition — skip gracefully
+    // Unknown/unparseable condition — warn maintainers
+    console.warn(
+      `Unknown advisory condition pattern: "${advisory.condition}" — no strategy matched`,
+    );
     return null;
   }
 
