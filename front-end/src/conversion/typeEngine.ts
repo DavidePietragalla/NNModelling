@@ -409,7 +409,7 @@ export class TypeEngine {
         // all inputs must have identical shapes.  We verify by comparing captured
         // dims across inputs: same length and equal dimension values.
         // This check is SKIPPED for concat joins (where the concat dim differs).
-        if (allCaptured.length >= 2 && !sig.constraints?.concat) {
+        if (allCaptured.length >= 2 && sig.join?.action !== "concat") {
           const first = allCaptured[0];
           for (let k = 1; k < allCaptured.length; k++) {
             const other = allCaptured[k];
@@ -459,20 +459,57 @@ export class TypeEngine {
         // Step 3: Compute output shape
         let outputDims: ShapeDimension[];
 
-        if (sig.constraints?.concat) {
-          // Concat join: sum dims on the concat axis
-          const concatDim = this.resolveConcatDim(
-            sig.constraints.concat.dim,
-            params,
-            inputTypes,
-          );
+        if (sig.join?.action === "concat") {
+          // Concat join: resolve dim from expression, sum inputs on that dim
+          const dimExpr = sig.join.dim_expr ?? "-1";
+          let concatDim: number | undefined;
+
+          // Try the expression evaluator
+          try {
+            const context: EvalContext = {
+              env,
+              captured: [],
+              params,
+              resolveParam: (name: string) => {
+                const resolved = TypeEngine.resolveParamRef(name, params);
+                if (resolved.status === "resolved") return resolved.value;
+                return undefined;
+              },
+            };
+            const ast = parseExpr(dimExpr);
+            const evaluated = evaluate(ast, context);
+            if (evaluated !== undefined) {
+              concatDim = evaluated;
+            }
+          } catch (e) {
+            if (e instanceof ParseError) {
+              // Malformed expression — fall through to resolveParamRef fallback
+            } else {
+              throw e;
+            }
+          }
+
+          // Fallback: resolve param directly (handles wrapped value format)
+          if (concatDim === undefined) {
+            const resolved = this.resolveParamRef(dimExpr, params);
+            if (resolved.status === "resolved") {
+              concatDim = resolved.value;
+            }
+          }
+
           if (concatDim === undefined) {
             return {
               nodeId: "",
-              message: `Invalid concat dim "${sig.constraints.concat.dim}" for "${stereotype.name}"`,
+              message: `Invalid concat dim "${dimExpr}" for "${stereotype.name}"`,
               severity: "error",
             } satisfies TypeError;
           }
+
+          // Wrap negative dim (e.g. -1 → last dim)
+          if (concatDim < 0 && inputTypes.length > 0) {
+            concatDim = inputTypes[0].shape.length + concatDim;
+          }
+
           outputDims = this.resolveConcatOutput(inputTypes, concatDim);
 
           // Verify non-concat dims match across all inputs
@@ -916,31 +953,6 @@ export class TypeEngine {
   // ───────────────────────────────────────────────────────────────────────────
   // Formula resolution (Phase 2 — computed dimensions)
   // ───────────────────────────────────────────────────────────────────────────
-
-  /**
-   * Resolve the concatenation dimension from a constraint like "params.dim".
-   * Handles negative dims by wrapping from the end of the first input shape.
-   */
-  private static resolveConcatDim(
-    dimSpec: string,
-    params: Record<string, unknown>,
-    inputTypes: TensorType[],
-  ): number | undefined {
-    const parts = dimSpec.split(".");
-    if (parts.length === 2 && parts[0] === "params") {
-      const dim = this.resolveParamRef(parts[1], params);
-      if (dim.status !== 'resolved') return undefined;
-      if (dim.value < 0 && inputTypes.length > 0) {
-        // Wrap negative dim (e.g. -1 → last dim)
-        return inputTypes[0].shape.length + dim.value;
-      }
-      return dim.value;
-    }
-    // Direct number
-    const parsed = Number(dimSpec);
-    if (!isNaN(parsed)) return parsed;
-    return undefined;
-  }
 
   /**
    * Compute the output shape for a Concat join.

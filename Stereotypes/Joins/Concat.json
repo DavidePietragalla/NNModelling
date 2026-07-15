@@ -20,8 +20,9 @@
       [{ "kind": "wildcard" }]
     ],
     "output": [{ "kind": "wildcard" }],
-    "constraints": {
-      "concat": { "dim": "params.dim" }
+    "join": {
+      "action": "concat",
+      "dim_expr": "dim"
     }
   }
 }
