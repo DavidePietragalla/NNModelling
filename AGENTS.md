@@ -231,7 +231,7 @@ NNModelling/
 - **Pattern**: Pure TS unit tests, no DOM/browser
 - **Real Diagram**: Tests use real `Diagram` class (Svelte `$state.raw` compiled by Vite plugin). Stub `globalThis.window` before construction.
 - **Helpers**: `node(id, stereo, name, params, overrides?)` and `edge(id, source, target, handles?)` for concise fixtures.
-- **Coverage**: **225 tests (220 passed, 5 skipped)** — sequential chain, skip/joins, autoencoder, subflow compilation, nested subflows, hidden nodes, error handling, connection validation, Fork node, type inference (Input, Linear, ReLU, Conv2d, Flatten, MaxPool2d, wildcards, mismatches, edge cases, computed dimensions, join type checking, Repeat/HorizontalRepeat subflows, generic subflow recursion, nested subflows, loss nodes, complex modules), BrowserRPCHandler, undo/redo, param merging, edge handle defaults, viewport injection, invalid parameter validation, parentId placement, fuzz testing (compilability, serialization, operations), expression evaluator (tokenizer, parser, evaluator, round-trip)
+- **Coverage**: **231 tests (226 passed, 5 skipped)** — sequential chain, skip/joins, autoencoder, subflow compilation, nested subflows, hidden nodes, error handling, connection validation, Fork node, type inference (Input, Linear, ReLU, Conv1d, Conv2d, Flatten, Unflatten, MaxPool2d, wildcards, mismatches, edge cases, computed dimensions, param_spread, join type checking, Repeat/HorizontalRepeat subflows, generic subflow recursion, nested subflows, loss nodes, complex modules), BrowserRPCHandler, undo/redo, param merging, edge handle defaults, viewport injection, invalid parameter validation, parentId placement, fuzz testing (compilability, serialization, operations), expression evaluator (tokenizer, parser, evaluator, round-trip)
 
 ### Testing — Integration (Vitest + Python Pipeline)
 
@@ -367,7 +367,7 @@ Params in stereotype JSON can have `position: "top"` or `"bottom"` for display p
 
 ### Full Stereotype List
 
-**Modules (27):** Input, Linear, Conv2d, ReLU, Tanh, Sigmoid, Softmax, Dropout, BatchNorm1d, BatchNorm2d, LayerNorm, Flatten, MaxPool2d, AvgPool2d, Embedding, MultiheadAttention, Transformer, TransformerEncoderLayer, TransformerDecoderLayer, Unsample, Fork, PositionalEncoding, SequencePool, BCELoss, BCEWithLogitsLoss, CrossEntropyLoss, MSELoss
+**Modules (29):** Input, Linear, Conv1d, Conv2d, ReLU, Tanh, Sigmoid, Softmax, Dropout, BatchNorm1d, BatchNorm2d, LayerNorm, Flatten, Unflatten, MaxPool2d, AvgPool2d, Embedding, MultiheadAttention, Transformer, TransformerEncoderLayer, TransformerDecoderLayer, Unsample, Fork, PositionalEncoding, SequencePool, BCELoss, BCEWithLogitsLoss, CrossEntropyLoss, MSELoss
 
 **Joins (6):** Addition, Einsum, MatMul, ScaledDotProduct, Concat, MaskedScaledDotProduct
 
@@ -397,9 +397,9 @@ Each stereotype JSON can optionally include a `type_signature` field declaring t
 }
 ```
 
-**Dimension kinds**: `const` (literal int), `symbolic` (e.g. `$B` for batch), `param_ref` (references node param), `wildcard` (matches zero or more arbitrary dims).
+**Dimension kinds**: `const` (literal int), `symbolic` (e.g. `$B` for batch), `param_ref` (references node param), `wildcard` (matches zero or more arbitrary dims), `computed` (expression-based formula), `param_spread` (expands tuple parameter into multiple output dimensions).
 
-**All 35 stereotypes** have type signatures or are explicitly handled. Modules with type_signature JSON: Input, Linear, ReLU, Tanh, Sigmoid, Softmax, Dropout, BatchNorm1d, BatchNorm2d, LayerNorm, Conv2d, MaxPool2d, AvgPool2d, Flatten, Embedding, MultiheadAttention, Transformer, TransformerEncoderLayer, TransformerDecoderLayer, PositionalEncoding, SequencePool, Unsample, Fork, BCELoss, BCEWithLogitsLoss, CrossEntropyLoss, MSELoss (+6 joins: Addition, Concat, MatMul, ScaledDotProduct, MaskedScaledDotProduct). Repeat and HorizontalRepeat have subflow-kind signatures handled by engine logic. Only Einsum has no type_signature — the system supports gradual typing with a warning and unknown type propagation.
+**All 36 stereotypes** have type signatures or are explicitly handled. Modules with type_signature JSON: Input, Linear, ReLU, Tanh, Sigmoid, Softmax, Dropout, BatchNorm1d, BatchNorm2d, LayerNorm, Conv1d, Conv2d, MaxPool2d, AvgPool2d, Flatten, Unflatten, Embedding, MultiheadAttention, Transformer, TransformerEncoderLayer, TransformerDecoderLayer, PositionalEncoding, SequencePool, Unsample, Fork, BCELoss, BCEWithLogitsLoss, CrossEntropyLoss, MSELoss (+6 joins: Addition, Concat, MatMul, ScaledDotProduct, MaskedScaledDotProduct). Repeat and HorizontalRepeat have subflow-kind signatures handled by engine logic. Only Einsum has no type_signature — the system supports gradual typing with a warning and unknown type propagation.
 
 The TypeEngine interprets these declarative signatures via constraint-based inference. Adding a new module requires only updating its stereotype JSON — no TypeScript changes needed.
 

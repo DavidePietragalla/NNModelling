@@ -1206,6 +1206,45 @@ export class TypeEngine {
           break;
         }
 
+        // ── param_spread ────────────────────────────────────
+        case "param_spread": {
+          // In input pattern: resolve the tuple param to get N,
+          // then consume exactly N dims from input.
+          const tuple = TypeEngine.resolveParamRefTuple(p.param, params);
+          if (tuple === undefined) {
+            // Param not yet set — treat as wildcard: consume remaining
+            let remainingRequired = 0;
+            for (let k = j + 1; k < pattern.length; k++) {
+              if (pattern[k].kind !== "wildcard" && pattern[k].kind !== "param_spread") remainingRequired++;
+            }
+            const available = inputDims.length - i;
+            const toConsume = Math.max(0, available - remainingRequired);
+            for (let c = 0; c < toConsume; c++) {
+              captured.push(inputDims[i]);
+              i++;
+            }
+            j++;
+            break;
+          }
+          // Consume exactly tuple.length dims
+          for (let c = 0; c < tuple.length; c++) {
+            if (i + c >= inputDims.length) {
+              return {
+                nodeId: "",
+                message: `param_spread "${p.param}": expected ${tuple.length} dims but input has only ${inputDims.length - i} remaining`,
+                severity: "error",
+              } satisfies TypeError;
+            }
+          }
+          // Push all consumed dims to captured
+          for (let c = 0; c < tuple.length; c++) {
+            captured.push(inputDims[i]);
+            i++;
+          }
+          j++;
+          break;
+        }
+
         default:
           return {
             nodeId: "",
@@ -1323,6 +1362,20 @@ export class TypeEngine {
           break;
         }
 
+        case "param_spread": {
+          // Read tuple param, expand into N const dimensions
+          const tuple = TypeEngine.resolveParamRefTuple(p.param, params);
+          if (tuple !== undefined) {
+            for (const v of tuple) {
+              result.push({ kind: "const", value: v });
+            }
+          } else {
+            // Unset — push symbolic placeholder
+            result.push({ kind: "symbolic", name: `?${p.param}` });
+          }
+          break;
+        }
+
         default:
           // Unknown pattern kind — keep as unknown symbolic
           result.push({
@@ -1390,6 +1443,41 @@ export class TypeEngine {
   }
 
   /**
+   * Resolve a parameter reference as a tuple of numbers.
+   *
+   * Handles:
+   * - number: [value]
+   * - string "(1, 100)": [1, 100]
+   * - string "1, 100": [1, 100]
+   * - string "(1)": [1]
+   * - string "1": [1]
+   * - "Undefined", "", "None", missing: undefined
+   */
+  static resolveParamRefTuple(
+    name: string,
+    params: Record<string, unknown>,
+  ): number[] | undefined {
+    const raw = params[name];
+    if (raw === undefined || raw === null) return undefined;
+
+    const val: unknown =
+      typeof raw === "object" && raw !== null && "value" in raw
+        ? (raw as Record<string, unknown>).value
+        : raw;
+
+    if (typeof val === "number") return [val];
+    if (typeof val === "string") {
+      if (val === "None" || val === "Undefined" || val === "") return undefined;
+      const cleaned = val.replace(/[()[\]]/g, "").trim();
+      if (!cleaned) return undefined;
+      const parts = cleaned.split(",").map(s => parseInt(s.trim(), 10));
+      if (parts.some(isNaN)) return undefined;
+      return parts;
+    }
+    return undefined;
+  }
+
+  /**
    * Evaluate an expression string with concrete values.
    * Used for testing — evaluates an expression with given symbolic env,
    * params, and captured dims, returning the numeric result or undefined.
@@ -1437,6 +1525,8 @@ export class TypeEngine {
         return "*";
       case "computed":
         return d.expr ? `computed(${d.expr})` : `computed(${d.formula ?? "?"})`;
+      case "param_spread":
+        return d.values ? `[${d.values.join(",")}]` : `spread(${d.param})`;
     }
   }
 }
@@ -1462,6 +1552,8 @@ function dimEqual(a: ShapeDimension, b: ShapeDimension): boolean {
     case "computed":
       return a.formula === (b as typeof a).formula && 
              JSON.stringify(a.args) === JSON.stringify((b as typeof a).args);
+    case "param_spread":
+      return a.param === (b as typeof a).param;
   }
 }
 

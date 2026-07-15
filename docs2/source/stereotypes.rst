@@ -215,6 +215,11 @@ Notes
   pass. You must insert a Flatten node when transitioning from convolutional
   to linear layers.
 
+* **Unflatten uses param_spread**: the ``Unflatten`` module expands a
+  flattened dimension back into multiple dimensions using a tuple parameter
+  (``unflattened_size``). The type system models this via the ``param_spread``
+  pattern kind, which reads the tuple and produces multiple output dimensions.
+
 * **HorizontalRepeat** has its join hardcoded to concat on ``dim=-1``. Output
   shape becomes ``[batch, ..., n * d]``. This is not configurable.
 

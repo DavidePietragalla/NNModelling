@@ -1852,3 +1852,190 @@ describe("TypeEngine — parentId support in addModule/addJoinNode", () => {
     expectOutputShape(result, reluTopId, ["$B", "256"]);
   });
 });
+
+// ---------------------------------------------------------------------------
+// Group 11 — param_spread: Tuple Parameter Expansion (Unflatten)
+// ---------------------------------------------------------------------------
+
+describe("TypeEngine — param_spread (Unflatten)", () => {
+  it("11.1: Unflatten(1, (1, 100)) expands [B, 100] → [B, 1, 100]", () => {
+    const d = new Diagram();
+    const inputId = d.nodes[0].id;
+    d.updateModule(inputId, { params: { out_features: { value: "100" } } });
+
+    // Add Linear(100 → 100) as passthrough to get [B, 100]
+    const linearStereo = d.stereotypes.find((s) => s.name === "Linear")!;
+    d.addModule(linearStereo, 100, 0, {
+      params: { in_features: { value: "100" }, out_features: { value: "100" } },
+    });
+    const linearId = d.nodes[1].id;
+    d.edges.push(edge("e1", inputId, linearId));
+
+    // Add Unflatten with unflattened_size = (1, 100)
+    const unflattenStereo = d.stereotypes.find((s) => s.name === "Unflatten")!;
+    d.addModule(unflattenStereo, 200, 0, {
+      params: { dim: { value: "1" }, unflattened_size: { value: "(1, 100)" } },
+    });
+    const unflattenId = d.nodes[2].id;
+    d.edges.push(edge("e2", linearId, unflattenId));
+
+    const result = TypeEngine.infer(d);
+    expectTypeSuccess(result);
+
+    // Unflatten output: [B, 1, 100]
+    expectOutputShape(result, unflattenId, ["$B", "1", "100"]);
+  });
+
+  it("11.2: Unflatten(1, (4, 32)) expands [B, 128] → [B, 4, 32]", () => {
+    const d = new Diagram();
+    const inputId = d.nodes[0].id;
+    d.updateModule(inputId, { params: { out_features: { value: "128" } } });
+
+    // Add Linear(128 → 128) as passthrough
+    const linearStereo = d.stereotypes.find((s) => s.name === "Linear")!;
+    d.addModule(linearStereo, 100, 0, {
+      params: { in_features: { value: "128" }, out_features: { value: "128" } },
+    });
+    const linearId = d.nodes[1].id;
+    d.edges.push(edge("e1", inputId, linearId));
+
+    // Add Unflatten with unflattened_size = (4, 32)
+    const unflattenStereo = d.stereotypes.find((s) => s.name === "Unflatten")!;
+    d.addModule(unflattenStereo, 200, 0, {
+      params: { dim: { value: "1" }, unflattened_size: { value: "(4, 32)" } },
+    });
+    const unflattenId = d.nodes[2].id;
+    d.edges.push(edge("e2", linearId, unflattenId));
+
+    const result = TypeEngine.infer(d);
+    expectTypeSuccess(result);
+
+    // Unflatten output: [B, 4, 32]
+    expectOutputShape(result, unflattenId, ["$B", "4", "32"]);
+  });
+
+  it("11.3: Unflatten with single value (100) → [B, 100]", () => {
+    const d = new Diagram();
+    const inputId = d.nodes[0].id;
+    d.updateModule(inputId, { params: { out_features: { value: "100" } } });
+
+    const linearStereo = d.stereotypes.find((s) => s.name === "Linear")!;
+    d.addModule(linearStereo, 100, 0, {
+      params: { in_features: { value: "100" }, out_features: { value: "100" } },
+    });
+    const linearId = d.nodes[1].id;
+    d.edges.push(edge("e1", inputId, linearId));
+
+    // Unflatten with single value = 100
+    const unflattenStereo = d.stereotypes.find((s) => s.name === "Unflatten")!;
+    d.addModule(unflattenStereo, 200, 0, {
+      params: { dim: { value: "1" }, unflattened_size: { value: "100" } },
+    });
+    const unflattenId = d.nodes[2].id;
+    d.edges.push(edge("e2", linearId, unflattenId));
+
+    const result = TypeEngine.infer(d);
+    expectTypeSuccess(result);
+
+    // Unflatten output: [B, 100] (single value = same shape)
+    expectOutputShape(result, unflattenId, ["$B", "100"]);
+  });
+
+  it("11.4: Unflatten with unset param → symbolic output (gradual typing)", () => {
+    const d = new Diagram();
+    const inputId = d.nodes[0].id;
+    d.updateModule(inputId, { params: { out_features: { value: "100" } } });
+
+    const linearStereo = d.stereotypes.find((s) => s.name === "Linear")!;
+    d.addModule(linearStereo, 100, 0, {
+      params: { in_features: { value: "100" }, out_features: { value: "100" } },
+    });
+    const linearId = d.nodes[1].id;
+    d.edges.push(edge("e1", inputId, linearId));
+
+    // Unflatten with unset unflattened_size
+    const unflattenStereo = d.stereotypes.find((s) => s.name === "Unflatten")!;
+    d.addModule(unflattenStereo, 200, 0, {
+      params: { dim: { value: "1" }, unflattened_size: { value: "Undefined" } },
+    });
+    const unflattenId = d.nodes[2].id;
+    d.edges.push(edge("e2", linearId, unflattenId));
+
+    const result = TypeEngine.infer(d);
+    expectTypeSuccess(result);
+
+    // Output is symbolic (unknown shape) — no error, gradual typing
+    const ann = result.annotations.get(unflattenId)!;
+    expect(ann.outputType.shape.length).toBe(2); // [B, ?unflattened_size]
+  });
+
+  it("11.5: Unflatten with invalid tuple → symbolic output (gradual typing)", () => {
+    const d = new Diagram();
+    const inputId = d.nodes[0].id;
+    d.updateModule(inputId, { params: { out_features: { value: "100" } } });
+
+    const linearStereo = d.stereotypes.find((s) => s.name === "Linear")!;
+    d.addModule(linearStereo, 100, 0, {
+      params: { in_features: { value: "100" }, out_features: { value: "100" } },
+    });
+    const linearId = d.nodes[1].id;
+    d.edges.push(edge("e1", inputId, linearId));
+
+    // Unflatten with invalid unflattened_size
+    const unflattenStereo = d.stereotypes.find((s) => s.name === "Unflatten")!;
+    d.addModule(unflattenStereo, 200, 0, {
+      params: { dim: { value: "1" }, unflattened_size: { value: "cazz" } },
+    });
+    const unflattenId = d.nodes[2].id;
+    d.edges.push(edge("e2", linearId, unflattenId));
+
+    const result = TypeEngine.infer(d);
+    expectTypeSuccess(result);
+
+    // Output is symbolic (unknown shape) — no error, gradual typing
+    const ann = result.annotations.get(unflattenId)!;
+    expect(ann.outputType.shape.length).toBe(2); // [B, ?unflattened_size]
+  });
+
+  it("11.6: Full chain: Input → Linear → Unflatten → Conv1d", () => {
+    const d = new Diagram();
+    const inputId = d.nodes[0].id;
+    d.updateModule(inputId, { params: { out_features: { value: "784" } } });
+
+    // Linear(784 → 100)
+    const linearStereo = d.stereotypes.find((s) => s.name === "Linear")!;
+    d.addModule(linearStereo, 100, 0, {
+      params: { in_features: { value: "784" }, out_features: { value: "100" } },
+    });
+    const linearId = d.nodes[1].id;
+    d.edges.push(edge("e1", inputId, linearId));
+
+    // Unflatten(1, (1, 100))
+    const unflattenStereo = d.stereotypes.find((s) => s.name === "Unflatten")!;
+    d.addModule(unflattenStereo, 200, 0, {
+      params: { dim: { value: "1" }, unflattened_size: { value: "(1, 100)" } },
+    });
+    const unflattenId = d.nodes[2].id;
+    d.edges.push(edge("e2", linearId, unflattenId));
+
+    // Conv1d(1 → 10, kernel_size=3)
+    const conv1dStereo = d.stereotypes.find((s) => s.name === "Conv1d")!;
+    d.addModule(conv1dStereo, 300, 0, {
+      params: {
+        in_channels: { value: "1" },
+        out_channels: { value: "10" },
+        kernel_size: { value: "3" },
+      },
+    });
+    const conv1dId = d.nodes[3].id;
+    d.edges.push(edge("e3", unflattenId, conv1dId));
+
+    const result = TypeEngine.infer(d);
+    expectTypeSuccess(result);
+
+    // Linear: [B, 100], Unflatten: [B, 1, 100], Conv1d: [B, 10, 98]
+    expectOutputShape(result, linearId, ["$B", "100"]);
+    expectOutputShape(result, unflattenId, ["$B", "1", "100"]);
+    expectOutputShape(result, conv1dId, ["$B", "10", "98"]);
+  });
+});

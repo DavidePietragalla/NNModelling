@@ -1,0 +1,30 @@
+{
+  "category": "Layer",
+  "pythonClassName": "nn.Unflatten",
+  "view": {
+    "color": "#a9a9a9",
+    "width": 120,
+    "height": 50
+  },
+  "params": {
+    "dim": {
+      "type": "int",
+      "default": "1"
+    },
+    "unflattened_size": {
+      "type": "int | tuple",
+      "default": "Undefined"
+    }
+  },
+  "type_signature": {
+    "kind": "module",
+    "input": [
+      { "kind": "symbolic", "name": "$B" },
+      { "kind": "wildcard" }
+    ],
+    "output": [
+      { "kind": "symbolic", "name": "$B" },
+      { "kind": "param_spread", "param": "unflattened_size" }
+    ]
+  }
+}

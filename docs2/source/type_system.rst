@@ -399,6 +399,12 @@ elements with a two-pointer approach:
 | ``computed``| Pass-through on the input side (exact value is not       |
 |             | validated); the formula is resolved on the output side.  |
 +-------------+----------------------------------------------------------+
+|``param_spread``| Reads a tuple parameter (e.g. ``(1, 100)``) and       |
+|             | expands it into multiple output dimensions. On the input |
+|             | side, it consumes exactly N dimensions where N is the    |
+|             | tuple length. On the output side, it produces N const   |
+|             | dimensions from the tuple values.                       |
++-------------+----------------------------------------------------------+
 
 **Wildcard lookahead.** The wildcard does not blindly consume all remaining
 dimensions. It computes how many are needed for subsequent non-wildcard
@@ -557,6 +563,74 @@ needed to add or modify a module's type signature. This includes computed
 dimensions (5 stereotypes), subflow transforms (Repeat, HorizontalRepeat),
 and join configuration (Concat dim resolution).
 
+Param Spread — Tuple Expansion
+------------------------------
+
+Some modules produce output tensors with *more dimensions* than their input.
+For example, ``nn.Unflatten`` takes a flattened 2D tensor ``[B, N]`` and
+produces a 3D tensor ``[B, d1, d2]`` where ``d1 × d2 = N``. The output
+shape is determined by a **tuple parameter** (e.g. ``unflattened_size =
+(1, 100)``).
+
+The ``param_spread`` pattern kind handles this: it reads a tuple parameter
+and expands it into multiple output dimensions.
+
+Unflatten
+~~~~~~~~~
+
+The ``Unflatten`` module uses ``param_spread`` in its output pattern:
+
+.. code-block:: json
+
+   "type_signature": {
+     "kind": "module",
+     "input": [
+       { "kind": "symbolic", "name": "$B" },
+       { "kind": "wildcard" }
+     ],
+     "output": [
+       { "kind": "symbolic", "name": "$B" },
+       { "kind": "param_spread", "param": "unflattened_size" }
+     ]
+   }
+
+When ``unflattened_size = (1, 100)``:
+
+- **Input pattern**: ``$B`` binds the batch dimension; ``wildcard`` captures
+  the remaining dimension(s).
+- **Output pattern**: ``$B`` propagates the batch; ``param_spread`` reads
+  the tuple ``(1, 100)`` and produces two const dimensions →
+  ``[B, 1, 100]``.
+
+This is the only way to model rank-changing operations in the type system.
+The ``computed`` pattern kind can compute *values* for existing dimensions,
+but cannot add new dimensions. ``param_spread`` fills this gap for any
+module whose output shape is parameterized by a tuple.
+
+**Tuple parsing.** The parameter value is parsed as a comma-separated list
+of integers, with optional parentheses:
+
++---------------------+-------------------+
+| Parameter value     | Parsed as         |
++=====================+===================+
+| ``(1, 100)``        | ``[1, 100]``      |
++---------------------+-------------------+
+| ``1, 100``          | ``[1, 100]``      |
++---------------------+-------------------+
+| ``100``             | ``[100]``         |
++---------------------+-------------------+
+| ``(4, 32)``         | ``[4, 32]``       |
++---------------------+-------------------+
+
+**Input behavior.** When ``param_spread`` appears in an input pattern, it
+consumes exactly N dimensions (where N is the tuple length). If the tuple
+parameter is unset, it behaves like a wildcard (consuming remaining dims).
+
+**Gradual typing.** If the tuple parameter is unset or invalid, the output
+type becomes symbolic (unknown shape). No error is reported — the type
+propagates as unknown, and errors surface only when a downstream module
+expects a specific shape.
+
 Join Type Checking
 ------------------
 
@@ -683,8 +757,8 @@ Further Reading
   implementation
 * Source: ``front-end/src/expr/`` — expression language tokenizer, parser,
   evaluator, and public API
-* Tests: ``front-end/src/__tests__/typeEngine.test.ts`` — 225 tests
-  (220 passing, 5 skipped) covering all phases
+* Tests: ``front-end/src/__tests__/typeEngine.test.ts`` — 231 tests
+  (226 passing, 5 skipped) covering all phases
 * Tests: ``front-end/src/__tests__/expr.test.ts`` — 40+ unit tests for
   expression parsing and evaluation
 * Design docs: ``docs/designs/tensor-type-system/`` — full architectural
