@@ -26,6 +26,8 @@ import type {
   TypeEnvironment,
   ParamResolution,
 } from "./tensortypes";
+import { parseExpr, evaluate, ParseError } from "../expr/index";
+import type { EvalContext } from "../expr/types";
 
 // ─────────────────────────────────────────────────────────────────────────────
 // Internal types
@@ -888,41 +890,6 @@ export class TypeEngine {
   // ───────────────────────────────────────────────────────────────────────────
 
   /**
-   * Resolve a dimension formula with concrete numeric arguments.
-   *
-   * Supported formulas:
-   * - `conv2d_hw`:  H_out = floor((H + 2*pad - dilation*(kernel-1) - 1) / stride + 1)
-   * - `pool2d_hw`:  H_out = floor((H + 2*pad - kernel) / stride + 1)
-   * - `flatten_prod`: product of all args (dimensions being flattened)
-   *
-   * Returns `undefined` for unknown formulas.
-   */
-  private static resolveFormula(
-    formula: string,
-    args: number[],
-  ): number | undefined {
-    switch (formula) {
-      case "conv2d_hw": {
-        const [h, k, s, p, d] = args;
-        return Math.floor((h + 2 * p - d * (k - 1) - 1) / s + 1);
-      }
-      case "pool2d_hw": {
-        const [h, k, s, p] = args;
-        return Math.floor((h + 2 * p - k) / s + 1);
-      }
-      case "flatten_prod": {
-        return args.reduce((a, b) => a * b, 1);
-      }
-      case "upsample_hw": {
-        const [h, scale] = args;
-        return h * scale;
-      }
-      default:
-        return undefined;
-    }
-  }
-
-  /**
    * Resolve the concatenation dimension from a constraint like "params.dim".
    * Handles negative dims by wrapping from the end of the first input shape.
    */
@@ -980,53 +947,6 @@ export class TypeEngine {
       shape[concatDim] = { kind: "const" as const, value: total };
     }
     return shape;
-  }
-
-  /**
-   * Resolve a single computed-arg string to a concrete number.
-   *
-   * - If the arg starts with `$`, it is a symbolic reference resolved from env.
-   * - If the arg is `$*`, it expands to the product of all captured dims.
-   * - Otherwise it is a parameter reference resolved from `params`.
-   *
-   * @param arg - The argument string to resolve (e.g. "$B", "$*", "kernel_size").
-   * @param env - Symbolic environment with bound dimension values.
-   * @param params - Node parameter map.
-   * @param captured - Wildcard-captured dimensions from pattern matching.
-   * @returns `{ resolved: true; value: number }` on success, `{ resolved: false }` otherwise.
-   */
-  private static resolveComputedArg(
-    arg: string,
-    env: TypeEnvironment,
-    params: Record<string, unknown>,
-    captured: ShapeDimension[],
-  ): { resolved: true; value: number } | { resolved: false } {
-    // ── Special wildcard reference: * ($ stripped during parsing) ──
-    if (arg === "*") {
-      let product = 1;
-      for (const dim of captured) {
-        if (dim.kind === "const") {
-          product *= dim.value;
-        } else {
-          // One captured dim is non-const -> can't compute product
-          return { resolved: false };
-        }
-      }
-      return { resolved: true, value: product };
-    }
-
-    // ── Symbolic reference (e.g. B, H, W — $ stripped during parsing)
-    const dim = env.get(arg);
-    if (dim && dim.kind === "const") {
-      return { resolved: true, value: dim.value };
-    }
-
-    // ── Parameter reference (e.g. kernel_size, stride) ──────────────
-    const val = this.resolveParamRef(arg, params);
-    if (val.status === 'resolved') {
-      return { resolved: true, value: val.value };
-    }
-    return { resolved: false };
   }
 
   // ───────────────────────────────────────────────────────────────────────────
@@ -1321,38 +1241,39 @@ export class TypeEngine {
         }
 
         case "computed": {
-          // Try to resolve all formula arguments
-          const argValues: number[] = [];
-          let allResolved = true;
-          for (const arg of p.args) {
-            const resolved = this.resolveComputedArg(
-              arg,
-              env,
-              params,
-              captured,
-            );
-            if (resolved.resolved) {
-              argValues.push(resolved.value);
-            } else {
-              allResolved = false;
-              break;
+          // New path: expression-based computed dims
+          if (p.expr) {
+            try {
+              const context: EvalContext = {
+                env,
+                captured,
+                params,
+                resolveParam: (name: string) => {
+                  const resolved = TypeEngine.resolveParamRef(name, params);
+                  if (resolved.status === "resolved") return resolved.value;
+                  return undefined;
+                },
+              };
+              const ast = parseExpr(p.expr);
+              const value = evaluate(ast, context);
+              if (value !== undefined) {
+                result.push({ kind: "const", value });
+              } else {
+                // Can't resolve all vars — keep as deferred computed
+                result.push({ kind: "computed", expr: p.expr });
+              }
+            } catch (e) {
+              if (e instanceof ParseError) {
+                console.error(`Invalid expr in stereotype computed dim: ${e.message}`);
+                // Keep as deferred computed dim (graceful degradation)
+                result.push({ kind: "computed", expr: p.expr });
+              } else {
+                throw e;
+              }
             }
-          }
-
-          if (allResolved) {
-            const value = this.resolveFormula(p.formula, argValues);
-            if (value !== undefined) {
-              result.push({ kind: "const", value });
-            } else {
-              // Unknown formula — keep as deferred computed
-              result.push({
-                kind: "computed",
-                formula: p.formula,
-                args: p.args,
-              });
-            }
-          } else {
-            // Can't resolve all args — keep as deferred computed
+          } else if (p.formula) {
+            // LEGACY: old formula+args — keep as deferred computed
+            // (no JSONs use this anymore; all migrated to expr)
             result.push({
               kind: "computed",
               formula: p.formula,
@@ -1429,6 +1350,39 @@ export class TypeEngine {
   }
 
   /**
+   * Evaluate an expression string with concrete values.
+   * Used for testing — evaluates an expression with given symbolic env,
+   * params, and captured dims, returning the numeric result or undefined.
+   */
+  static inferConcrete(
+    expr: string,
+    envValues: Record<string, number>,
+    paramValues: Record<string, unknown>,
+    capturedValues: number[],
+  ): number | undefined {
+    const env = new Map<string, ShapeDimension>();
+    for (const [key, val] of Object.entries(envValues)) {
+      env.set(key, { kind: "const", value: val });
+    }
+    const captured: ShapeDimension[] = capturedValues.map((v) => ({
+      kind: "const" as const,
+      value: v,
+    }));
+    const ast = parseExpr(expr);
+    const ctx: EvalContext = {
+      env,
+      captured,
+      params: paramValues,
+      resolveParam: (name: string) => {
+        const resolved = this.resolveParamRef(name, paramValues);
+        if (resolved.status === "resolved") return resolved.value;
+        return undefined;
+      },
+    };
+    return evaluate(ast, ctx);
+  }
+
+  /**
    * Human-readable dimension description for error messages.
    */
   static describeDim(d: ShapeDimension): string {
@@ -1442,7 +1396,7 @@ export class TypeEngine {
       case "wildcard":
         return "*";
       case "computed":
-        return `computed(${d.formula})`;
+        return d.expr ? `computed(${d.expr})` : `computed(${d.formula ?? "?"})`;
     }
   }
 }

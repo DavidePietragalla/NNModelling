@@ -27,7 +27,7 @@ export type ShapeDimension =
   | { kind: 'symbolic'; name: string }
   | { kind: 'param_ref'; name: string }
   | { kind: 'wildcard' }
-  | { kind: 'computed'; formula: string; args: string[]; value?: number };
+  | { kind: 'computed'; expr?: string; formula?: string; args?: string[]; value?: number };
 
 // ─────────────────────────────────────────────────────────────────────────────
 // 2. TensorShape — ordered list of dimensions
@@ -80,7 +80,7 @@ export type ShapeDimPattern =
   | { kind: 'symbolic'; name: string }
   | { kind: 'param_ref'; name: string }
   | { kind: 'wildcard' }
-  | { kind: 'computed'; formula: string; args: string[] };
+  | { kind: 'computed'; expr?: string; formula?: string; args?: string[] };
 
 // ─────────────────────────────────────────────────────────────────────────────
 // 6. ShapePattern — ordered list of dimension patterns

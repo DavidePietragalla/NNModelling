@@ -35,8 +35,8 @@
     "output": [
       { "kind": "symbolic", "name": "$B" },
       { "kind": "symbolic", "name": "$C" },
-      { "kind": "computed", "formula": "upsample_hw", "args": ["$H", "scale_factor"] },
-      { "kind": "computed", "formula": "upsample_hw", "args": ["$W", "scale_factor"] }
+      { "kind": "computed", "expr": "$H * scale_factor" },
+      { "kind": "computed", "expr": "$W * scale_factor" }
     ]
   }
 }

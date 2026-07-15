@@ -404,22 +404,37 @@ describe("TypeEngine — Phase 2 Computed Dimensions", () => {
     expect(convErrors[0].message).toMatch(/dimension|expected|shape/);
   });
 
-  it("6.2: MaxPool2d: 32×32 with k=2,s=2 → 16×16 via formula unit test", () => {
-    // Test resolveFormula directly
-    const result = (TypeEngine as unknown as Record<string, unknown>)
-      .resolveFormula as (formula: string, args: number[]) => number | undefined;
+  it("6.2: Conv2d and Pool formulas via expression evaluator", () => {
+    // Conv2d expression: floor(($H + 2*padding - dilation*(kernel_size - 1) - 1)/stride + 1)
+    // H=32, padding=1, dilation=1, kernel_size=3, stride=1:
+    // floor((32 + 2*1 - 1*(3-1) - 1)/1 + 1) = floor(32) = 32
+    const convResult = TypeEngine.inferConcrete(
+      "floor(($H + 2*padding - dilation*(kernel_size - 1) - 1)/stride + 1)",
+      { H: 32 },
+      { kernel_size: "3", stride: "1", padding: "1", dilation: "1" },
+      [],
+    );
+    expect(convResult).toBe(32);
 
-    // conv2d_hw: floor((H + 2*p - d*(k-1) - 1) / s + 1)
-    const conv = result("conv2d_hw", [32, 3, 1, 1, 1]);
-    expect(conv).toBe(32);
+    // Pool expression: floor(($H + 2*padding - kernel_size)/stride + 1)
+    // H=32, kernel_size=2, stride=2, padding=0:
+    // floor((32 + 0 - 2)/2 + 1) = floor(16) = 16
+    const poolResult = TypeEngine.inferConcrete(
+      "floor(($H + 2*padding - kernel_size)/stride + 1)",
+      { H: 32 },
+      { kernel_size: "2", stride: "2", padding: "0" },
+      [],
+    );
+    expect(poolResult).toBe(16);
 
-    // pool2d_hw: floor((H + 2*p - k) / s + 1)
-    const pool = result("pool2d_hw", [32, 2, 2, 0]);
-    expect(pool).toBe(16);
-
-    // flatten_prod
-    const flat = result("flatten_prod", [128, 7, 7]);
-    expect(flat).toBe(6272);
+    // $* = product of captured dims: [128, 7, 7] = 6272
+    const flatResult = TypeEngine.inferConcrete(
+      "$*",
+      {},
+      {},
+      [128, 7, 7],
+    );
+    expect(flatResult).toBe(6272);
   });
 
   it("6.3: Flatten: (B,128,7,7) → (B,6272)", () => {
@@ -440,13 +455,12 @@ describe("TypeEngine — Phase 2 Computed Dimensions", () => {
       name: "B",
     });
     expect((sig.input as ShapeDimPattern[])[1]).toEqual({ kind: "wildcard" });
-    // Output: [B, computed(flatten_prod)]
+    // Output: [B, computed($*)]
     expect(sig.output).toHaveLength(2);
     expect(sig.output[0]).toEqual({ kind: "symbolic", name: "B" });
     expect(sig.output[1].kind).toBe("computed");
     if (sig.output[1].kind === "computed") {
-      expect(sig.output[1].formula).toBe("flatten_prod");
-      expect(sig.output[1].args).toEqual(["*"]);
+      expect(sig.output[1].expr).toBe("$*");
     }
   });
 
@@ -526,31 +540,64 @@ describe("TypeEngine — Phase 2 Computed Dimensions", () => {
     expectOutputShape(result, embId, ["$B", "50", "256"]);
   });
 
-  it("6.6: Conv2d formula resolves correctly with known dims", () => {
-    // Direct resolveFormula test for conv2d_hw
-    const resolveFormula = (TypeEngine as unknown as Record<string, unknown>)
-      .resolveFormula as (formula: string, args: number[]) => number | undefined;
-
+  it("6.6: Computed formulas resolve correctly via expression evaluator", () => {
+    // floor(($H + 2*padding - dilation*(kernel_size - 1) - 1)/stride + 1)
     // (32 + 2*1 - 1*(3-1) - 1) / 1 + 1 = (32 + 2 - 2 - 1) / 1 + 1 = 32
-    expect(resolveFormula("conv2d_hw", [32, 3, 1, 1, 1])).toBe(32);
+    expect(
+      TypeEngine.inferConcrete(
+        "floor(($H + 2*padding - dilation*(kernel_size - 1) - 1)/stride + 1)",
+        { H: 32 },
+        { kernel_size: "3", stride: "1", padding: "1", dilation: "1" },
+        [],
+      ),
+    ).toBe(32);
 
     // (32 + 2*0 - 1*(3-1) - 1) / 1 + 1 = (32 + 0 - 2 - 1) / 1 + 1 = 30
-    expect(resolveFormula("conv2d_hw", [32, 3, 1, 0, 1])).toBe(30);
+    expect(
+      TypeEngine.inferConcrete(
+        "floor(($H + 2*padding - dilation*(kernel_size - 1) - 1)/stride + 1)",
+        { H: 32 },
+        { kernel_size: "3", stride: "1", padding: "0", dilation: "1" },
+        [],
+      ),
+    ).toBe(30);
 
     // (32 + 2*2 - 2*(3-1) - 1) / 2 + 1 = (32 + 4 - 4 - 1) / 2 + 1 = 16.5 → 16
-    expect(resolveFormula("conv2d_hw", [32, 3, 2, 2, 2])).toBe(16);
+    expect(
+      TypeEngine.inferConcrete(
+        "floor(($H + 2*padding - dilation*(kernel_size - 1) - 1)/stride + 1)",
+        { H: 32 },
+        { kernel_size: "3", stride: "2", padding: "2", dilation: "2" },
+        [],
+      ),
+    ).toBe(16);
 
-    // pool2d_hw: floor((32 + 0 - 2) / 2 + 1) = floor(30/2 + 1) = floor(16) = 16
-    expect(resolveFormula("pool2d_hw", [32, 2, 2, 0])).toBe(16);
+    // pool2d_hw: floor(($H + 2*padding - kernel_size)/stride + 1)
+    // (32 + 0 - 2) / 2 + 1 = 30/2 + 1 = 16
+    expect(
+      TypeEngine.inferConcrete(
+        "floor(($H + 2*padding - kernel_size)/stride + 1)",
+        { H: 32 },
+        { kernel_size: "2", stride: "2", padding: "0" },
+        [],
+      ),
+    ).toBe(16);
 
-    // pool2d_hw: floor((16 + 0 - 2) / 2 + 1) = floor(14/2 + 1) = 8
-    expect(resolveFormula("pool2d_hw", [16, 2, 2, 0])).toBe(8);
+    // (16 + 0 - 2) / 2 + 1 = 14/2 + 1 = 8
+    expect(
+      TypeEngine.inferConcrete(
+        "floor(($H + 2*padding - kernel_size)/stride + 1)",
+        { H: 16 },
+        { kernel_size: "2", stride: "2", padding: "0" },
+        [],
+      ),
+    ).toBe(8);
 
-    // flatten_prod: 128 * 7 * 7 = 6272
-    expect(resolveFormula("flatten_prod", [128, 7, 7])).toBe(6272);
+    // $* = 128 * 7 * 7 = 6272
+    expect(TypeEngine.inferConcrete("$*", {}, {}, [128, 7, 7])).toBe(6272);
 
-    // flatten_prod: 256 = 256
-    expect(resolveFormula("flatten_prod", [256])).toBe(256);
+    // $* = 256
+    expect(TypeEngine.inferConcrete("$*", {}, {}, [256])).toBe(256);
   });
 });
 
@@ -1560,14 +1607,26 @@ describe("TypeEngine — Phase 4 Complex Signatures", () => {
     expect(lossAnn!.outputType.shape).toEqual([]);
   });
 
-  it("9.7: Unsample upsample_hw formula resolves correctly: (32,2)→64, (16,1)→16", () => {
-    const resolveFormula = (TypeEngine as unknown as Record<string, unknown>)
-      .resolveFormula as (formula: string, args: number[]) => number | undefined;
+  it("9.7: Unsample formula resolves correctly via expression evaluator: (32,2)→64, (16,1)→16", () => {
+    // $H * scale_factor = 32 * 2 = 64
+    expect(
+      TypeEngine.inferConcrete("$H * scale_factor", { H: 32 }, { scale_factor: "2" }, []),
+    ).toBe(64);
 
-    expect(resolveFormula("upsample_hw", [32, 2])).toBe(64);
-    expect(resolveFormula("upsample_hw", [16, 1])).toBe(16);
-    expect(resolveFormula("upsample_hw", [8, 3])).toBe(24);
-    expect(resolveFormula("upsample_hw", [0, 2])).toBe(0);
+    // $H * scale_factor = 16 * 1 = 16
+    expect(
+      TypeEngine.inferConcrete("$H * scale_factor", { H: 16 }, { scale_factor: "1" }, []),
+    ).toBe(16);
+
+    // $H * scale_factor = 8 * 3 = 24
+    expect(
+      TypeEngine.inferConcrete("$H * scale_factor", { H: 8 }, { scale_factor: "3" }, []),
+    ).toBe(24);
+
+    // $H * scale_factor = 0 * 2 = 0
+    expect(
+      TypeEngine.inferConcrete("$H * scale_factor", { H: 0 }, { scale_factor: "2" }, []),
+    ).toBe(0);
   });
 });
 

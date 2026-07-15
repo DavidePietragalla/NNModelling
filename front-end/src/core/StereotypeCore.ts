@@ -171,7 +171,16 @@ export class StereotypeCore {
       return { ...dim, name: dim.name.slice(1) };
     }
     if (dim.kind === "computed") {
-      return { ...dim, args: dim.args.map((a) => (a.startsWith("$") ? a.slice(1) : a)) };
+      // For expr-based computed dims, don't strip $ from inside the expression
+      // string — the tokenizer handles $H, $*, etc.
+      if (dim.expr) {
+        return { ...dim, args: undefined };
+      }
+      // Legacy formula+args based computed dims: strip $ from args
+      return {
+        ...dim,
+        args: dim.args?.map((a) => (a.startsWith("$") ? a.slice(1) : a)),
+      };
     }
     return dim;
   }

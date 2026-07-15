@@ -65,8 +65,8 @@
     "output": [
       { "kind": "symbolic", "name": "$B" },
       { "kind": "param_ref", "name": "out_channels" },
-      { "kind": "computed", "formula": "conv2d_hw", "args": ["$H", "kernel_size", "stride", "padding", "dilation"] },
-      { "kind": "computed", "formula": "conv2d_hw", "args": ["$W", "kernel_size", "stride", "padding", "dilation"] }
+      { "kind": "computed", "expr": "floor(($H + 2*padding - dilation*(kernel_size - 1) - 1)/stride + 1)" },
+      { "kind": "computed", "expr": "floor(($W + 2*padding - dilation*(kernel_size - 1) - 1)/stride + 1)" }
     ]
   }
 }

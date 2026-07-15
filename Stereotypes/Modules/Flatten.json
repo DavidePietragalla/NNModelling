@@ -24,7 +24,7 @@
     ],
     "output": [
       { "kind": "symbolic", "name": "$B" },
-      { "kind": "computed", "formula": "flatten_prod", "args": ["$*"] }
+      { "kind": "computed", "expr": "$*" }
     ]
   }
 }
