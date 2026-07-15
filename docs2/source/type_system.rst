@@ -417,7 +417,10 @@ Computed Dimensions
 
 Some modules produce output dimensions that depend on their parameters in
 non-trivial ways. These are expressed through the ``computed`` dimension
-kind with named formulas.
+kind using a **mini expression language**. Instead of hardcoded formula
+names (``conv2d_hw``, ``pool2d_hw``), each stereotype now declares its
+computation as an inline arithmetic expression — eliminating all
+module-specific logic from the TypeScript engine.
 
 Conv2d
 ~~~~~~
@@ -429,17 +432,17 @@ size, kernel size, stride, padding, and dilation:
 
    H_{\text{out}} = \left\lfloor \frac{H + 2p - d(k - 1) - 1}{s} + 1 \right\rfloor
 
-The type signature declares this as:
+The type signature declares this directly:
 
 .. code-block:: json
 
    "output": [
      { "kind": "symbolic", "name": "$B" },
      { "kind": "param_ref", "name": "out_channels" },
-     { "kind": "computed", "formula": "conv2d_hw",
-       "args": ["$H", "kernel_size", "stride", "padding", "dilation"] },
-     { "kind": "computed", "formula": "conv2d_hw",
-       "args": ["$W", "kernel_size", "stride", "padding", "dilation"] }
+     { "kind": "computed",
+       "expr": "floor(($H + 2*padding - dilation*(kernel_size - 1) - 1)/stride + 1)" },
+     { "kind": "computed",
+       "expr": "floor(($W + 2*padding - dilation*(kernel_size - 1) - 1)/stride + 1)" }
    ]
 
 For a 3×3 convolution with stride 1 and padding 1 on a 32×32 input:
@@ -467,6 +470,92 @@ The flattened dimension is the product of all wildcard-captured dimensions
 
 For :math:`[B, 128, 7, 7]`: :math:`128 \times 7 \times 7 = 6272` →
 :math:`[B, 6272]`.
+
+Expression Language
+~~~~~~~~~~~~~~~~~~~
+
+The expression language used in ``computed`` ``expr`` fields is a small,
+safe arithmetic language that replaces all previously hardcoded formula
+bodies (``resolveFormula``, ``resolveComputedArg``). Every computed
+dimension in the codebase now uses it.
+
+**Grammar.** The language supports the standard arithmetic operators with
+correct precedence:
+
+.. code-block:: text
+
+   expr        := additive
+   additive    := multiplicative (("+" | "-") multiplicative)*
+   multiplicative := unary (("*" | "/" | "//" | "%") unary)*
+   unary       := "-" unary | primary
+   primary     := NUMBER | VARIABLE | FUNC_CALL | "(" expr ")"
+
+**Operators** (precedence from lowest to highest):
+
++-------------+------------------------------------------------------------+
+| Category    | Operators                                                  |
++=============+============================================================+
+| Additive    | ``+``, ``-``                                               |
++-------------+------------------------------------------------------------+
+| Multiplicative | ``*``, ``/``, ``//`` (floor div), ``%`` (modulo)        |
++-------------+------------------------------------------------------------+
+| Unary       | ``-`` (negate)                                             |
++-------------+------------------------------------------------------------+
+
+**Built-in functions:**
+
++-------------+----------------------------+-------------------------------+
+| Function    | Signature                  | Description                   |
++=============+============================+===============================+
+| ``floor(x)``| ``number → number``        | Round down (integer)          |
++-------------+----------------------------+-------------------------------+
+| ``ceil(x)`` | ``number → number``        | Round up (integer)            |
++-------------+----------------------------+-------------------------------+
+| ``abs(x)``  | ``number → number``        | Absolute value                |
++-------------+----------------------------+-------------------------------+
+| ``max(a,b)``| ``number, number → number``| Maximum of two values         |
++-------------+----------------------------+-------------------------------+
+| ``min(a,b)``| ``number, number → number``| Minimum of two values         |
++-------------+----------------------------+-------------------------------+
+
+**Variable resolution.** Three kinds of variable are recognised:
+
++-------------+---------------+----------------------------------------------+
+| Syntax      | Resolves From | Example                                      |
++=============+===============+==============================================+
+| ``$NAME``   | Symbolic env  | ``$H`` → height dim bound in pattern match   |
++-------------+---------------+----------------------------------------------+
+| ``$*``      | Captured dims | ``$*`` → product of wildcard dims (Flatten)  |
++-------------+---------------+----------------------------------------------+
+| ``name``    | Node params   | ``kernel_size``, ``padding``, ``stride``     |
++-------------+---------------+----------------------------------------------+
+
+**Conv2d example — how variables resolve.** For a layer with
+``kernel_size=3``, ``stride=1``, ``padding=1``, ``dilation=1`` on a
+:math:`32 \times 32` input:
+
+.. code-block:: text
+
+   expr: floor(($H + 2*padding - dilation*(kernel_size - 1) - 1)/stride + 1)
+
+      $H        → env["H"]        = 32    (symbolic, bound during matching)
+      padding   → params.padding  = 1
+      dilation  → params.dilation = 1
+      kernel_size → params.kernel_size = 3
+      stride    → params.stride   = 1
+
+      floor((32 + 2*1 - 1*(3 - 1) - 1) / 1 + 1) = floor(32) = 32
+
+If any variable cannot be resolved (e.g. a parameter is unset or a symbolic
+dimension has not been bound), the computed dimension is deferred — the
+engine keeps it as a symbolic ``computed`` node rather than erroring. This
+graceful degradation allows partial typing to work during editing.
+
+**All stereotype logic is now fully declarative.** Every module-specific
+shape computation lives in the stereotype JSON — no TypeScript changes are
+needed to add or modify a module's type signature. This includes computed
+dimensions (5 stereotypes), subflow transforms (Repeat, HorizontalRepeat),
+and join configuration (Concat dim resolution).
 
 Join Type Checking
 ------------------
@@ -558,22 +647,28 @@ The type system was implemented incrementally over five phases:
 | Phase 1     | Core type model (tensortypes.ts), pattern matching        |
 |             | engine, type signatures for Input/Linear/ReLU            |
 +-------------+----------------------------------------------------------+
-| Phase 2     | Computed dimensions (conv2d_hw, pool2d_hw,               |
-|             | flatten_prod), Conv2d/MaxPool2d/AvgPool2d/Flatten,      |
-|             | 10 shape-preserving modules, Embedding                   |
+| Phase 2     | Computed dimensions and expression language (Conv2d,     |
+|             | MaxPool2d, AvgPool2d, Flatten, Unsample), 10 shape-     |
+|             | preserving modules, Embedding. All hardcoded formula     |
+|             | bodies (``resolveFormula``, ``resolveComputedArg``)      |
+|             | replaced by inline ``expr`` strings.                     |
 +-------------+----------------------------------------------------------+
 | Phase 3     | Join type checking (Addition, Concat, MatMul,            |
 |             | ScaledDotProduct, MaskedScaledDotProduct),               |
-|             | multi-input pattern matching, symbolic unification       |
+|             | multi-input pattern matching, symbolic unification.      |
+|             | Concat dim resolution uses the expression language.      |
 +-------------+----------------------------------------------------------+
-| Phase 4     | Recursive subflow type inference (generic, Repeat,        |
-|             | HorizontalRepeat), type signatures for 7 complex modules |
-|             | (MultiheadAttention, Transformer, TransformerEncoderLayer,|
-|             | TransformerDecoderLayer, PositionalEncoding, SequencePool,|
+| Phase 4     | Recursive subflow type inference, declarative subflow    |
+|             | transforms (``action: "identity"`` for Repeat,           |
+|             | ``action: "infer_then_transform"`` for HorizontalRepeat),|
+|             | type signatures for 7 complex modules (MultiheadAttention,|
+|             | Transformer, TransformerEncoderLayer, Transformer-       |
+|             | DecoderLayer, PositionalEncoding, SequencePool,          |
 |             | Unsample), 4 loss nodes (BCELoss, BCEWithLogitsLoss,     |
-|             | CrossEntropyLoss, MSELoss), Fork, and the ``upsample_hw`` |
-|             | computed formula. 34 of 35 stereotypes now have type      |
-|             | signatures (Einsum is intentionally gradual typing).      |
+|             | CrossEntropyLoss, MSELoss), Fork. All subflow/join       |
+|             | logic is declarative — no hardcoded name checks.         |
+|             | 34 of 35 stereotypes have type signatures (Einsum is     |
+|             | intentionally gradual typing).                           |
 +-------------+----------------------------------------------------------+
 | Phase 5     | Editor integration: reactive ``typeResult`` state,       |
 |             | error panel, node indicators, shape tooltips             |
@@ -586,7 +681,11 @@ Further Reading
 * Source: ``front-end/src/conversion/tensortypes.ts`` — type model interfaces
 * Source: ``front-end/src/conversion/typeEngine.ts`` — inference engine
   implementation
-* Tests: ``front-end/src/__tests__/typeEngine.test.ts`` — 170 tests
-  (165 passing, 5 skipped) covering all phases
+* Source: ``front-end/src/expr/`` — expression language tokenizer, parser,
+  evaluator, and public API
+* Tests: ``front-end/src/__tests__/typeEngine.test.ts`` — 225 tests
+  (220 passing, 5 skipped) covering all phases
+* Tests: ``front-end/src/__tests__/expr.test.ts`` — 40+ unit tests for
+  expression parsing and evaluation
 * Design docs: ``docs/designs/tensor-type-system/`` — full architectural
   design documents
