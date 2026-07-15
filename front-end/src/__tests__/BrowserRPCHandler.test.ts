@@ -315,7 +315,7 @@ describe("BrowserRPCHandler", () => {
 
     // Stub WebSocket to capture responses
     const mockSend = vi.fn();
-    (syncClient as any).ws = { send: mockSend, readyState: WebSocket.OPEN, close: vi.fn() };
+    (syncClient as any).ws = { send: mockSend, readyState: 1 /* WebSocket.OPEN */, close: vi.fn() };
 
     (syncClient as any).handleMessage({
       data: JSON.stringify({ id: "req-fit-vp", method: "fit_view", params: {} }),
@@ -339,7 +339,7 @@ describe("BrowserRPCHandler", () => {
     });
 
     const mockSend = vi.fn();
-    (syncClient as any).ws = { send: mockSend, readyState: WebSocket.OPEN, close: vi.fn() };
+    (syncClient as any).ws = { send: mockSend, readyState: 1 /* WebSocket.OPEN */, close: vi.fn() };
 
     (syncClient as any).handleMessage({
       data: JSON.stringify({
@@ -366,7 +366,7 @@ describe("BrowserRPCHandler", () => {
     });
 
     const mockSend = vi.fn();
-    (syncClient as any).ws = { send: mockSend, readyState: WebSocket.OPEN, close: vi.fn() };
+    (syncClient as any).ws = { send: mockSend, readyState: 1 /* WebSocket.OPEN */, close: vi.fn() };
 
     (syncClient as any).handleMessage({
       data: JSON.stringify({

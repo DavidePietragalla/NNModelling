@@ -12,5 +12,13 @@
       "default": "1",
       "position": "top"
     }
+  },
+  "type_signature": {
+    "kind": "subflow",
+    "input": [{ "kind": "wildcard" }],
+    "output": [{ "kind": "wildcard" }],
+    "constraints": {
+      "hrepeat": { "n": "params.n" }
+    }
   }
 }

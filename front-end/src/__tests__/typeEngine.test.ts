@@ -957,3 +957,297 @@ describe("TypeEngine — Phase 3 Joins", () => {
     expect(joinErrors[0].message).toMatch(/dimension|dim|pattern|expected/i);
   });
 });
+
+// ---------------------------------------------------------------------------
+// Group 8 — Phase 4: Subflow Type Inference
+// ---------------------------------------------------------------------------
+
+describe("TypeEngine — Phase 4 Subflows", () => {
+  it("8.1: Repeat subflow preserves shape: Input(784) → Repeat(ReLU internal)", () => {
+    const d = new Diagram();
+    const inputId = d.nodes[0].id;
+    d.updateModule(inputId, { params: { out_features: { value: "784" } } });
+
+    // Create Repeat subflow node
+    const repeatStereo = d.stereotypes.find((s) => s.name === "Repeat")!;
+    d.addModule(repeatStereo, 400, 0);
+    const subflowId = d.nodes[1].id;
+
+    // Create internal nodes
+    const internalInputId = "sf1_input";
+    const internalReluId = "sf1_relu";
+
+    d.nodes.push(
+      node(internalInputId, "Input", "Input", {}, {
+        type: "custom",
+        isInput: true,
+        parentId: subflowId,
+      }),
+      node(internalReluId, "ReLU", "ReLU", {}, {
+        type: "custom",
+        parentId: subflowId,
+      }),
+    );
+
+    // Internal edges: Input → ReLU
+    d.edges.push(edge("ie1", internalInputId, internalReluId));
+
+    // External edge: main Input → Repeat subflow
+    d.edges.push(edge("e1", inputId, subflowId));
+
+    const result = TypeEngine.infer(d);
+    expectTypeSuccess(result);
+
+    // Repeat is shape-preserving: [B, 784] → [B, 784]
+    expectOutputShape(result, subflowId, ["$B", "784"]);
+  });
+
+  it("8.2: HorizontalRepeat subflow: Input(128) → HR(n=4, Linear(128→64)) → [B,256]", () => {
+    const d = new Diagram();
+    const inputId = d.nodes[0].id;
+    d.updateModule(inputId, { params: { out_features: { value: "128" } } });
+
+    // Create HorizontalRepeat subflow node
+    const hrStereo = d.stereotypes.find((s) => s.name === "HorizontalRepeat")!;
+    d.addModule(hrStereo, 400, 0, {
+      params: { n: { value: "4" } },
+    });
+    const subflowId = d.nodes[1].id;
+
+    // Set the n param via updateModule
+    d.updateModule(subflowId, {
+      params: { n: { value: "4" } },
+    });
+
+    // Create internal nodes
+    const internalInputId = "sf2_input";
+    const internalLinearId = "sf2_linear";
+
+    d.nodes.push(
+      node(internalInputId, "Input", "Input", {}, {
+        type: "custom",
+        isInput: true,
+        parentId: subflowId,
+      }),
+      node(internalLinearId, "Linear", "Linear", {
+        in_features: { value: "128" },
+        out_features: { value: "64" },
+      }, {
+        type: "custom",
+        parentId: subflowId,
+      }),
+    );
+
+    // Internal edges: Input → Linear(128→64)
+    d.edges.push(edge("ie1", internalInputId, internalLinearId));
+
+    // External edge: main Input → HorizontalRepeat subflow
+    d.edges.push(edge("e1", inputId, subflowId));
+
+    const result = TypeEngine.infer(d);
+    expectTypeSuccess(result);
+
+    // HorizontalRepeat with n=4: last dim = internal_output_last_dim × n = 64 × 4 = 256
+    expectOutputShape(result, subflowId, ["$B", "256"]);
+  });
+
+  it("8.3: Generic subflow with internal Linear: Input(784) → Subflow(Linear(784→256) → ReLU)", () => {
+    const d = new Diagram();
+    const inputId = d.nodes[0].id;
+    d.updateModule(inputId, { params: { out_features: { value: "784" } } });
+
+    // Create a generic subflow node (no specific subflow stereotype)
+    const subflowId = "gen_sf";
+    d.nodes.push(
+      node(subflowId, "UnknownSF", "Subflow", {}, {
+        type: "subflow",
+      }),
+    );
+
+    // Create internal nodes
+    const internalInputId = "sf3_input";
+    const internalLinearId = "sf3_linear";
+    const internalReluId = "sf3_relu";
+
+    d.nodes.push(
+      node(internalInputId, "Input", "Input", {}, {
+        type: "custom",
+        isInput: true,
+        parentId: subflowId,
+      }),
+      node(internalLinearId, "Linear", "Linear", {
+        in_features: { value: "784" },
+        out_features: { value: "256" },
+      }, {
+        type: "custom",
+        parentId: subflowId,
+      }),
+      node(internalReluId, "ReLU", "ReLU", {}, {
+        type: "custom",
+        parentId: subflowId,
+      }),
+    );
+
+    // Internal edges: Input → Linear(784→256) → ReLU
+    d.edges.push(edge("ie1", internalInputId, internalLinearId));
+    d.edges.push(edge("ie2", internalLinearId, internalReluId));
+
+    // External edge: main Input → subflow
+    d.edges.push(edge("e1", inputId, subflowId));
+
+    const result = TypeEngine.infer(d);
+    expectTypeSuccess(result);
+
+    // Subflow output = internal exit (ReLU) output = [B, 256]
+    expectOutputShape(result, subflowId, ["$B", "256"]);
+  });
+
+  it("8.4: Generic subflow shape mismatch: Input(784) → Subflow(Linear(512→256))", () => {
+    const d = new Diagram();
+    const inputId = d.nodes[0].id;
+    d.updateModule(inputId, { params: { out_features: { value: "784" } } });
+
+    // Create a generic subflow node
+    const subflowId = "mismatch_sf";
+    d.nodes.push(
+      node(subflowId, "UnknownSF", "Subflow", {}, {
+        type: "subflow",
+      }),
+    );
+
+    // Internal nodes with mismatched in_features
+    const internalInputId = "sf4_input";
+    const internalLinearId = "sf4_linear";
+
+    d.nodes.push(
+      node(internalInputId, "Input", "Input", {}, {
+        type: "custom",
+        isInput: true,
+        parentId: subflowId,
+      }),
+      node(internalLinearId, "Linear", "Linear", {
+        in_features: { value: "512" }, // MISMATCH: Input outputs 784
+        out_features: { value: "256" },
+      }, {
+        type: "custom",
+        parentId: subflowId,
+      }),
+    );
+
+    // Internal edges: Input → Linear(512→256)
+    d.edges.push(edge("ie1", internalInputId, internalLinearId));
+
+    // External edge: main Input(784) → subflow
+    d.edges.push(edge("e1", inputId, subflowId));
+
+    const result = TypeEngine.infer(d);
+    expect(result.ok).toBe(false);
+
+    // Error should mention the subflow node with [Subflow] prefix or dimension mismatch
+    const sfErrors = result.errors.filter(
+      (e) => e.nodeId === subflowId && e.severity === "error",
+    );
+    expect(sfErrors.length).toBeGreaterThanOrEqual(1);
+    expect(sfErrors[0].message).toMatch(/in_features|512|784|mismatch|dimension|param/i);
+  });
+
+  it("8.5: Nested subflow: Input(784) → Subflow_A(Subflow_B(ReLU))", () => {
+    const d = new Diagram();
+    const inputId = d.nodes[0].id;
+    d.updateModule(inputId, { params: { out_features: { value: "784" } } });
+
+    // Create outer subflow (generic)
+    const outerId = "outer_sf";
+    d.nodes.push(
+      node(outerId, "UnknownSF", "OuterSubflow", {}, {
+        type: "subflow",
+      }),
+    );
+
+    // Create inner subflow (generic)
+    const innerId = "inner_sf";
+    d.nodes.push(
+      node(innerId, "UnknownSF", "InnerSubflow", {}, {
+        type: "subflow",
+        parentId: outerId,
+      }),
+    );
+
+    // Create internal nodes inside inner subflow
+    const innerInputId = "nested_input";
+    const innerReluId = "nested_relu";
+
+    d.nodes.push(
+      node(innerInputId, "Input", "Input", {}, {
+        type: "custom",
+        isInput: true,
+        parentId: innerId,
+      }),
+      node(innerReluId, "ReLU", "ReLU", {}, {
+        type: "custom",
+        parentId: innerId,
+      }),
+    );
+
+    // Internal edges in inner subflow: Input → ReLU
+    d.edges.push(edge("ie1", innerInputId, innerReluId));
+
+    // Internal edges in outer subflow: inner subflow is the only node processed
+    // (no additional edges needed — the inner subflow acts as a pass-through)
+
+    // External edge: main Input → outer subflow
+    d.edges.push(edge("e1", inputId, outerId));
+
+    const result = TypeEngine.infer(d);
+    expectTypeSuccess(result);
+
+    // Outer subflow output = inner subflow output = ReLU output = [B, 784]
+    expectOutputShape(result, outerId, ["$B", "784"]);
+  });
+
+  it("8.6: HorizontalRepeat with unresolved 'n' produces error", () => {
+    const d = new Diagram();
+    const inputId = d.nodes[0].id;
+    d.updateModule(inputId, { params: { out_features: { value: "128" } } });
+
+    // Create HorizontalRepeat subflow node without setting 'n'
+    const hrStereo = d.stereotypes.find((s) => s.name === "HorizontalRepeat")!;
+    d.addModule(hrStereo, 400, 0);
+    const subflowId = d.nodes[1].id;
+
+    // Set n to "Undefined" (unresolved)
+    d.updateModule(subflowId, {
+      params: { n: { value: "Undefined" } },
+    });
+
+    // Create internal nodes (minimal)
+    const internalInputId = "sf6_input";
+    const internalReluId = "sf6_relu";
+
+    d.nodes.push(
+      node(internalInputId, "Input", "Input", {}, {
+        type: "custom",
+        isInput: true,
+        parentId: subflowId,
+      }),
+      node(internalReluId, "ReLU", "ReLU", {}, {
+        type: "custom",
+        parentId: subflowId,
+      }),
+    );
+
+    d.edges.push(edge("ie1", internalInputId, internalReluId));
+
+    // Connect external Input → subflow so it's not silently skipped
+    d.edges.push(edge("e1", inputId, subflowId));
+
+    const result = TypeEngine.infer(d);
+
+    // Expect errors
+    const hrErrors = result.errors.filter(
+      (e) => e.nodeId === subflowId && e.severity === "error",
+    );
+    expect(hrErrors.length).toBeGreaterThanOrEqual(1);
+    expect(hrErrors[0].message).toMatch(/requires parameter.*n.*to be set/i);
+  });
+});

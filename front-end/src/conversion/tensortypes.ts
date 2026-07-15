@@ -122,9 +122,10 @@ export interface TypeSignature {
     output?: DType;
   };
 
-  /** Optional additional constraints (e.g. concat dimension). */
+  /** Optional additional constraints (e.g. concat dimension, hrepeat). */
   constraints?: {
     concat?: { dim: string };
+    hrepeat?: { n: string };
   };
 }
 

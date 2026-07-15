@@ -84,8 +84,50 @@ export class TypeEngine {
         .stereotype as string;
       const stereotype = diagram.getStereotype(stereoName);
 
-      // ── Step b: No type signature ─────────────────────────────────
+      // ── Step b: No type signature — with generic subflow handling ──
       if (!stereotype || !stereotype.typeSignature) {
+        // Generic subflow: has children nodes but no stereotype with type_signature
+        const hasInternalNodes = diagram.nodes.some((n) => n.parentId === nodeId);
+        if (hasInternalNodes) {
+          const localParams: Record<string, unknown> = (
+            node.data as Record<string, unknown>
+          ).params as Record<string, unknown>;
+          // Compute input type inline (inputType not yet declared at this point)
+          const incEdges = diagram.edges.filter((e) => e.target === nodeId);
+          let subflowInputType: TensorType | undefined;
+          if (incEdges.length === 1) {
+            const srcAnn = annotations.get(incEdges[0].source);
+            if (srcAnn) subflowInputType = srcAnn.outputType;
+          } else if (incEdges.length > 1) {
+            // Use first predecessor's type for subflow
+            const srcAnn = annotations.get(incEdges[0].source);
+            if (srcAnn) subflowInputType = srcAnn.outputType;
+          }
+          const result = this.inferSubflow(
+            nodeId,
+            subflowInputType,
+            diagram,
+            localParams ?? {},
+            env,
+          );
+          if (isTensorType(result)) {
+            annotations.set(nodeId, {
+              nodeId,
+              outputType: result,
+              ...(subflowInputType !== undefined ? { inputType: subflowInputType } : {}),
+            });
+            for (const dim of result.shape) {
+              if (dim.kind === "symbolic" && !env.has(dim.name)) {
+                env.set(dim.name, dim);
+              }
+            }
+          } else {
+            if (!result.nodeId) result.nodeId = nodeId;
+            errors.push(result);
+          }
+          continue;
+        }
+
         errors.push({
           nodeId,
           message: `No type signature for "${stereoName}"`,
@@ -189,6 +231,8 @@ export class TypeEngine {
         params,
         env,
         inputTypes,
+        diagram,
+        nodeId,
       );
 
       // ── Steps f/g: Handle result ─────────────────────────────────
@@ -240,6 +284,8 @@ export class TypeEngine {
     params: Record<string, unknown>,
     env: TypeEnvironment,
     inputTypes?: TensorType[],
+    diagram?: Diagram,
+    nodeId?: string,
   ): TensorType | TypeError {
     // Safety check: type signature must exist
     const sig = stereotype.typeSignature;
@@ -450,10 +496,94 @@ export class TypeEngine {
         return { shape: outputDims, dtype } satisfies TensorType;
       }
 
-      // ── Subflow kind (Phase 4 TODO) ───────────────────────────
+      // ── Subflow kind (Phase 4) ─────────────────────────────────
       case "subflow": {
-        // TODO: implement subflow type inference (Phase 4)
-        return { shape: [], dtype: "unknown" } satisfies TensorType;
+        const stereoName = stereotype.name;
+
+        // ── Repeat: shape-preserving ──────────────────────────
+        if (stereoName === "Repeat") {
+          if (!inputType) {
+            return {
+              nodeId: "",
+              message: "Repeat subflow has no input",
+              severity: "error",
+            } satisfies TypeError;
+          }
+          // Repeat executes N times → output shape equals input shape
+          return {
+            shape: inputType.shape.map((d) => ({ ...d })),
+            dtype: inputType.dtype,
+          } satisfies TensorType;
+        }
+
+        // ── HorizontalRepeat: run internal graph then concat on last dim ──
+        if (stereoName === "HorizontalRepeat") {
+          if (!inputType) {
+            return {
+              nodeId: "",
+              message: "HorizontalRepeat subflow has no input",
+              severity: "error",
+            } satisfies TypeError;
+          }
+          const nResolved = this.resolveParamRef("n", params);
+          if (nResolved.status !== "resolved") {
+            return {
+              nodeId: "",
+              message:
+                "HorizontalRepeat requires parameter 'n' to be set",
+              severity: "error",
+            } satisfies TypeError;
+          }
+          // First run the internal subflow graph to get its output type
+          if (!diagram || !nodeId) {
+            return {
+              nodeId: "",
+              message:
+                "HorizontalRepeat requires diagram context for recursive inference",
+              severity: "error",
+            } satisfies TypeError;
+          }
+          const internalResult = this.inferSubflow(
+            nodeId,
+            inputType,
+            diagram,
+            params,
+            env,
+          );
+          if (!isTensorType(internalResult)) {
+            return internalResult; // propagate subflow error
+          }
+          const n = nResolved.value;
+          const newShape = internalResult.shape.map((d, i) => {
+            if (
+              i === internalResult.shape.length - 1 &&
+              d.kind === "const"
+            ) {
+              return { kind: "const" as const, value: d.value * n };
+            }
+            return { ...d };
+          });
+          return {
+            shape: newShape,
+            dtype: internalResult.dtype,
+          } satisfies TensorType;
+        }
+
+        // ── Generic subflow: recursive inference ────────────
+        if (!diagram || !nodeId) {
+          return {
+            nodeId: "",
+            message: `Subflow "${stereoName}" requires diagram context for recursive inference`,
+            severity: "error",
+          } satisfies TypeError;
+        }
+        return this.inferSubflow(
+          nodeId,
+          inputType,
+          diagram,
+          params,
+          env,
+        );
       }
 
       default:
@@ -463,6 +593,266 @@ export class TypeEngine {
           severity: "warning",
         } satisfies TypeError;
     }
+  }
+
+  // ─────────────────────────────────────────────────────────────────────────────
+  // Subflow inference (Phase 4)
+  // ─────────────────────────────────────────────────────────────────────────────
+
+  /**
+   * Recursive type inference for a generic subflow container.
+   *
+   * 1. Collects internal child nodes (parentId === subflowNodeId).
+   * 2. Finds the internal Input node and injects the external input type.
+   * 3. Runs topological sort on internal nodes.
+   * 4. Calls inferNode for each internal node (recursing into nested subflows).
+   * 5. Returns the output type of the first exit node.
+   */
+  private static inferSubflow(
+    subflowNodeId: string,
+    externalInputType: TensorType | undefined,
+    diagram: Diagram,
+    params: Record<string, unknown>,
+    env: TypeEnvironment,
+  ): TensorType | TypeError {
+    // 1. Collect internal nodes
+    const internalNodes = diagram.nodes.filter(
+      (n) => n.parentId === subflowNodeId,
+    );
+    if (internalNodes.length === 0) {
+      return {
+        nodeId: subflowNodeId,
+        message: "Subflow has no internal nodes",
+        severity: "warning",
+      } satisfies TypeError;
+    }
+
+    // 2. Collect internal edges (both ends inside the subflow)
+    const internalNodeIds = new Set(internalNodes.map((n) => n.id));
+    const internalEdges = diagram.edges.filter(
+      (e) =>
+        internalNodeIds.has(e.source) && internalNodeIds.has(e.target),
+    );
+
+    // 3. Find entry node (internal Input or topological source)
+    let entryNode: Node | undefined = internalNodes.find((n) => {
+      const stereo = diagram.getStereotype(
+        (n.data as Record<string, unknown>).stereotype as string,
+      );
+      return stereo?.isInput;
+    });
+
+    // Fallback: if no Input node, use node(s) with no internal incoming edges
+    if (!entryNode) {
+      const sources = internalNodes.filter(
+        (n) => !internalEdges.some((e) => e.target === n.id),
+      );
+      if (sources.length >= 1) {
+        entryNode = sources[0];
+      }
+    }
+
+    if (!entryNode) {
+      return {
+        nodeId: subflowNodeId,
+        message: "Subflow has no internal Input node",
+        severity: "error",
+      } satisfies TypeError;
+    }
+
+    // 4. Find exit node(s) — internal nodes with no internal outgoing edges.
+    //    The entry node CAN be an exit too (single-node subflows).
+    let exitNodes = internalNodes.filter(
+      (n) => !internalEdges.some((e) => e.source === n.id),
+    );
+    if (exitNodes.length === 0) {
+      return {
+        nodeId: subflowNodeId,
+        message: "Could not determine subflow exit node",
+        severity: "error",
+      } satisfies TypeError;
+    }
+
+    // 5. Build local annotations map.
+    //    For Input entry nodes: seed with externalInputType as output
+    //    (Input just passes through). For other entry nodes (e.g. nested subflow
+    //    containers), we don't seed — the external input is passed as input to
+    //    the entry node during processing below.
+    const entryStereo = diagram.getStereotype(
+      (entryNode.data as Record<string, unknown>).stereotype as string,
+    );
+    const isEntryInput = entryStereo?.isInput ?? false;
+    const localAnnotations = new Map<string, NodeTypeAnnotation>();
+    if (externalInputType && isEntryInput) {
+      localAnnotations.set(entryNode.id, {
+        nodeId: entryNode.id,
+        outputType: externalInputType,
+      });
+    }
+
+    // 6. Topological sort internal nodes
+    const sortedIds = this.topologicalSort(internalNodes, internalEdges);
+
+    // 7. Build fast id→node lookup
+    const nodesById = new Map<string, Node>();
+    for (const n of internalNodes) {
+      nodesById.set(n.id, n);
+    }
+
+    const localEnv: TypeEnvironment = new Map(env);
+
+    // 8. Walk internal nodes (skip Input entry node if already seeded)
+    for (const internalNodeId of sortedIds) {
+      const isEntry = internalNodeId === entryNode.id;
+      if (isEntry && isEntryInput && externalInputType) continue; // Already seeded
+
+      const n = nodesById.get(internalNodeId);
+      if (!n) continue;
+
+      // 8a. Get stereotype
+      const stereoName = (n.data as Record<string, unknown>)
+        .stereotype as string;
+      const stereotype = diagram.getStereotype(stereoName);
+
+      // 8b. No type signature — check for nested subflow or skip
+      if (!stereotype || !stereotype.typeSignature) {
+        const hasInternalChildren = diagram.nodes.some(
+          (cn) => cn.parentId === internalNodeId,
+        );
+        if (hasInternalChildren) {
+          // Recursive subflow inference for nested generic subflow
+          // Compute input type: entry node gets externalInputType,
+          // other nodes get it from internal predecessor annotations
+          let nestedInputType: TensorType | undefined;
+          if (isEntry && externalInputType) {
+            nestedInputType = externalInputType;
+          } else {
+            const incomingEdges = internalEdges.filter(
+              (e) => e.target === internalNodeId,
+            );
+            if (incomingEdges.length === 1) {
+              const srcAnn = localAnnotations.get(
+                incomingEdges[0].source,
+              );
+              if (srcAnn)
+                nestedInputType = srcAnn.outputType;
+            }
+          }
+          const nestedResult = this.inferSubflow(
+            internalNodeId,
+            nestedInputType,
+            diagram,
+            (n.data as Record<string, unknown>)
+              .params as Record<string, unknown> ?? {},
+            localEnv,
+          );
+          if (isTensorType(nestedResult)) {
+            localAnnotations.set(internalNodeId, {
+              nodeId: internalNodeId,
+              outputType: nestedResult,
+            });
+          } else {
+            return {
+              nodeId: subflowNodeId,
+              message: `[Subflow] ${nestedResult.message}`,
+              severity: nestedResult.severity,
+            } satisfies TypeError;
+          }
+        } else {
+          // Non-subflow node without type signature — warning
+          localAnnotations.set(internalNodeId, {
+            nodeId: internalNodeId,
+            outputType: { shape: [], dtype: "unknown" },
+          });
+        }
+        continue;
+      }
+
+      // 8c. Get resolved params
+      const localParams: Record<string, unknown> = (
+        n.data as Record<string, unknown>
+      ).params as Record<string, unknown>;
+
+      const sig = stereotype.typeSignature;
+
+      // 8d. Determine input type from internal edges
+      const localIncomingEdges = internalEdges.filter(
+        (e) => e.target === internalNodeId,
+      );
+
+      let localInputType: TensorType | undefined;
+      let localInputTypes: TensorType[] | undefined;
+
+      // Entry node that is not an Input receives the external input type
+      if (isEntry && !isEntryInput && externalInputType) {
+        localInputType = externalInputType;
+      } else if (stereotype.isInput) {
+        localInputType = undefined;
+      } else if (sig.kind === "join") {
+        const collected: TensorType[] = [];
+        const sortedEdges = [...localIncomingEdges].sort((a, b) => {
+          const ha = a.targetHandle ?? "in-0";
+          const hb = b.targetHandle ?? "in-0";
+          return ha.localeCompare(hb);
+        });
+        for (const e of sortedEdges) {
+          const srcAnn = localAnnotations.get(e.source);
+          if (srcAnn) collected.push(srcAnn.outputType);
+        }
+        localInputTypes =
+          collected.length > 0 ? collected : undefined;
+      } else if (localIncomingEdges.length === 1) {
+        const srcAnn = localAnnotations.get(
+          localIncomingEdges[0].source,
+        );
+        if (srcAnn) localInputType = srcAnn.outputType;
+      }
+
+      // 8e. Call inferNode on the internal node (handles Repeat, HorizontalRepeat, module, join)
+      const result = this.inferNode(
+        localInputType,
+        stereotype,
+        localParams,
+        localEnv,
+        localInputTypes,
+        diagram,
+        internalNodeId,
+      );
+
+      if (isTensorType(result)) {
+        localAnnotations.set(internalNodeId, {
+          nodeId: internalNodeId,
+          outputType: result,
+        });
+        for (const dim of result.shape) {
+          if (dim.kind === "symbolic" && !localEnv.has(dim.name)) {
+            localEnv.set(dim.name, dim);
+          }
+        }
+      } else {
+        return {
+          nodeId: subflowNodeId,
+          message: `[Subflow] ${result.message}`,
+          severity: result.severity,
+        } satisfies TypeError;
+      }
+    }
+
+    // 9. Return first exit node's output type
+    const firstExit = exitNodes[0];
+    const exitAnn = localAnnotations.get(firstExit.id);
+    if (!exitAnn) {
+      return {
+        nodeId: subflowNodeId,
+        message: "Subflow exit node has no type annotation",
+        severity: "error",
+      } satisfies TypeError;
+    }
+
+    return {
+      shape: [...exitAnn.outputType.shape],
+      dtype: exitAnn.outputType.dtype,
+    } satisfies TensorType;
   }
 
   // ───────────────────────────────────────────────────────────────────────────
