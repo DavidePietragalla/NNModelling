@@ -230,6 +230,7 @@ MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.
           getInternalNode,
         );
         if (newNodes !== undefined) diagram.nodes = newNodes;
+        diagram.typeResult = TypeEngine.infer(diagram);
       }}
       onconnect={() => {
         diagram.typeResult = TypeEngine.infer(diagram);

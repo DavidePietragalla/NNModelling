@@ -109,7 +109,7 @@ export class DiagramCore {
     stereotype: StereotypeCore,
     x: number,
     y: number,
-    customConfig?: { name?: string; color?: string; width?: number; height?: number; params?: any }
+    customConfig?: { name?: string; color?: string; width?: number; height?: number; params?: any; parentId?: string }
   ) {
     this._captureUndoState();
     // 1. Name logic: if user provided a name use it, otherwise auto-generate (e.g. Tanh_0)
@@ -134,6 +134,7 @@ export class DiagramCore {
       position: { x, y },
       width: w,
       height: h,
+      parentId: customConfig?.parentId,
       data: {
         stereotype: stereotype.name,
         name: finalName,
@@ -162,7 +163,7 @@ export class DiagramCore {
     stereotype: StereotypeCore,
     x: number,
     y: number,
-    config?: { name?: string; inputsCount?: number; color?: string; params?: any }
+    config?: { name?: string; inputsCount?: number; color?: string; params?: any; parentId?: string }
   ) {
     this._captureUndoState();
     const id = `join_${crypto.randomUUID()}`;
@@ -171,6 +172,7 @@ export class DiagramCore {
       id,
       type: "join",
       position: { x, y },
+      parentId: config?.parentId,
       data: {
         stereotype: stereotype.name,
         name: stereotype.name,

@@ -1570,3 +1570,189 @@ describe("TypeEngine — Phase 4 Complex Signatures", () => {
     expect(resolveFormula("upsample_hw", [0, 2])).toBe(0);
   });
 });
+
+// ---------------------------------------------------------------------------
+// Group 10 — addModule/addJoinNode with parentId (subflow child placement)
+// ---------------------------------------------------------------------------
+
+describe("TypeEngine — parentId support in addModule/addJoinNode", () => {
+  it("10.1: addModule with parentId places node inside subflow — type engine recurses", () => {
+    const d = new Diagram();
+    const inputId = d.nodes[0].id;
+    d.updateModule(inputId, { params: { out_features: { value: "784" } } });
+
+    // Create a generic subflow container
+    const subflowId = "sf_parent";
+    d.nodes.push(
+      node(subflowId, "", "Subflow", {}, { type: "subflow" }),
+    );
+
+    // Create a Linear node INSIDE the subflow via addModule with parentId
+    const linearStereo = d.stereotypes.find((s) => s.name === "Linear")!;
+    d.addModule(linearStereo, 100, 100, {
+      params: {
+        in_features: { value: "784" },
+        out_features: { value: "256" },
+      },
+      parentId: subflowId,
+    });
+
+    // The Linear node should have parentId set
+    const linearNode = d.nodes.find(
+      (n) => (n.data as any).stereotype === "Linear" && n.parentId === subflowId,
+    );
+    expect(linearNode).toBeDefined();
+
+    // Connect main Input → subflow
+    d.edges.push(edge("e1", inputId, subflowId));
+
+    const result = TypeEngine.infer(d);
+    expectTypeSuccess(result);
+
+    // Subflow should have output type from internal Linear
+    expect(result.annotations.has(subflowId)).toBe(true);
+    expectOutputShape(result, subflowId, ["$B", "256"]);
+  });
+
+  it("10.2: addJoinNode with parentId places join inside subflow", () => {
+    const d = new Diagram();
+    const inputId = d.nodes[0].id;
+    d.updateModule(inputId, { params: { out_features: { value: "128" } } });
+
+    // Create a generic subflow container
+    const subflowId = "sf_join";
+    d.nodes.push(
+      node(subflowId, "", "Subflow", {}, { type: "subflow" }),
+    );
+
+    // Create internal Input node (entry point for subflow)
+    const internalInputId = "sf_join_input";
+    d.nodes.push(
+      node(internalInputId, "Input", "Input", {}, {
+        type: "custom",
+        isInput: true,
+        parentId: subflowId,
+      }),
+    );
+
+    // Create two internal ReLU nodes that fork from Input and feed into Addition
+    const reluAId = "sf_relu_a";
+    const reluBId = "sf_relu_b";
+    d.nodes.push(
+      node(reluAId, "ReLU", "ReLU_A", {}, {
+        type: "custom",
+        parentId: subflowId,
+      }),
+      node(reluBId, "ReLU", "ReLU_B", {}, {
+        type: "custom",
+        parentId: subflowId,
+      }),
+    );
+
+    // Create an Addition join inside the subflow via addJoinNode with parentId
+    const addStereo = d.stereotypes.find((s) => s.name === "Addition")!;
+    d.addJoinNode(addStereo, 100, 100, { parentId: subflowId });
+
+    const joinNode = d.nodes.find(
+      (n) => (n.data as any).stereotype === "Addition" && n.parentId === subflowId,
+    );
+    expect(joinNode).toBeDefined();
+
+    // Internal edges: Input → ReLU_A, Input → ReLU_B, ReLU_A → Addition, ReLU_B → Addition
+    d.edges.push(edge("ie1", internalInputId, reluAId));
+    d.edges.push(edge("ie2", internalInputId, reluBId));
+    d.edges.push(edge("ie3", reluAId, joinNode.id, { targetHandle: "in-0" }));
+    d.edges.push(edge("ie4", reluBId, joinNode.id, { targetHandle: "in-1" }));
+
+    // Connect main Input → subflow
+    d.edges.push(edge("e1", inputId, subflowId));
+
+    const result = TypeEngine.infer(d);
+    expectTypeSuccess(result);
+  });
+
+  it("10.3: Empty subflow (no children) should NOT produce 'undefined' in error message", () => {
+    const d = new Diagram();
+    const inputId = d.nodes[0].id;
+    d.updateModule(inputId, { params: { out_features: { value: "784" } } });
+
+    // Create an empty generic subflow — match addSubGraph() which has NO stereotype field
+    const subflowId = "sf_empty";
+    d.nodes.push({
+      id: subflowId,
+      type: "subflow",
+      position: { x: 0, y: 0 },
+      data: {
+        label: subflowId,
+        isCollapsed: false,
+        oldWidth: 400,
+        oldHeight: 300,
+        // NOTE: no "stereotype" field — matches addSubGraph() behavior
+      },
+    } as any);
+
+    // Connect main Input → subflow
+    d.edges.push(edge("e1", inputId, subflowId));
+
+    const result = TypeEngine.infer(d);
+
+    // The error should NOT contain the literal string "undefined"
+    const subflowErrors = result.errors.filter((e) => e.nodeId === subflowId);
+    for (const err of subflowErrors) {
+      expect(err.message).not.toContain("undefined");
+    }
+  });
+
+  it("10.4: addModule with parentId — full chain Input → Subflow(Linear) → ReLU", () => {
+    const d = new Diagram();
+    const inputId = d.nodes[0].id;
+    d.updateModule(inputId, { params: { out_features: { value: "784" } } });
+
+    // Create subflow
+    const subflowId = "sf_chain";
+    d.nodes.push(
+      node(subflowId, "", "Subflow", {}, { type: "subflow" }),
+    );
+
+    // Add Linear(784→256) inside subflow
+    const linearStereo = d.stereotypes.find((s) => s.name === "Linear")!;
+    d.addModule(linearStereo, 100, 100, {
+      params: {
+        in_features: { value: "784" },
+        out_features: { value: "256" },
+      },
+      parentId: subflowId,
+    });
+
+    // Add ReLU inside subflow
+    const reluStereo = d.stereotypes.find((s) => s.name === "ReLU")!;
+    d.addModule(reluStereo, 200, 100, {
+      parentId: subflowId,
+    });
+
+    // Internal edge: Linear → ReLU (inside subflow)
+    const linearNode = d.nodes.find(
+      (n) => (n.data as any).stereotype === "Linear" && n.parentId === subflowId,
+    )!;
+    const reluNode = d.nodes.find(
+      (n) => (n.data as any).stereotype === "ReLU" && n.parentId === subflowId,
+    )!;
+    d.edges.push(edge("ie1", linearNode.id, reluNode.id));
+
+    // External: Input → Subflow
+    d.edges.push(edge("e1", inputId, subflowId));
+
+    // External: Subflow → a top-level ReLU
+    const reluTopStereo = d.stereotypes.find((s) => s.name === "ReLU")!;
+    d.addModule(reluTopStereo, 400, 0);
+    const reluTopId = d.nodes[d.nodes.length - 1].id;
+    d.edges.push(edge("e2", subflowId, reluTopId));
+
+    const result = TypeEngine.infer(d);
+    expectTypeSuccess(result);
+
+    // Subflow output = [B, 256], top-level ReLU preserves = [B, 256]
+    expectOutputShape(result, subflowId, ["$B", "256"]);
+    expectOutputShape(result, reluTopId, ["$B", "256"]);
+  });
+});

@@ -132,7 +132,9 @@ export class TypeEngine {
 
         errors.push({
           nodeId,
-          message: `No type signature for "${stereoName}"`,
+          message: stereoName
+            ? `No type signature for "${stereoName}"`
+            : `Subflow container has no internal nodes`,
           severity: "warning",
         });
         annotations.set(nodeId, {
