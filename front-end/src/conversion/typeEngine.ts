@@ -22,6 +22,7 @@ import type {
   TypeSignature,
   TypeError,
   TypeWarning,
+  TypeSuggestion,
   Advisory,
   NodeTypeAnnotation,
   TypeResult,
@@ -373,6 +374,17 @@ export class TypeEngine {
           env.set(key, value);
         }
 
+        // ── Dtype input validation (Phase A) ─────────────────────
+        // Validate incoming dtype against declared contract.
+        // Warning, not error — PyTorch handles most conversions.
+        if (sig.dtype?.input && inputType.dtype !== sig.dtype.input && warnings && nodeId) {
+          warnings.push({
+            nodeId,
+            message: `"${stereotype.name}" expects ${sig.dtype.input} input, got ${inputType.dtype}`,
+            kind: "dtype",
+          });
+        }
+
         const outputDims = this.resolvePattern(
           sig.output,
           params,
@@ -419,6 +431,9 @@ export class TypeEngine {
           } satisfies TypeError;
         }
 
+        // Phase D: input_labels for better error messages
+        const inputLabels = sig.join?.input_labels ?? [];
+
         // Step 1: Match each input pattern against corresponding input type
         const allBindings: TypeEnvironment[] = [];
         const allCaptured: ShapeDimension[][] = [];
@@ -428,11 +443,13 @@ export class TypeEngine {
           const inp = inputTypes[k];
           if (!inp) continue;
 
+          const label = inputLabels[k] ?? `Input ${k}`;
+
           const matchResult = this.patternMatch(inp.shape, pat, params, env);
           if (isTypeError(matchResult)) {
             return {
               nodeId: "",
-              message: `Input ${k} mismatch: ${matchResult.message}`,
+              message: `${label} mismatch: ${matchResult.message}`,
               severity: matchResult.severity,
             } satisfies TypeError;
           }
@@ -450,10 +467,12 @@ export class TypeEngine {
           const first = allCaptured[0];
           for (let k = 1; k < allCaptured.length; k++) {
             const other = allCaptured[k];
+            const label = inputLabels[k] ?? `Input ${k}`;
+
             if (first.length !== other.length) {
               return {
                 nodeId: "",
-                message: `Input ${k} shape length mismatch: expected ${first.length} dims, got ${other.length}`,
+                message: `${label} shape length mismatch: expected ${first.length} dims, got ${other.length}`,
                 severity: "error",
               } satisfies TypeError;
             }
@@ -461,7 +480,7 @@ export class TypeEngine {
               if (!dimEqual(first[d], other[d])) {
                 return {
                   nodeId: "",
-                  message: `Input ${k} dimension ${d} mismatch: ${this.describeDim(first[d])} vs ${this.describeDim(other[d])}`,
+                  message: `${label} dimension ${d} mismatch: ${this.describeDim(first[d])} vs ${this.describeDim(other[d])}`,
                   severity: "error",
                 } satisfies TypeError;
               }

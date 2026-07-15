@@ -137,6 +137,12 @@ export interface JoinConfig {
   action?: 'element_wise' | 'concat' | 'matmul';
   /** For concat joins: expression resolving to the concatenation dimension. */
   dim_expr?: string;
+  /**
+   * Human-readable labels for each input handle.
+   * Used in error messages instead of generic "Input N".
+   * Length should match the number of input patterns in type_signature.
+   */
+  input_labels?: string[];
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
@@ -243,7 +249,30 @@ export interface TypeWarning {
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
-// 10c. Advisory — declarative condition + message (Phase B)
+// 10c. TypeSuggestion — shape suggestion for unset parameters (Phase C)
+// ─────────────────────────────────────────────────────────────────────────────
+
+/**
+ * A suggestion for an unset parameter value, inferred from the incoming
+ * tensor shape.  Suggestions help users fill in parameters without
+ * having to look up the previous layer's output dimensions.
+ */
+export interface TypeSuggestion {
+  /** ID of the node whose parameter is being suggested. */
+  nodeId: string;
+
+  /** Name of the parameter to set (e.g. "in_features", "in_channels"). */
+  param: string;
+
+  /** Suggested numeric value derived from the input tensor shape. */
+  value: number;
+
+  /** Human-readable explanation of why this value was suggested. */
+  reason: string;
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
+// 10d. Advisory — declarative condition + message (Phase B)
 // ─────────────────────────────────────────────────────────────────────────────
 
 /**
@@ -311,6 +340,12 @@ export interface TypeResult {
    *  Warnings are informational — they don't block compilation.
    *  See TypeWarning for details. */
   warnings: TypeWarning[];
+
+  /** Shape suggestions for unset parameters.
+   *  Each suggestion proposes a concrete value derived from the
+   *  incoming tensor shape (e.g. "set in_features=784").
+   *  See TypeSuggestion for details. */
+  suggestions: TypeSuggestion[];
 }
 
 // ─────────────────────────────────────────────────────────────────────────────

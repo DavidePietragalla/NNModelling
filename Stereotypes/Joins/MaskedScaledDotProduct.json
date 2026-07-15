@@ -36,6 +36,10 @@
       { "kind": "symbolic", "name": "$H" },
       { "kind": "symbolic", "name": "$L" },
       { "kind": "symbolic", "name": "$D_out" }
-    ]
+    ],
+    "join": {
+      "action": "element_wise",
+      "input_labels": ["Q", "K", "V", "mask"]
+    }
   }
 }

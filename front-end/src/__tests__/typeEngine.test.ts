@@ -1003,6 +1003,109 @@ describe("TypeEngine — Phase 3 Joins", () => {
     // Error message should mention dimension mismatch
     expect(joinErrors[0].message).toMatch(/dimension|dim|pattern|expected/i);
   });
+
+  it("7.7: MatMul error uses input_labels: 'A' and 'B' instead of 'Input 0' and 'Input 1'", () => {
+    const d = new Diagram();
+    const inputId = d.nodes[0].id;
+    d.updateModule(inputId, { params: { out_features: { value: "64" } } });
+
+    const linearStereo = d.stereotypes.find((s) => s.name === "Linear")!;
+
+    // Linear_a: 64 → 64 → outputs [B, 64] (matches [M, K] with K=64)
+    d.addModule(linearStereo, 200, 0);
+    const linearAId = d.nodes[1].id;
+    d.updateModule(linearAId, {
+      params: {
+        in_features: { value: "64" },
+        out_features: { value: "64" },
+      },
+    });
+    d.edges.push(edge("e1", inputId, linearAId));
+
+    // Linear_b: 64 → 128 → outputs [B, 128] (matches [K, N] with K=128)
+    d.addModule(linearStereo, 200, 100);
+    const linearBId = d.nodes[2].id;
+    d.updateModule(linearBId, {
+      params: {
+        in_features: { value: "64" },
+        out_features: { value: "128" },
+      },
+    });
+    d.edges.push(edge("e2", inputId, linearBId));
+
+    // MatMul join
+    const mmStereo = d.stereotypes.find((s) => s.name === "MatMul")!;
+    d.addJoinNode(mmStereo, 200, 200);
+    const joinId = d.nodes[3].id;
+    d.edges.push(edge("e3", linearAId, joinId, { targetHandle: "in-0" }));
+    d.edges.push(edge("e4", linearBId, joinId, { targetHandle: "in-1" }));
+
+    const result = TypeEngine.infer(d);
+    const hardErrors = result.errors.filter((e) => e.severity === "error");
+    const joinErrors = hardErrors.filter((e) => e.nodeId === joinId);
+    expect(joinErrors.length).toBeGreaterThanOrEqual(1);
+
+    // Error message should reference "A" or "Input A" or "B" labels
+    const messages = joinErrors.map((e) => e.message).join("; ");
+    expect(messages).toMatch(/\b[Aab]\b/i);
+  });
+
+  it("7.8: ScaledDotProduct error uses input_labels: 'Q', 'K', 'V'", () => {
+    const d = new Diagram();
+    const inputId = d.nodes[0].id;
+    d.updateModule(inputId, { params: { out_features: { value: "128" } } });
+
+    const linearStereo = d.stereotypes.find((s) => s.name === "Linear")!;
+
+    // Three branches, each producing 2D [B, X] shapes
+    d.addModule(linearStereo, 200, 0);
+    const linearQId = d.nodes[1].id;
+    d.updateModule(linearQId, {
+      params: {
+        in_features: { value: "128" },
+        out_features: { value: "64" },
+      },
+    });
+    d.edges.push(edge("e1", inputId, linearQId));
+
+    d.addModule(linearStereo, 200, 100);
+    const linearKId = d.nodes[2].id;
+    d.updateModule(linearKId, {
+      params: {
+        in_features: { value: "128" },
+        out_features: { value: "64" },
+      },
+    });
+    d.edges.push(edge("e2", inputId, linearKId));
+
+    d.addModule(linearStereo, 200, 200);
+    const linearVId = d.nodes[3].id;
+    d.updateModule(linearVId, {
+      params: {
+        in_features: { value: "128" },
+        out_features: { value: "128" },
+      },
+    });
+    d.edges.push(edge("e3", inputId, linearVId));
+
+    const sdpStereo = d.stereotypes.find(
+      (s) => s.name === "ScaledDotProduct",
+    )!;
+    d.addJoinNode(sdpStereo, 200, 300);
+    const joinId = d.nodes[4].id;
+    d.edges.push(edge("e4", linearQId, joinId, { targetHandle: "in-0" }));
+    d.edges.push(edge("e5", linearKId, joinId, { targetHandle: "in-1" }));
+    d.edges.push(edge("e6", linearVId, joinId, { targetHandle: "in-2" }));
+
+    const result = TypeEngine.infer(d);
+    const hardErrors = result.errors.filter((e) => e.severity === "error");
+    const joinErrors = hardErrors.filter((e) => e.nodeId === joinId);
+    expect(joinErrors.length).toBeGreaterThanOrEqual(1);
+
+    // Error messages should contain "Q", "K", or "V" labels
+    const messages = joinErrors.map((e) => e.message).join("; ");
+    expect(messages).toMatch(/[QKV]/);
+  });
 });
 
 // ---------------------------------------------------------------------------
@@ -2296,7 +2399,269 @@ describe("TypeEngine — Phase B Advisories & Warnings", () => {
 
   // ── Verify TypeWarning interface ─────────────────────────────────
 
-  it("12.13: TypeWarning has correct shape with nodeId, message, kind", () => {
+  // ── Simple chain with all float32 → no dtype warnings ────────────
+
+  it("13.1: Input(float32) → Linear → Softmax → no dtype warnings (all float32)", () => {
+    const d = new Diagram();
+    const inputId = d.nodes[0].id;
+    d.updateModule(inputId, { params: { out_features: { value: "784" } } });
+
+    // Linear: 784 → 128
+    const linearStereo = d.stereotypes.find((s) => s.name === "Linear")!;
+    d.addModule(linearStereo, 200, 0);
+    const linearId = d.nodes[1].id;
+    d.edges.push(edge("e1", inputId, linearId));
+    d.updateModule(linearId, {
+      params: {
+        in_features: { value: "784" },
+        out_features: { value: "128" },
+      },
+    });
+
+    // Softmax
+    const softmaxStereo = d.stereotypes.find((s) => s.name === "Softmax")!;
+    d.addModule(softmaxStereo, 200, 100);
+    const softmaxId = d.nodes[2].id;
+    d.edges.push(edge("e2", linearId, softmaxId));
+
+    const result = TypeEngine.infer(d);
+    expectTypeSuccess(result);
+
+    // No dtype warnings — all float32 throughout
+    const dtypeWarnings = result.warnings.filter((w) => w.kind === "dtype");
+    expect(dtypeWarnings.length).toBe(0);
+  });
+
+  // ── Embedding expects int64 input, gets float32 → dtype warning ──
+
+  it("13.2: Input(float32) → Embedding → dtype warning (expects int64, got float32)", () => {
+    const d = new Diagram();
+    const inputId = d.nodes[0].id;
+    d.updateModule(inputId, { params: { out_features: { value: "50" } } });
+
+    const embStereo = d.stereotypes.find((s) => s.name === "Embedding")!;
+    d.addModule(embStereo, 200, 0);
+    const embId = d.nodes[1].id;
+    d.edges.push(edge("e1", inputId, embId));
+    d.updateModule(embId, {
+      params: {
+        num_embeddings: { value: "1000" },
+        embedding_dim: { value: "256" },
+      },
+    });
+
+    const result = TypeEngine.infer(d);
+    // Should still be "ok" — dtype warnings are non-fatal
+    expectTypeSuccess(result);
+
+    // Should have a dtype warning on Embedding
+    const dtypeWarnings = result.warnings.filter(
+      (w) => w.nodeId === embId && w.kind === "dtype",
+    );
+    expect(dtypeWarnings.length).toBeGreaterThanOrEqual(1);
+    expect(dtypeWarnings[0].message).toMatch(/Embedding.*expects.*int64.*got.*float32/i);
+  });
+
+  // ── BatchNorm with float32 input → no dtype warning ──────────────
+
+  it("13.3: BatchNorm1d with float32 input → no dtype warning", () => {
+    const d = new Diagram();
+    const inputId = d.nodes[0].id;
+    d.updateModule(inputId, { params: { out_features: { value: "128" } } });
+
+    // Linear: 128 → 128 (produces float32)
+    const linearStereo = d.stereotypes.find((s) => s.name === "Linear")!;
+    d.addModule(linearStereo, 200, 0);
+    const linearId = d.nodes[1].id;
+    d.edges.push(edge("e1", inputId, linearId));
+    d.updateModule(linearId, {
+      params: {
+        in_features: { value: "128" },
+        out_features: { value: "128" },
+      },
+    });
+
+    // BatchNorm1d
+    const bnStereo = d.stereotypes.find((s) => s.name === "BatchNorm1d")!;
+    d.addModule(bnStereo, 200, 100);
+    const bnId = d.nodes[2].id;
+    d.edges.push(edge("e2", linearId, bnId));
+    d.updateModule(bnId, { params: { num_features: { value: "128" } } });
+
+    const result = TypeEngine.infer(d);
+    expectTypeSuccess(result);
+
+    // No dtype warnings — float32 throughout
+    const dtypeWarnings = result.warnings.filter((w) => w.kind === "dtype");
+    expect(dtypeWarnings.length).toBe(0);
+  });
+
+  // ── CrossEntropyLoss with float32 input → no dtype warning ───────
+
+  it("13.4: CrossEntropyLoss accepts float32 input → no dtype warning", () => {
+    const d = new Diagram();
+    const inputId = d.nodes[0].id;
+    d.updateModule(inputId, { params: { out_features: { value: "10" } } });
+
+    // Linear: 10 → 10
+    const linearStereo = d.stereotypes.find((s) => s.name === "Linear")!;
+    d.addModule(linearStereo, 200, 0);
+    const linearId = d.nodes[1].id;
+    d.edges.push(edge("e1", inputId, linearId));
+    d.updateModule(linearId, {
+      params: {
+        in_features: { value: "10" },
+        out_features: { value: "10" },
+      },
+    });
+
+    // CrossEntropyLoss
+    const lossStereo = d.stereotypes.find((s) => s.name === "CrossEntropyLoss")!;
+    d.addModule(lossStereo, 200, 100);
+    const lossId = d.nodes[2].id;
+    d.edges.push(edge("e2", linearId, lossId));
+
+    const result = TypeEngine.infer(d);
+    expectTypeSuccess(result);
+
+    // No dtype warnings for float32 input to CrossEntropyLoss
+    const dtypeWarnings = result.warnings.filter((w) => w.kind === "dtype");
+    expect(dtypeWarnings.length).toBe(0);
+  });
+
+  // ── Dropout with float32 input → no dtype warning ────────────────
+
+  it("13.5: Dropout from Input(float32) → no dtype warning (both float32)", () => {
+    const d = new Diagram();
+    const inputId = d.nodes[0].id;
+    d.updateModule(inputId, { params: { out_features: { value: "784" } } });
+
+    const dropoutStereo = d.stereotypes.find((s) => s.name === "Dropout")!;
+    d.addModule(dropoutStereo, 200, 0);
+    const dropId = d.nodes[1].id;
+    d.edges.push(edge("e1", inputId, dropId));
+    d.updateModule(dropId, { params: { p: { value: "0.2" } } });
+
+    const result = TypeEngine.infer(d);
+    expectTypeSuccess(result);
+
+    // No dtype warnings
+    const dtypeWarnings = result.warnings.filter((w) => w.kind === "dtype");
+    expect(dtypeWarnings.length).toBe(0);
+  });
+
+  it("13.6: TypeWarning interface — dtype warning has correct kind field", () => {
+    const d = new Diagram();
+    const inputId = d.nodes[0].id;
+    d.updateModule(inputId, { params: { out_features: { value: "50" } } });
+
+    const embStereo = d.stereotypes.find((s) => s.name === "Embedding")!;
+    d.addModule(embStereo, 200, 0);
+    const embId = d.nodes[1].id;
+    d.edges.push(edge("e1", inputId, embId));
+    d.updateModule(embId, {
+      params: {
+        num_embeddings: { value: "1000" },
+        embedding_dim: { value: "256" },
+      },
+    });
+
+    const result = TypeEngine.infer(d);
+    const dtypeWarnings = result.warnings.filter(
+      (w) => w.nodeId === embId && w.kind === "dtype",
+    );
+    expect(dtypeWarnings.length).toBeGreaterThanOrEqual(1);
+    // Verify the TypeWarning interface contract
+    expect(dtypeWarnings[0].nodeId).toBe(embId);
+    expect(typeof dtypeWarnings[0].message).toBe("string");
+    expect(dtypeWarnings[0].message.length).toBeGreaterThan(10);
+    expect(dtypeWarnings[0].kind).toBe("dtype");
+  });
+
+  it("13.7: Verify warnings vs errors separation — dtype warnings are NOT in errors array", () => {
+    const d = new Diagram();
+    const inputId = d.nodes[0].id;
+    d.updateModule(inputId, { params: { out_features: { value: "50" } } });
+
+    const embStereo = d.stereotypes.find((s) => s.name === "Embedding")!;
+    d.addModule(embStereo, 200, 0);
+    const embId = d.nodes[1].id;
+    d.edges.push(edge("e1", inputId, embId));
+    d.updateModule(embId, {
+      params: {
+        num_embeddings: { value: "1000" },
+        embedding_dim: { value: "256" },
+      },
+    });
+
+    const result = TypeEngine.infer(d);
+    // Should be ok — dtype warnings don't block compilation
+    expect(result.ok).toBe(true);
+    // Dtype warning should be in warnings, NOT in errors
+    expect(result.warnings.length).toBeGreaterThanOrEqual(1);
+    // The errors array should be empty (no actual errors in this chain)
+    expect(result.errors.length).toBe(0);
+  });
+
+  it("13.8: LayerNorm with float32 input → no dtype warning", () => {
+    const d = new Diagram();
+    const inputId = d.nodes[0].id;
+    d.updateModule(inputId, { params: { out_features: { value: "128" } } });
+
+    const linearStereo = d.stereotypes.find((s) => s.name === "Linear")!;
+    d.addModule(linearStereo, 200, 0);
+    const linearId = d.nodes[1].id;
+    d.edges.push(edge("e1", inputId, linearId));
+    d.updateModule(linearId, {
+      params: {
+        in_features: { value: "128" },
+        out_features: { value: "128" },
+      },
+    });
+
+    const lnStereo = d.stereotypes.find((s) => s.name === "LayerNorm")!;
+    d.addModule(lnStereo, 200, 100);
+    const lnId = d.nodes[2].id;
+    d.edges.push(edge("e2", linearId, lnId));
+    d.updateModule(lnId, { params: { normalized_shape: { value: "128" } } });
+
+    const result = TypeEngine.infer(d);
+    expectTypeSuccess(result);
+
+    const dtypeWarnings = result.warnings.filter((w) => w.kind === "dtype");
+    expect(dtypeWarnings.length).toBe(0);
+  });
+
+  it("13.9: BatchNorm2d with float32 input → no dtype warning", () => {
+    const d = new Diagram();
+    const inputId = d.nodes[0].id;
+    d.updateModule(inputId, { params: { out_features: { value: "64" } } });
+
+    const linearStereo = d.stereotypes.find((s) => s.name === "Linear")!;
+    d.addModule(linearStereo, 200, 0);
+    const linearId = d.nodes[1].id;
+    d.edges.push(edge("e1", inputId, linearId));
+    d.updateModule(linearId, {
+      params: {
+        in_features: { value: "64" },
+        out_features: { value: "64" },
+      },
+    });
+
+    const bn2dStereo = d.stereotypes.find((s) => s.name === "BatchNorm2d")!;
+    d.addModule(bn2dStereo, 200, 100);
+    const bn2dId = d.nodes[2].id;
+    d.edges.push(edge("e2", linearId, bn2dId));
+    d.updateModule(bn2dId, { params: { num_features: { value: "64" } } });
+
+    const result = TypeEngine.infer(d);
+    expectTypeSuccess(result);
+
+    const dtypeWarnings = result.warnings.filter((w) => w.kind === "dtype");
+    expect(dtypeWarnings.length).toBe(0);
+  });
+
+  it("13.10: TypeWarning has correct shape with nodeId, message, kind", () => {
     const env = new Map<string, ShapeDimPattern>();
     env.set("H", { kind: "const", value: 16 });
 

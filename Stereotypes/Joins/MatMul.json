@@ -22,6 +22,10 @@
     "output": [
       { "kind": "symbolic", "name": "$M" },
       { "kind": "symbolic", "name": "$N" }
-    ]
+    ],
+    "join": {
+      "action": "matmul",
+      "input_labels": ["A", "B"]
+    }
   }
 }
