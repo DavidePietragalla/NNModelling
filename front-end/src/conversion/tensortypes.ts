@@ -134,7 +134,7 @@ export interface SubflowTransform {
  * Describes the join operation for output shape computation.
  */
 export interface JoinConfig {
-  action?: 'element_wise' | 'concat' | 'matmul';
+  action?: 'element_wise' | 'concat' | 'matmul' | 'einsum';
   /** For concat joins: expression resolving to the concatenation dimension. */
   dim_expr?: string;
   /**
@@ -143,6 +143,8 @@ export interface JoinConfig {
    * Length should match the number of input patterns in type_signature.
    */
   input_labels?: string[];
+  /** For einsum joins: name of the param holding the equation (default "expr"). */
+  einsum_param?: string;
 }
 
 // ─────────────────────────────────────────────────────────────────────────────

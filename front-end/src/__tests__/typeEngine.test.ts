@@ -321,25 +321,24 @@ describe("TypeEngine — Edge Cases", () => {
     expect(ann.outputType.dtype).toBe("float32");
   });
 
-  it("3.4: Join node (no type_signature) emits warning", () => {
+  it("3.4: Einsum join with empty equation produces error", () => {
     const d = new Diagram();
     const inputId = d.nodes[0].id;
     d.updateModule(inputId, { params: { out_features: { value: "10" } } });
 
-    // Einsum join has no type_signature field in its JSON (too complex)
     const einsumStereo = d.stereotypes.find((s) => s.name === "Einsum")!;
     d.addJoinNode(einsumStereo, 200, 0);
     const joinId = d.nodes[1].id;
     d.edges.push(edge("e1", inputId, joinId));
 
     const result = TypeEngine.infer(d);
-    expectTypeSuccess(result);
-
-    // Warning about no type signature (since Einsum has no type_signature)
-    const joinWarnings = result.errors.filter(
-      (e) => e.severity === "warning" && e.nodeId === joinId,
+    // With type_signature and empty equation, Einsum produces an error
+    expect(result.ok).toBe(false);
+    const joinErrors = result.errors.filter(
+      (e) => e.severity === "error" && e.nodeId === joinId,
     );
-    expect(joinWarnings.length).toBeGreaterThan(0);
+    expect(joinErrors.length).toBeGreaterThan(0);
+    expect(joinErrors[0].message).toContain("empty");
   });
 
   it.skip(
@@ -1108,6 +1107,206 @@ describe("TypeEngine — Phase 3 Joins", () => {
   });
 });
 
+// ---------------------------------------------------------------------------
+// Group E — Phase E: Einsum Shape Inference
+// ---------------------------------------------------------------------------
+
+describe("TypeEngine — Phase E Einsum", () => {
+  /** Local type guard: is the return value a successful ShapeDimension array? */
+  function isShapeOK(r: unknown[] | TypeError): r is ShapeDimension[] {
+    return Array.isArray(r);
+  }
+
+  // ── Basic matmul: "ij,jk->ik" ──────────────────────────────────
+  it("E.1: Basic matmul: 'ij,jk->ik' with [M,K],[K,N] → [M,N]", () => {
+    const inputTypes = [
+      { shape: [{ kind: "symbolic" as const, name: "M" }, { kind: "symbolic" as const, name: "K" }], dtype: "float32" },
+      { shape: [{ kind: "symbolic" as const, name: "K" }, { kind: "symbolic" as const, name: "N" }], dtype: "float32" },
+    ];
+    const result = TypeEngine.inferEinsumShape("ij,jk->ik", inputTypes, "Einsum");
+    expect(isShapeOK(result)).toBe(true);
+    if (!isShapeOK(result)) return;
+    expect(result).toHaveLength(2);
+    expect(result[0]).toEqual({ kind: "symbolic", name: "M" });
+    expect(result[1]).toEqual({ kind: "symbolic", name: "N" });
+  });
+
+  // ── Batched matmul: "bij,bjk->bik" ────────────────────────────
+  it("E.2: Batched matmul: 'bij,bjk->bik' with [B,M,K],[B,K,N] → [B,M,N]", () => {
+    const inputTypes = [
+      { shape: [{ kind: "symbolic" as const, name: "B" }, { kind: "symbolic" as const, name: "M" }, { kind: "symbolic" as const, name: "K" }], dtype: "float32" },
+      { shape: [{ kind: "symbolic" as const, name: "B" }, { kind: "symbolic" as const, name: "K" }, { kind: "symbolic" as const, name: "N" }], dtype: "float32" },
+    ];
+    const result = TypeEngine.inferEinsumShape("bij,bjk->bik", inputTypes, "Einsum");
+    expect(isShapeOK(result)).toBe(true);
+    if (!isShapeOK(result)) return;
+    expect(result).toHaveLength(3);
+    expect(result[0]).toEqual({ kind: "symbolic", name: "B" });
+    expect(result[1]).toEqual({ kind: "symbolic", name: "M" });
+    expect(result[2]).toEqual({ kind: "symbolic", name: "N" });
+  });
+
+  // ── Contraction: "x,y->x" ──────────────────────────────────────
+  it("E.3: Contraction: 'x,y->x' with [M],[K] → [M]", () => {
+    const inputTypes = [
+      { shape: [{ kind: "symbolic" as const, name: "M" }], dtype: "float32" },
+      { shape: [{ kind: "symbolic" as const, name: "K" }], dtype: "float32" },
+    ];
+    const result = TypeEngine.inferEinsumShape("x,y->x", inputTypes, "Einsum");
+    expect(isShapeOK(result)).toBe(true);
+    if (!isShapeOK(result)) return;
+    expect(result).toHaveLength(1);
+    expect(result[0]).toEqual({ kind: "symbolic", name: "M" });
+  });
+
+  // ── Trace: "ii->" ──────────────────────────────────────────────
+  it("E.4: Trace: 'ii->' with [N,N] → []", () => {
+    const inputTypes = [
+      { shape: [{ kind: "symbolic" as const, name: "N" }, { kind: "symbolic" as const, name: "N" }], dtype: "float32" },
+    ];
+    const result = TypeEngine.inferEinsumShape("ii->", inputTypes, "Einsum");
+    expect(isShapeOK(result)).toBe(true);
+    if (!isShapeOK(result)) return;
+    expect(result).toHaveLength(0);
+  });
+
+  // ── Diagonal: "ii->i" ──────────────────────────────────────────
+  it("E.5: Diagonal: 'ii->i' with [N,N] → [N]", () => {
+    const inputTypes = [
+      { shape: [{ kind: "symbolic" as const, name: "N" }, { kind: "symbolic" as const, name: "N" }], dtype: "float32" },
+    ];
+    const result = TypeEngine.inferEinsumShape("ii->i", inputTypes, "Einsum");
+    expect(isShapeOK(result)).toBe(true);
+    if (!isShapeOK(result)) return;
+    expect(result).toHaveLength(1);
+    expect(result[0]).toEqual({ kind: "symbolic", name: "N" });
+  });
+
+  // ── Implicit output: "ij,jk" ───────────────────────────────────
+  it("E.6: Implicit output: 'ij,jk' with [M,K],[K,N] → [M,N]", () => {
+    const inputTypes = [
+      { shape: [{ kind: "symbolic" as const, name: "M" }, { kind: "symbolic" as const, name: "K" }], dtype: "float32" },
+      { shape: [{ kind: "symbolic" as const, name: "K" }, { kind: "symbolic" as const, name: "N" }], dtype: "float32" },
+    ];
+    const result = TypeEngine.inferEinsumShape("ij,jk", inputTypes, "Einsum");
+    expect(isShapeOK(result)).toBe(true);
+    if (!isShapeOK(result)) return;
+    // i appears once, j appears twice, k appears once → output "ik" (sorted)
+    expect(result).toHaveLength(2);
+    expect(result[0]).toEqual({ kind: "symbolic", name: "M" });
+    expect(result[1]).toEqual({ kind: "symbolic", name: "N" });
+  });
+
+  // ── Implicit scalar: "ii" ──────────────────────────────────────
+  it("E.7: Implicit scalar: 'ii' with [N,N] → []", () => {
+    const inputTypes = [
+      { shape: [{ kind: "symbolic" as const, name: "N" }, { kind: "symbolic" as const, name: "N" }], dtype: "float32" },
+    ];
+    const result = TypeEngine.inferEinsumShape("ii", inputTypes, "Einsum");
+    expect(isShapeOK(result)).toBe(true);
+    if (!isShapeOK(result)) return;
+    // i appears twice → no label with count 1 → scalar
+    expect(result).toHaveLength(0);
+  });
+
+  // ── 3-input chain: "ij,jk,kl->il" ─────────────────────────────
+  it("E.8: 3-input chain: 'ij,jk,kl->il' with [M,K],[K,L],[L,P] → [M,P]", () => {
+    const inputTypes = [
+      { shape: [{ kind: "symbolic" as const, name: "M" }, { kind: "symbolic" as const, name: "K" }], dtype: "float32" },
+      { shape: [{ kind: "symbolic" as const, name: "K" }, { kind: "symbolic" as const, name: "L" }], dtype: "float32" },
+      { shape: [{ kind: "symbolic" as const, name: "L" }, { kind: "symbolic" as const, name: "P" }], dtype: "float32" },
+    ];
+    const result = TypeEngine.inferEinsumShape("ij,jk,kl->il", inputTypes, "Einsum");
+    expect(isShapeOK(result)).toBe(true);
+    if (!isShapeOK(result)) return;
+    expect(result).toHaveLength(2);
+    expect(result[0]).toEqual({ kind: "symbolic", name: "M" });
+    expect(result[1]).toEqual({ kind: "symbolic", name: "P" });
+  });
+
+  // ── Error: Arity mismatch ──────────────────────────────────────
+  it("E.9: Arity mismatch: 'ij,jk->ik' with 3 inputs → error", () => {
+    const inputTypes = [
+      { shape: [{ kind: "symbolic" as const, name: "M" }, { kind: "symbolic" as const, name: "K" }], dtype: "float32" },
+      { shape: [{ kind: "symbolic" as const, name: "K" }, { kind: "symbolic" as const, name: "N" }], dtype: "float32" },
+      { shape: [{ kind: "symbolic" as const, name: "P" }, { kind: "symbolic" as const, name: "Q" }], dtype: "float32" },
+    ];
+    const result = TypeEngine.inferEinsumShape("ij,jk->ik", inputTypes, "Einsum");
+    expect("message" in result!).toBe(true);
+    if (!("message" in result)) return;
+    const err = result as TypeError;
+    expect(err.message).toContain("expects 2 inputs but got 3");
+    expect(err.severity).toBe("error");
+  });
+
+  // ── Error: Rank mismatch ───────────────────────────────────────
+  it("E.10: Rank mismatch: 'ij,jk->ik' with [M,K],[K] → error", () => {
+    const inputTypes = [
+      { shape: [{ kind: "symbolic" as const, name: "M" }, { kind: "symbolic" as const, name: "K" }], dtype: "float32" },
+      { shape: [{ kind: "symbolic" as const, name: "K" }], dtype: "float32" },
+    ];
+    const result = TypeEngine.inferEinsumShape("ij,jk->ik", inputTypes, "Einsum");
+    expect("message" in result!).toBe(true);
+    if (!("message" in result)) return;
+    const err = result as TypeError;
+    expect(err.message).toContain("has 2 dims but input has 1 dims");
+    expect(err.severity).toBe("error");
+  });
+
+  // ── Error: Label not in input ──────────────────────────────────
+  it("E.11: Label not in input: 'x->y' with [M] → error", () => {
+    const inputTypes = [
+      { shape: [{ kind: "symbolic" as const, name: "M" }], dtype: "float32" },
+    ];
+    const result = TypeEngine.inferEinsumShape("x->y", inputTypes, "Einsum");
+    expect("message" in result!).toBe(true);
+    if (!("message" in result)) return;
+    const err = result as TypeError;
+    expect(err.message).toContain("label \"y\" in output not found in any input");
+    expect(err.severity).toBe("error");
+  });
+
+  // ── Error: Empty equation ──────────────────────────────────────
+  it("E.12: Empty equation → error", () => {
+    const inputTypes = [
+      { shape: [{ kind: "symbolic" as const, name: "M" }], dtype: "float32" },
+    ];
+    const result = TypeEngine.inferEinsumShape("", inputTypes, "Einsum");
+    expect("message" in result!).toBe(true);
+    if (!("message" in result)) return;
+    const err = result as TypeError;
+    expect(err.severity).toBe("error");
+  });
+
+  // ── Error: Ellipsis not supported ──────────────────────────────
+  it("E.13: Ellipsis '...' → error", () => {
+    const inputTypes = [
+      { shape: [{ kind: "symbolic" as const, name: "B" }, { kind: "symbolic" as const, name: "M" }, { kind: "symbolic" as const, name: "K" }], dtype: "float32" },
+      { shape: [{ kind: "symbolic" as const, name: "B" }, { kind: "symbolic" as const, name: "N" }, { kind: "symbolic" as const, name: "K" }], dtype: "float32" },
+    ];
+    const result = TypeEngine.inferEinsumShape("b...ij,b...jk->b...ik", inputTypes, "Einsum");
+    expect("message" in result!).toBe(true);
+    if (!("message" in result)) return;
+    const err = result as TypeError;
+    expect(err.message).toContain("ellipsis");
+    expect(err.severity).toBe("error");
+  });
+
+  // ── Error: Conflicting dims ────────────────────────────────────
+  it("E.14: Conflicting dims: 'ij,ij->i' with [M,K],[N,K] → error", () => {
+    const inputTypes = [
+      { shape: [{ kind: "symbolic" as const, name: "M" }, { kind: "symbolic" as const, name: "K" }], dtype: "float32" },
+      { shape: [{ kind: "symbolic" as const, name: "N" }, { kind: "symbolic" as const, name: "K" }], dtype: "float32" },
+    ];
+    const result = TypeEngine.inferEinsumShape("ij,ij->i", inputTypes, "Einsum");
+    expect("message" in result!).toBe(true);
+    if (!("message" in result)) return;
+    const err = result as TypeError;
+    // Label "i" appears in both inputs but dims are M vs N (different symbols)
+    expect(err.message).toContain("conflicting");
+    expect(err.severity).toBe("error");
+  });
+});
 // ---------------------------------------------------------------------------
 // Group 8 — Phase 4: Subflow Type Inference
 // ---------------------------------------------------------------------------
@@ -2682,5 +2881,159 @@ describe("TypeEngine — Phase B Advisories & Warnings", () => {
     expect(typeof warning!.message).toBe("string");
     expect(warning!.message.length).toBeGreaterThan(10);
     expect(warning!.kind).toBe("perf");
+  });
+});
+
+// ---------------------------------------------------------------------------
+// Group 14 — Phase C: Shape Suggestions for Unset Parameters
+// ---------------------------------------------------------------------------
+
+describe("TypeEngine — Phase C Shape Suggestions", () => {
+  it("14.1: Linear after Input(784) without in_features → suggests in_features=784", () => {
+    const d = new Diagram();
+    const inputId = d.nodes[0].id;
+    d.updateModule(inputId, { params: { out_features: { value: "784" } } });
+
+    // Add Linear WITHOUT setting in_features
+    const linearStereo = d.stereotypes.find((s) => s.name === "Linear")!;
+    d.addModule(linearStereo, 200, 0);
+    const linearId = d.nodes[1].id;
+    d.edges.push(edge("e1", inputId, linearId));
+
+    // Set out_features so it doesn't interfere (no input dim match for output params)
+    d.updateModule(linearId, {
+      params: { out_features: { value: "128" } },
+    });
+
+    const result = TypeEngine.infer(d);
+    expectTypeSuccess(result);
+
+    // Should have a suggestion for in_features=784
+    expect(result.suggestions.length).toBeGreaterThanOrEqual(1);
+    const inFeaturesSug = result.suggestions.find(
+      (s) => s.param === "in_features",
+    );
+    expect(inFeaturesSug).toBeDefined();
+    expect(inFeaturesSug!.value).toBe(784);
+    expect(inFeaturesSug!.nodeId).toBe(linearId);
+    expect(inFeaturesSug!.reason).toMatch(/input dimension/);
+  });
+
+  it("14.2: Linear with in_features already set → no suggestion for in_features", () => {
+    const d = new Diagram();
+    const inputId = d.nodes[0].id;
+    d.updateModule(inputId, { params: { out_features: { value: "784" } } });
+
+    // Add Linear WITH in_features already set
+    const linearStereo = d.stereotypes.find((s) => s.name === "Linear")!;
+    d.addModule(linearStereo, 200, 0);
+    const linearId = d.nodes[1].id;
+    d.edges.push(edge("e1", inputId, linearId));
+    d.updateModule(linearId, {
+      params: {
+        in_features: { value: "784" },
+        out_features: { value: "128" },
+      },
+    });
+
+    const result = TypeEngine.infer(d);
+    expectTypeSuccess(result);
+
+    // No suggestion for in_features since it's already set
+    const inFeaturesSugs = result.suggestions.filter(
+      (s) => s.param === "in_features",
+    );
+    expect(inFeaturesSugs.length).toBe(0);
+  });
+
+  it("14.3: ReLU (no param_ref in input pattern) produces no suggestions", () => {
+    const d = new Diagram();
+    const inputId = d.nodes[0].id;
+    d.updateModule(inputId, { params: { out_features: { value: "784" } } });
+
+    // ReLU has input pattern [*] — no param_ref, so no suggestions
+    const reluStereo = d.stereotypes.find((s) => s.name === "ReLU")!;
+    d.addModule(reluStereo, 200, 0);
+    const reluId = d.nodes[1].id;
+    d.edges.push(edge("e1", inputId, reluId));
+
+    const result = TypeEngine.infer(d);
+    expectTypeSuccess(result);
+    expect(result.suggestions.length).toBe(0);
+  });
+
+  it("14.4: Two unset params in chain — Linear missing in_features, then Linear missing in_features again", () => {
+    const d = new Diagram();
+    const inputId = d.nodes[0].id;
+    d.updateModule(inputId, { params: { out_features: { value: "128" } } });
+
+    const linearStereo = d.stereotypes.find((s) => s.name === "Linear")!;
+
+    // First Linear: missing in_features but has out_features=64
+    d.addModule(linearStereo, 200, 0);
+    const linear1Id = d.nodes[1].id;
+    d.edges.push(edge("e1", inputId, linear1Id));
+    d.updateModule(linear1Id, {
+      params: { out_features: { value: "64" } },
+    });
+
+    // Second Linear: missing in_features but has out_features=32
+    d.addModule(linearStereo, 200, 100);
+    const linear2Id = d.nodes[2].id;
+    d.edges.push(edge("e2", linear1Id, linear2Id));
+    d.updateModule(linear2Id, {
+      params: { out_features: { value: "32" } },
+    });
+
+    const result = TypeEngine.infer(d);
+    expectTypeSuccess(result);
+
+    // Should have two suggestions: one for each Linear's in_features
+    const inFeaturesSugs = result.suggestions.filter(
+      (s) => s.param === "in_features",
+    );
+    expect(inFeaturesSugs.length).toBe(2);
+
+    // First Linear: input is [B, 128] → suggest in_features=128
+    const sug1 = inFeaturesSugs.find((s) => s.nodeId === linear1Id);
+    expect(sug1).toBeDefined();
+    expect(sug1!.value).toBe(128);
+
+    // Second Linear: input is [B, 64] → suggest in_features=64
+    const sug2 = inFeaturesSugs.find((s) => s.nodeId === linear2Id);
+    expect(sug2).toBeDefined();
+    expect(sug2!.value).toBe(64);
+  });
+
+  it("14.5: Suggestions appear in TypeResult.suggestions alongside errors and warnings", () => {
+    const d = new Diagram();
+    const inputId = d.nodes[0].id;
+    d.updateModule(inputId, { params: { out_features: { value: "784" } } });
+
+    const linearStereo = d.stereotypes.find((s) => s.name === "Linear")!;
+    d.addModule(linearStereo, 200, 0);
+    const linearId = d.nodes[1].id;
+    d.edges.push(edge("e1", inputId, linearId));
+    d.updateModule(linearId, {
+      params: { out_features: { value: "128" } },
+    });
+
+    const result = TypeEngine.infer(d);
+    expectTypeSuccess(result);
+
+    // TypeResult should have all three arrays
+    expect(result.suggestions).toBeDefined();
+    expect(Array.isArray(result.suggestions)).toBe(true);
+    expect(result.errors).toBeDefined();
+    expect(result.warnings).toBeDefined();
+    expect(result.suggestions.length).toBeGreaterThan(0);
+
+    // Verify suggestion type shape
+    const sug = result.suggestions[0];
+    expect(typeof sug.nodeId).toBe("string");
+    expect(sug.nodeId.length).toBeGreaterThan(0);
+    expect(typeof sug.param).toBe("string");
+    expect(typeof sug.value).toBe("number");
+    expect(typeof sug.reason).toBe("string");
   });
 });

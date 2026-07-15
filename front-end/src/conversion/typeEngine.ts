@@ -60,6 +60,7 @@ export class TypeEngine {
     const annotations = new Map<string, NodeTypeAnnotation>();
     const errors: TypeError[] = [];
     const warnings: TypeWarning[] = [];
+    const suggestions: TypeSuggestion[] = [];
     const env: TypeEnvironment = new Map();
 
     // Only top-level nodes (subflow internals deferred to Phase 4)
@@ -117,6 +118,8 @@ export class TypeEngine {
             env,
             annotations,
             errors,
+            warnings,
+            suggestions,
           );
           if (isTensorType(result)) {
             annotations.set(nodeId, {
@@ -246,6 +249,7 @@ export class TypeEngine {
         annotations,
         errors,
         warnings,
+        suggestions,
       );
 
       // ── Steps f/g: Handle result ─────────────────────────────────
@@ -282,6 +286,7 @@ export class TypeEngine {
       annotations,
       errors,
       warnings,
+      suggestions,
     };
   }
 
@@ -303,6 +308,7 @@ export class TypeEngine {
     annotations?: Map<string, NodeTypeAnnotation>,
     errors?: TypeError[],
     warnings?: TypeWarning[],
+    suggestions?: TypeSuggestion[],
   ): TensorType | TypeError {
     // Safety check: type signature must exist
     const sig = stereotype.typeSignature;
@@ -358,15 +364,24 @@ export class TypeEngine {
         }
 
         // Normal case: match input against pattern
+        const startSuggLen = suggestions?.length ?? 0;
         const matchResult = this.patternMatch(
           inputType.shape,
           inputPattern,
           params,
           env,
+          suggestions,
         );
 
         if (isTypeError(matchResult)) {
           return matchResult;
+        }
+
+        // Set nodeId on any new suggestions added by patternMatch
+        if (suggestions && nodeId) {
+          for (let si = startSuggLen; si < suggestions.length; si++) {
+            suggestions[si].nodeId = nodeId;
+          }
         }
 
         // Merge new bindings into env for downstream use
@@ -421,6 +436,22 @@ export class TypeEngine {
             message: `Join node "${stereotype.name}" has no inputs`,
             severity: "error",
           } satisfies TypeError;
+        }
+
+        // ── Einsum short-circuit: handle BEFORE pattern matching ──
+        if (sig.join?.action === 'einsum') {
+          const paramName = sig.join.einsum_param ?? 'expr';
+          const equation = this.extractParamString(paramName, params);
+          if (!equation || equation.length === 0) {
+            return {
+              nodeId: "",
+              message: `"${stereotype.name}" expression is empty`,
+              severity: "error",
+            } satisfies TypeError;
+          }
+          const outputShape = this.inferEinsumShape(equation, inputTypes, stereotype.name);
+          if (isTypeError(outputShape)) return outputShape;
+          return { shape: outputShape, dtype: inputTypes[0].dtype } satisfies TensorType;
         }
 
         if (inputPatterns.length !== inputTypes.length) {
@@ -642,6 +673,7 @@ export class TypeEngine {
               subflowAnnotations,
               subflowErrors,
               warnings,
+              suggestions,
             );
           }
 
@@ -670,6 +702,7 @@ export class TypeEngine {
               subflowAnnotations,
               subflowErrors,
               warnings,
+              suggestions,
             );
             if (!isTensorType(internalResult)) return internalResult;
 
@@ -757,6 +790,7 @@ export class TypeEngine {
     annotations: Map<string, NodeTypeAnnotation>,
     errors: TypeError[],
     warnings?: TypeWarning[],
+    suggestions?: TypeSuggestion[],
   ): TensorType | TypeError {
     // 1. Collect internal nodes
     const internalNodes = diagram.nodes.filter(
@@ -890,6 +924,7 @@ export class TypeEngine {
             annotations,
             errors,
             warnings,
+            suggestions,
           );
           if (isTensorType(nestedResult)) {
             annotations.set(internalNodeId, {
@@ -967,6 +1002,7 @@ export class TypeEngine {
         annotations,
         errors,
         warnings,
+        suggestions,
       );
 
       if (isTensorType(result)) {
@@ -1113,6 +1149,7 @@ export class TypeEngine {
     pattern: ShapePattern,
     params: Record<string, unknown>,
     env: TypeEnvironment,
+    suggestions?: TypeSuggestion[],
   ): PatternMatchResult | TypeError {
     // Count wildcards — Phase 1 allows at most one
     const wildcardCount = pattern.filter((p) => p.kind === "wildcard").length;
@@ -1192,6 +1229,18 @@ export class TypeEngine {
           if (resolved.status === 'unset') {
             // Param is "Undefined"/missing — treat as symbolic
             captured.push({ kind: "symbolic", name: `?${p.name}` });
+            // If the input dimension at this position is a const, suggest it
+            if (suggestions && i < inputDims.length) {
+              const inputDim = inputDims[i];
+              if (inputDim.kind === 'const') {
+                suggestions.push({
+                  nodeId: '',
+                  param: p.name,
+                  value: inputDim.value,
+                  reason: `matches input dimension at position ${j}`
+                });
+              }
+            }
             i++;
             j++;
           } else if (resolved.status === 'invalid') {
@@ -1459,6 +1508,158 @@ export class TypeEngine {
     }
 
     return result;
+  }
+
+  /**
+   * Extract a string parameter value from node params.
+   *
+   * Handles both flat values (`params[name] === "ij,jk->ik"`) and wrapped
+   * objects (`params[name] === { value: "ij,jk->ik", position: "top" }`).
+   *
+   * Returns the string value, or `undefined` if the param is missing,
+   * "None", "Undefined", or empty.
+   */
+  static extractParamString(
+    name: string,
+    params: Record<string, unknown>,
+  ): string | undefined {
+    const raw = params[name];
+    if (raw === undefined || raw === null) return undefined;
+
+    const val: unknown =
+      typeof raw === "object" && raw !== null && "value" in raw
+        ? (raw as Record<string, unknown>).value
+        : raw;
+
+    if (typeof val === "string") {
+      if (val === "None" || val === "Undefined" || val === "") return undefined;
+      return val;
+    }
+    return undefined;
+  }
+
+  /**
+   * Infer output shape for an einsum join node.
+   *
+   * Parses the Einstein notation equation to determine the output shape
+   * by mapping output labels to source dimensions from input tensors.
+   *
+   * 5-step algorithm:
+   * 1. Parse equation string (split on "->", extract input label groups).
+   * 2. Validate arity and ranks (must match).
+   * 3. Determine output labels (explicit from RHS or implicit by counting).
+   * 4. Map output labels to source dimensions (unify multi-input labels).
+   * 5. Return output shape (and propagate dtype from first input).
+   *
+   * NOTE: Ellipsis ("...") is NOT supported — returns an error.
+   */
+  static inferEinsumShape(
+    equation: string,
+    inputTypes: TensorType[],
+    stereotypeName: string,
+  ): ShapeDimension[] | TypeError {
+    // ── Step 1: Parse equation string ─────────────────────────────
+    if (equation.includes("...")) {
+      return {
+        nodeId: "",
+        message: "ellipsis not supported in type inference",
+        severity: "error",
+      } satisfies TypeError;
+    }
+
+    let lhs: string;
+    let rhs: string | undefined;
+
+    const arrowIdx = equation.indexOf("->");
+    if (arrowIdx >= 0) {
+      lhs = equation.slice(0, arrowIdx).trim();
+      rhs = equation.slice(arrowIdx + 2).trim();
+    } else {
+      lhs = equation.trim();
+      rhs = undefined;
+    }
+
+    const inputLabelStrs = lhs.split(",").map((s) => s.trim());
+
+    // ── Step 2: Validate arity and ranks ─────────────────────────
+    if (inputLabelStrs.length !== inputTypes.length) {
+      return {
+        nodeId: "",
+        message: `"${stereotypeName}" equation expects ${inputLabelStrs.length} inputs but got ${inputTypes.length}`,
+        severity: "error",
+      } satisfies TypeError;
+    }
+
+    for (let k = 0; k < inputLabelStrs.length; k++) {
+      const labelStr = inputLabelStrs[k];
+      const tensor = inputTypes[k];
+      if (labelStr.length !== tensor.shape.length) {
+        return {
+          nodeId: "",
+          message: `"${stereotypeName}" input ${k} label group "${labelStr}" has ${labelStr.length} dims but input has ${tensor.shape.length} dims`,
+          severity: "error",
+        } satisfies TypeError;
+      }
+    }
+
+    // ── Step 3: Determine output labels ─────────────────────────
+    let outputLabelStr: string;
+    if (rhs !== undefined) {
+      outputLabelStr = rhs; // may be empty string → scalar output
+    } else {
+      // Implicit: labels appearing exactly once, sorted alphabetically
+      const labelCounts = new Map<string, number>();
+      for (const ls of inputLabelStrs) {
+        for (const ch of ls) {
+          labelCounts.set(ch, (labelCounts.get(ch) ?? 0) + 1);
+        }
+      }
+      const onceLabels: string[] = [];
+      for (const [label, count] of labelCounts) {
+        if (count === 1) onceLabels.push(label);
+      }
+      onceLabels.sort();
+      outputLabelStr = onceLabels.join("");
+    }
+
+    // ── Step 4: Map output labels to dimensions ─────────────────
+    const outputDims: ShapeDimension[] = [];
+    for (const outputLabel of outputLabelStr) {
+      const found: ShapeDimension[] = [];
+
+      for (let k = 0; k < inputLabelStrs.length; k++) {
+        const labelStr = inputLabelStrs[k];
+        for (let p = 0; p < labelStr.length; p++) {
+          if (labelStr[p] === outputLabel) {
+            found.push(inputTypes[k].shape[p]);
+          }
+        }
+      }
+
+      if (found.length === 0) {
+        return {
+          nodeId: "",
+          message: `"${stereotypeName}" label "${outputLabel}" in output not found in any input`,
+          severity: "error",
+        } satisfies TypeError;
+      }
+
+      // If label appears in multiple inputs, all dims must be equal
+      for (let f = 1; f < found.length; f++) {
+        if (!dimEqual(found[0], found[f])) {
+          return {
+            nodeId: "",
+            message: `"${stereotypeName}" label "${outputLabel}" bound to conflicting dimensions: ${this.describeDim(found[0])} vs ${this.describeDim(found[f])}`,
+            severity: "error",
+          } satisfies TypeError;
+        }
+      }
+
+      outputDims.push(found[0]);
+    }
+
+    // ── Step 5: Return output shape ──────────────────────────────
+    return outputDims;
   }
 
   /**

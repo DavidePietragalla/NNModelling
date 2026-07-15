@@ -40,6 +40,6 @@
       { "kind": "symbolic", "name": "$C" }
     ],
     "output": [],
-    "dtype": { "output": "float32" }
+    "dtype": { "input": "float32", "output": "float32" }
   }
 }
