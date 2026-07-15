@@ -66,3 +66,21 @@
   font-family: monospace;
   font-weight: bold;
 }
+
+.shape-tooltip {
+  position: absolute;
+  bottom: auto;
+  top: -36px;
+  left: 50%;
+  transform: translateX(-50%);
+  background-color: rgba(31, 41, 55, 0.9);
+  border: 1px solid #4b5563;
+  border-radius: 4px;
+  padding: 4px 8px;
+  box-shadow: 0 4px 6px -1px rgba(0,0,0,0.1);
+  white-space: nowrap;
+  z-index: 9999;
+  color: #f9fafb;
+  font-family: monospace;
+  font-size: 0.75rem;
+}
