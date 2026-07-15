@@ -231,7 +231,7 @@ NNModelling/
 - **Pattern**: Pure TS unit tests, no DOM/browser
 - **Real Diagram**: Tests use real `Diagram` class (Svelte `$state.raw` compiled by Vite plugin). Stub `globalThis.window` before construction.
 - **Helpers**: `node(id, stereo, name, params, overrides?)` and `edge(id, source, target, handles?)` for concise fixtures.
-- **Coverage**: **231 tests (226 passed, 5 skipped)** — sequential chain, skip/joins, autoencoder, subflow compilation, nested subflows, hidden nodes, error handling, connection validation, Fork node, type inference (Input, Linear, ReLU, Conv1d, Conv2d, Flatten, Unflatten, MaxPool2d, wildcards, mismatches, edge cases, computed dimensions, param_spread, join type checking, Repeat/HorizontalRepeat subflows, generic subflow recursion, nested subflows, loss nodes, complex modules), BrowserRPCHandler, undo/redo, param merging, edge handle defaults, viewport injection, invalid parameter validation, parentId placement, fuzz testing (compilability, serialization, operations), expression evaluator (tokenizer, parser, evaluator, round-trip)
+- **Coverage**: **269 tests (269 passed, 5 skipped)** — sequential chain, skip/joins, autoencoder, subflow compilation, nested subflows, hidden nodes, error handling, connection validation, Fork node, type inference (Input, Linear, ReLU, Conv1d, Conv2d, Flatten, Unflatten, MaxPool2d, wildcards, mismatches, edge cases, computed dimensions, param_spread, join type checking, Repeat/HorizontalRepeat subflows, generic subflow recursion, nested subflows, loss nodes, complex modules), BrowserRPCHandler, undo/redo, param merging, edge handle defaults, viewport injection, invalid parameter validation, parentId placement, fuzz testing (compilability, serialization, operations), expression evaluator (tokenizer, parser, evaluator, round-trip), dtype input validation, advisory warnings, shape suggestions, join input labels, Einsum shape inference
 
 ### Testing — Integration (Vitest + Python Pipeline)
 
@@ -309,7 +309,7 @@ MCP Server (thin proxy, no DiagramCore)
 - **StereotypeCore** (core/StereotypeCore.ts) — Pure TypeScript stereotype with dual loader: `loadFromDirectory()` uses Vite's `import.meta.glob` for browser; `loadFromDirectoryNode(path)` uses `fs.readdirSync` for Node.js/MCP server.
 - **Stereotype** (stereotype.ts) — Thin wrapper extending `StereotypeCore`. Delegates to Vite loader via `StereotypeCore.loadFromDirectory()`.
 - **NNTree** (conversion/nnTree.ts) — Converts visual graph to tree representation. Handles sequential chains, joins (multiple parents), loss nodes, and subflow containers with Kahn's topological sort. Subflows are type `"subflow"` with `entryNode` + internal `nodes` map (not flattened to sequential). Supports recursive nested subflows via `compileSubflowGraph`. Output JSON consumed by Python side.
-- **TypeEngine** (conversion/typeEngine.ts) — Constraint-based static tensor type checker. **Fully data-driven** — no hardcoded module names, formula bodies, or constraint checks. Interprets `type_signature` from stereotype JSON. Implements pattern matching with symbolic dimension binding, wildcard capture, param reference resolution, dtype propagation, expression-based computed dims, declarative subflow transforms (`SubflowConfig`), and declarative join operations (`JoinConfig`). Phases: computed dims (Phase 2), join checking (Phase 3), subflow inference (Phase 4), editor integration (Phase 5), expression language + declarative configs (Phase 6).
+- **TypeEngine** (conversion/typeEngine.ts) — Constraint-based static tensor type checker. **Fully data-driven** — no hardcoded module names, formula bodies, or constraint checks. Interprets `type_signature` from stereotype JSON. Implements pattern matching with symbolic dimension binding, wildcard capture, param reference resolution, dtype propagation, expression-based computed dims, declarative subflow transforms (`SubflowConfig`), declarative join operations (`JoinConfig`), dtype input validation, advisory warnings, shape suggestions, join input labels, and Einsum shape inference. Phases: computed dims (Phase 2), join checking (Phase 3), subflow inference (Phase 4), editor integration (Phase 5), expression language + declarative configs (Phase 6), type system improvements (Phase 7).
 
   **Phase 2 (computed dims)**: Supports `computed` dimension patterns via an **expression language** — replacing the old hardcoded formula system (removed `resolveFormula`, `resolveComputedArg`). Conv2d output H/W: `floor(($H + 2*padding - dilation*(kernel_size - 1) - 1)/stride + 1)`. MaxPool2d/AvgPool2d: `floor(($H + 2*padding - kernel_size)/stride + 1)`. Flatten: `$*` (product of captured dims). Unsample: `$H * scale_factor`. All formulas are expression strings in JSON.
 
@@ -320,6 +320,8 @@ MCP Server (thin proxy, no DiagramCore)
   **Phase 5 (editor integration)**: The TypeEngine is wired into the visual editor. Edge connections, parameter changes, and diagram loads trigger real-time type inference. Errors appear as red badges on nodes and in a panel at the bottom of the Sidebar. Hovering an output handle shows the inferred output shape via tooltip.
 
   **Phase 6 (expression language + declarative configs)**: Added `front-end/src/expr/` — a mini arithmetic expression language for computed dimensions (`parseExpr` tokenizer → parser → evaluator pipeline) with `$-`prefixed symbolic variables, `$*` wildcard product, 5 built-in functions (`floor`, `ceil`, `abs`, `max`, `min`). All `computed` dims migrated from `formula`+`args` to `expr` across 5 stereotypes (Conv2d, MaxPool2d, AvgPool2d, Flatten, Unsample). Subflow name checks replaced by declarative `SubflowConfig` (`identity`/`infer`/`infer_then_transform`) in Repeat.json and HorizontalRepeat.json. Join constraint checks replaced by declarative `JoinConfig` (`action` + `dim_expr`) in Concat.json. 54 expression tests covering tokenizer, parser, evaluator, round-trip, and errors.
+
+  **Phase 7 (type system improvements)**: Dtype input validation on 7 stereotypes (warnings, not errors), advisory warnings via `Advisory` interface (kernel_size-vs-spatial, param-threshold checks on 4 stereotypes), shape suggestions for unset `param_ref` dimensions matching const input dims, join input labels for clearer error messages (MatMul: A/B, ScaledDotProduct: Q/K/V), and Einsum shape inference via 5-step label-mapping algorithm with 14 test cases. Einsum.json now has a full `type_signature`.
 
   **Parameter validation**: `resolveParamRef` returns a `ParamResolution` discriminated union (`unset` | `invalid` | `resolved`). Invalid parameter values (e.g. "cazz" for an int param) generate type errors instead of being silently treated as unset.
 - **Tensor Types** (conversion/tensortypes.ts) — Type model: ShapeDimension (const/symbolic/param_ref/wildcard discriminated union), TensorType (shape + dtype), TypeSignature (declarative input/output patterns), TypeEnvironment (symbolic bindings), TypeResult (annotations + errors), ParamResolution (unset/invalid/resolved for parameter validation).
@@ -399,7 +401,7 @@ Each stereotype JSON can optionally include a `type_signature` field declaring t
 
 **Dimension kinds**: `const` (literal int), `symbolic` (e.g. `$B` for batch), `param_ref` (references node param), `wildcard` (matches zero or more arbitrary dims), `computed` (expression-based formula), `param_spread` (expands tuple parameter into multiple output dimensions).
 
-**All 36 stereotypes** have type signatures or are explicitly handled. Modules with type_signature JSON: Input, Linear, ReLU, Tanh, Sigmoid, Softmax, Dropout, BatchNorm1d, BatchNorm2d, LayerNorm, Conv1d, Conv2d, MaxPool2d, AvgPool2d, Flatten, Unflatten, Embedding, MultiheadAttention, Transformer, TransformerEncoderLayer, TransformerDecoderLayer, PositionalEncoding, SequencePool, Unsample, Fork, BCELoss, BCEWithLogitsLoss, CrossEntropyLoss, MSELoss (+6 joins: Addition, Concat, MatMul, ScaledDotProduct, MaskedScaledDotProduct). Repeat and HorizontalRepeat have subflow-kind signatures handled by engine logic. Only Einsum has no type_signature — the system supports gradual typing with a warning and unknown type propagation.
+**All 36 stereotypes** have type signatures or are explicitly handled. Modules with type_signature JSON: Input, Linear, ReLU, Tanh, Sigmoid, Softmax, Dropout, BatchNorm1d, BatchNorm2d, LayerNorm, Conv1d, Conv2d, MaxPool2d, AvgPool2d, Flatten, Unflatten, Embedding, MultiheadAttention, Transformer, TransformerEncoderLayer, TransformerDecoderLayer, PositionalEncoding, SequencePool, Unsample, Fork, BCELoss, BCEWithLogitsLoss, CrossEntropyLoss, MSELoss (+6 joins: Addition, Concat, MatMul, ScaledDotProduct, MaskedScaledDotProduct, Einsum). Repeat and HorizontalRepeat have subflow-kind signatures handled by engine logic. Einsum uses a declarative `join.action: "einsum"` with a 5-step label-mapping inference algorithm.
 
 The TypeEngine interprets these declarative signatures via constraint-based inference. Adding a new module requires only updating its stereotype JSON — no TypeScript changes needed.
 
@@ -662,7 +664,7 @@ Two type system improvements:
 
 **Test count**: 120 → 146 (+26 tests for invalid parameter validation and other improvements)
 
-### Phase 16 — Type System Phase 4: Subflows + Complex Modules (current)
+### Phase 16 — Type System Phase 4: Subflows + Complex Modules
 
 Completed the type system Phase 4, providing full type coverage across all 35 stereotypes:
 
@@ -689,4 +691,22 @@ Replaced all hardcoded logic in the TypeEngine with a mini expression language a
 - **Declarative JoinConfig**: Concat.json now uses `join.action: "concat"` with `join.dim_expr` instead of the old hardcoded `constraints.concat` check. Removed `resolveConcatDim()` and `resolveConcatOutput()`.
 - **TypeScript interfaces**: Added `SubflowConfig`, `SubflowTransform`, `JoinConfig` to `tensortypes.ts`. Updated `ShapeDimPattern` to support optional `expr` field alongside legacy `formula`+`args`.
 - **54 expression tests**: Covering tokenizer (numbers, identifiers, dollar-prefixed tokens, whitespace, errors), parser (precedence, grouping, function calls, unary minus, error handling), evaluator (symbolic env, params, wildcard product, unresolved vars), and round-trip parse→evaluate.
-- **All 225 unit tests pass** (220 passed, 5 skipped) — existing computed dim, join, subflow, and complex module tests unchanged.
+- **All 269 unit tests pass** (269 passed, 5 skipped) — existing computed dim, join, subflow, and complex module tests unchanged.
+
+### Phase 18 — Type System Improvements II: Dtype, Advisories, Suggestions, Labels, Einsum
+
+Five new type system capabilities (Phases A–E from the design plan):
+
+**Phase A — Dtype input validation**: `type_signature.dtype.input`/`output` added to 7 stereotypes (Embedding, BatchNorm1d, BatchNorm2d, LayerNorm, CrossEntropyLoss, Softmax, Dropout). Engine checks that incoming tensor dtype matches the declared contract, emitting warnings (not errors — PyTorch is forgiving about dtype via autocast). Embedding expects `int64` input tokens; normalization layers expect `float32`.
+
+**Phase B — Advisory warnings (reasonable shape checks)**: `TypeWarning` interface with 4 categories (`dtype`, `shape`, `perf`, `style`). `Advisory` interface for declarative conditions in stereotype JSON. `evaluateAdvisory()` with two strategies: kernel_size-vs-spatial dimension check (Conv2d, Conv1d, MaxPool2d) and param-threshold comparison (Dropout p > 0.5). 4 stereotypes have advisories. Warnings flow through `TypeResult.warnings`.
+
+**Phase C — Shape suggestions for unset parameters**: `TypeSuggestion` interface. When a `param_ref` resolves as `"unset"` and the corresponding input dimension is `const`, the engine suggests filling it (e.g. "suggest in_features=784"). `patternMatch()` accepts optional `suggestions` out-parameter. Suggestions flow through `TypeResult.suggestions`.
+
+**Phase D — Join input labels for better error messages**: `input_labels` field on `JoinConfig`. MatMul labels inputs `"A"/"B"`, ScaledDotProduct labels `"Q"/"K"/"V"`, MaskedScaledDotProduct labels `"Q"/"K"/"V"/"mask"`. Error messages now read e.g. "A mismatch" instead of "Input 0 mismatch".
+
+**Phase E — Einsum shape inference**: `JoinConfig.action: "einsum"` with `einsum_param` field. `inferEinsumShape()` implements a 5-step label-mapping algorithm: parse equation, validate arity/ranks, determine output labels (explicit `->` or implicit single-occurrence), map labels to input dims, unify shared labels. Rejects ellipsis `...` with explicit error. 14 test cases covering matmul (batched and simple), contraction, trace, diagonal, implicit output, 3-input chains, arity/rank/label mismatch errors, empty equation, ellipsis rejection, and conflicting dims. Einsum.json now has a full `type_signature` with `join.action: "einsum"`.
+
+**Test count**: 225 → 269 (+44 new tests for all phases)
+
+**Files changed**: `tensortypes.ts` (TypeWarning, TypeSuggestion, Advisory, JoinConfig.input_labels/einsum_param, TypeResult.warnings/suggestions), `typeEngine.ts` (dtype validation, evaluateAdvisory, inferEinsumShape, patternMatch suggestions out-param), `typeEngine.test.ts` (44 new tests), 7 stereotype JSONs (dtype), 4 JSONs (advisories), 4 JSONs (input_labels + Einsum type_signature)

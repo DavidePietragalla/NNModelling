@@ -679,10 +679,12 @@ Symbolic unification ensures that :math:`B`, :math:`H`, and :math:`D` are
 consistent across Q, K, and V. The output preserves the query length
 :math:`L` and value depth :math:`D_{\text{out}}` from V.
 
-***Note.** Einsum has no type signature because its shape constraints depend
-on the equation string, which is a free-form parameter. The engine emits a
-warning and treats its type as unknown. This is a deliberate case of
-gradual typing.*
+***Note.** Einsum uses a declarative ``join.action: "einsum"`` type signature
+that delegates output shape computation to a 5-step label-mapping algorithm
+(``inferEinsumShape``). The engine parses the Einstein notation equation from
+the node's ``expr`` parameter, validates arity and rank compatibility, and
+computes the output shape dimension-by-dimension. Ellipsis ``...`` is
+explicitly unsupported — the engine emits an error instead.*
 
 Real-Time Feedback in the Editor
 ---------------------------------
@@ -713,7 +715,7 @@ with the inferred output shape:
 Implementation Phases
 ---------------------
 
-The type system was implemented incrementally over five phases:
+The type system was implemented incrementally over six phases:
 
 +-------------+----------------------------------------------------------+
 | Phase       | What Was Added                                           |
@@ -741,11 +743,27 @@ The type system was implemented incrementally over five phases:
 |             | Unsample), 4 loss nodes (BCELoss, BCEWithLogitsLoss,     |
 |             | CrossEntropyLoss, MSELoss), Fork. All subflow/join       |
 |             | logic is declarative — no hardcoded name checks.         |
-|             | 34 of 35 stereotypes have type signatures (Einsum is     |
-|             | intentionally gradual typing).                           |
+|             | All 35 stereotypes have type signatures (Einsum was      |
+|             | intentionally gradual typing in this phase).             |
 +-------------+----------------------------------------------------------+
 | Phase 5     | Editor integration: reactive ``typeResult`` state,       |
 |             | error panel, node indicators, shape tooltips             |
++-------------+----------------------------------------------------------+
+| Phase 6     | Dtype input validation on 7 stereotypes (Embedding,      |
+|             | BatchNorm1d, BatchNorm2d, LayerNorm, CrossEntropyLoss,  |
+|             | Softmax, Dropout) with warning-only enforcement.         |
+|             | Advisory warnings via declarative ``Advisory`` config    |
+|             | with ``evaluateAdvisory()`` (kernel_size-vs-spatial,     |
+|             | param-threshold). Shape suggestions for unset parameters |
+|             | matching const input dims. Join input labels (MatMul:    |
+|             | A/B, ScaledDotProduct: Q/K/V) for clearer error         |
+|             | messages. Einsum shape inference via 5-step label-      |
+|             | mapping algorithm in ``inferEinsumShape()`` — parses     |
+|             | Einstein notation, validates arity/ranks, computes       |
+|             | output shape dimension-by-dimension. Ellipsis ``...``   |
+|             | is explicitly rejected. All 36 stereotypes now have      |
+|             | type signatures, including Einsum (``join.action:        |
+|             | "einsum"``).                                             |
 +-------------+----------------------------------------------------------+
 
 Further Reading
@@ -757,9 +775,9 @@ Further Reading
   implementation
 * Source: ``front-end/src/expr/`` — expression language tokenizer, parser,
   evaluator, and public API
-* Tests: ``front-end/src/__tests__/typeEngine.test.ts`` — 231 tests
-  (226 passing, 5 skipped) covering all phases
-* Tests: ``front-end/src/__tests__/expr.test.ts`` — 40+ unit tests for
+* Tests: ``front-end/src/__tests__/typeEngine.test.ts`` — 269 tests
+  (269 passing, 5 skipped) covering all phases
+* Tests: ``front-end/src/__tests__/expr.test.ts`` — 54 unit tests for
   expression parsing and evaluation
 * Design docs: ``docs/designs/tensor-type-system/`` — full architectural
   design documents
