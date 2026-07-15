@@ -21,6 +21,8 @@ import type {
   ShapePattern,
   TypeSignature,
   TypeError,
+  TypeWarning,
+  Advisory,
   NodeTypeAnnotation,
   TypeResult,
   TypeEnvironment,
@@ -56,6 +58,7 @@ export class TypeEngine {
   static infer(diagram: Diagram): TypeResult {
     const annotations = new Map<string, NodeTypeAnnotation>();
     const errors: TypeError[] = [];
+    const warnings: TypeWarning[] = [];
     const env: TypeEnvironment = new Map();
 
     // Only top-level nodes (subflow internals deferred to Phase 4)
@@ -241,6 +244,7 @@ export class TypeEngine {
         nodeId,
         annotations,
         errors,
+        warnings,
       );
 
       // ── Steps f/g: Handle result ─────────────────────────────────
@@ -276,6 +280,7 @@ export class TypeEngine {
       ok: errors.every((e) => e.severity !== "error"),
       annotations,
       errors,
+      warnings,
     };
   }
 
@@ -296,6 +301,7 @@ export class TypeEngine {
     nodeId?: string,
     annotations?: Map<string, NodeTypeAnnotation>,
     errors?: TypeError[],
+    warnings?: TypeWarning[],
   ): TensorType | TypeError {
     // Safety check: type signature must exist
     const sig = stereotype.typeSignature;
@@ -323,6 +329,22 @@ export class TypeEngine {
               [],
             );
             const dtype = sig.dtype?.output ?? "unknown";
+
+            // ── Evaluate advisories (Phase B) ────────────────
+            if (sig.advisories && warnings && nodeId) {
+              for (const advisory of sig.advisories) {
+                const warning = this.evaluateAdvisory(
+                  advisory,
+                  env,
+                  params,
+                  nodeId,
+                );
+                if (warning) {
+                  warnings.push(warning);
+                }
+              }
+            }
+
             return { shape: outputDims, dtype } satisfies TensorType;
           }
 
@@ -358,6 +380,21 @@ export class TypeEngine {
           matchResult.captured,
         );
         const dtype = sig.dtype?.output ?? inputType.dtype;
+
+        // ── Evaluate advisories (Phase B) ──────────────────────
+        if (sig.advisories && warnings && nodeId) {
+          for (const advisory of sig.advisories) {
+            const warning = this.evaluateAdvisory(
+              advisory,
+              env,
+              params,
+              nodeId,
+            );
+            if (warning) {
+              warnings.push(warning);
+            }
+          }
+        }
 
         return { shape: outputDims, dtype } satisfies TensorType;
       }
@@ -585,6 +622,7 @@ export class TypeEngine {
               env,
               subflowAnnotations,
               subflowErrors,
+              warnings,
             );
           }
 
@@ -612,6 +650,7 @@ export class TypeEngine {
               env,
               subflowAnnotations,
               subflowErrors,
+              warnings,
             );
             if (!isTensorType(internalResult)) return internalResult;
 
@@ -698,6 +737,7 @@ export class TypeEngine {
     env: TypeEnvironment,
     annotations: Map<string, NodeTypeAnnotation>,
     errors: TypeError[],
+    warnings?: TypeWarning[],
   ): TensorType | TypeError {
     // 1. Collect internal nodes
     const internalNodes = diagram.nodes.filter(
@@ -830,6 +870,7 @@ export class TypeEngine {
             localEnv,
             annotations,
             errors,
+            warnings,
           );
           if (isTensorType(nestedResult)) {
             annotations.set(internalNodeId, {
@@ -906,6 +947,7 @@ export class TypeEngine {
         internalNodeId,
         annotations,
         errors,
+        warnings,
       );
 
       if (isTensorType(result)) {
@@ -1508,6 +1550,82 @@ export class TypeEngine {
       },
     };
     return evaluate(ast, ctx);
+  }
+
+  /**
+   * Evaluate an advisory condition against the bound environment and params.
+   *
+   * Returns a TypeWarning if the condition fires, or null if it doesn't
+   * (or if the condition can't be evaluated).
+   *
+   * Two evaluation strategies:
+   * 1. Kernel_size vs spatial dims check (for Conv2d, Conv1d, MaxPool2d)
+   * 2. Simple expression-style conditions (for Dropout p > 0.5, etc.)
+   */
+  static evaluateAdvisory(
+    advisory: Advisory,
+    env: TypeEnvironment,
+    params: Record<string, unknown>,
+    nodeId: string,
+  ): TypeWarning | null {
+    // ── Strategy 1: kernel_size vs spatial dimension check ──────────
+    const ksize = TypeEngine.resolveParamRefTuple("kernel_size", params);
+    if (ksize) {
+      const hDim = env.get("H");
+      const wDim = env.get("W");
+      const lDim = env.get("L");
+      const h = hDim?.kind === "const" ? hDim.value : undefined;
+      const w = wDim?.kind === "const" ? wDim.value : undefined;
+      const l = lDim?.kind === "const" ? lDim.value : undefined;
+
+      let exceeds = false;
+      if (ksize.length >= 1) {
+        if (h !== undefined && ksize[0] > h) exceeds = true;
+        if (l !== undefined && ksize[0] > l) exceeds = true;
+      }
+      if (ksize.length >= 2 && w !== undefined && ksize[1] > w) exceeds = true;
+
+      if (exceeds) {
+        return {
+          nodeId,
+          message: advisory.message,
+          kind: advisory.kind,
+        };
+      }
+      return null;
+    }
+
+    // ── Strategy 2: Simple param-based condition (e.g. Dropout p > 0.5) ──
+    // Try evaluating the condition as a comparison between a param and a number.
+    // Format expected: "param_name > N" or "param_name < N"
+    const comparisonMatch = advisory.condition.match(
+      /^(\w+)\s*(>|>=|<|<=)\s*([\d.]+)$/,
+    );
+    if (comparisonMatch) {
+      const [, paramName, op, thresholdStr] = comparisonMatch;
+      const threshold = parseFloat(thresholdStr);
+      const resolved = TypeEngine.resolveParamRef(paramName, params);
+      if (resolved.status === "resolved") {
+        let fires = false;
+        switch (op) {
+          case ">":  fires = resolved.value > threshold; break;
+          case ">=": fires = resolved.value >= threshold; break;
+          case "<":  fires = resolved.value < threshold; break;
+          case "<=": fires = resolved.value <= threshold; break;
+        }
+        if (fires) {
+          return {
+            nodeId,
+            message: advisory.message,
+            kind: advisory.kind,
+          };
+        }
+      }
+      return null;
+    }
+
+    // Unknown/unparseable condition — skip gracefully
+    return null;
   }
 
   /**

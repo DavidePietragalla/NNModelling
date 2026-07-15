@@ -67,6 +67,11 @@
       { "kind": "param_ref", "name": "out_channels" },
       { "kind": "computed", "expr": "floor(($H + 2*padding - dilation*(kernel_size - 1) - 1)/stride + 1)" },
       { "kind": "computed", "expr": "floor(($W + 2*padding - dilation*(kernel_size - 1) - 1)/stride + 1)" }
-    ]
+    ],
+    "advisories": [{
+      "condition": "kernel_size > $H || kernel_size > $W",
+      "message": "kernel_size exceeds one or both input spatial dimensions",
+      "kind": "perf"
+    }]
   }
 }

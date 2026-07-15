@@ -65,6 +65,11 @@
       { "kind": "symbolic", "name": "$B" },
       { "kind": "param_ref", "name": "out_channels" },
       { "kind": "computed", "expr": "floor(($L + 2*padding - dilation*(kernel_size - 1) - 1)/stride + 1)" }
-    ]
+    ],
+    "advisories": [{
+      "condition": "kernel_size > $L",
+      "message": "kernel_size exceeds input spatial dimension",
+      "kind": "perf"
+    }]
   }
 }

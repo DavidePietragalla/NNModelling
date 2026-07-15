@@ -8,7 +8,7 @@
 import { describe, it, expect, afterAll } from "vitest";
 import { Diagram } from "../Diagram.svelte";
 import { TypeEngine } from "../conversion/typeEngine";
-import type { ShapeDimPattern, TypeResult } from "../conversion/tensortypes";
+import type { ShapeDimPattern, TypeResult, Advisory, TypeWarning } from "../conversion/tensortypes";
 import {
   stubWindow,
   unstubWindow,
@@ -2037,5 +2037,285 @@ describe("TypeEngine — param_spread (Unflatten)", () => {
     expectOutputShape(result, linearId, ["$B", "100"]);
     expectOutputShape(result, unflattenId, ["$B", "1", "100"]);
     expectOutputShape(result, conv1dId, ["$B", "10", "98"]);
+  });
+});
+
+// ---------------------------------------------------------------------------
+// Group 12 — Phase B: Advisories and Warnings
+// ---------------------------------------------------------------------------
+
+describe("TypeEngine — Phase B Advisories & Warnings", () => {
+  // ── Dropout advisories ──────────────────────────────────────────
+
+  it("12.1: Dropout(p=0.2) fires no warning", () => {
+    const d = new Diagram();
+    const inputId = d.nodes[0].id;
+    d.updateModule(inputId, { params: { out_features: { value: "784" } } });
+
+    const dropoutStereo = d.stereotypes.find((s) => s.name === "Dropout")!;
+    d.addModule(dropoutStereo, 200, 0);
+    const dropId = d.nodes[1].id;
+    d.edges.push(edge("e1", inputId, dropId));
+    d.updateModule(dropId, { params: { p: { value: "0.2" } } });
+
+    const result = TypeEngine.infer(d);
+    expectTypeSuccess(result);
+    // No warning for p=0.2 (not > 0.5)
+    expect(result.warnings.length).toBe(0);
+  });
+
+  it("12.2: Dropout(p=0.8) fires warning", () => {
+    const d = new Diagram();
+    const inputId = d.nodes[0].id;
+    d.updateModule(inputId, { params: { out_features: { value: "784" } } });
+
+    const dropoutStereo = d.stereotypes.find((s) => s.name === "Dropout")!;
+    d.addModule(dropoutStereo, 200, 0);
+    const dropId = d.nodes[1].id;
+    d.edges.push(edge("e1", inputId, dropId));
+    d.updateModule(dropId, { params: { p: { value: "0.8" } } });
+
+    const result = TypeEngine.infer(d);
+    expectTypeSuccess(result);
+    // Should fire warning for p=0.8 (> 0.5)
+    expect(result.warnings.length).toBeGreaterThanOrEqual(1);
+    const dropWarnings = result.warnings.filter(
+      (w) => w.nodeId === dropId && w.kind === "perf",
+    );
+    expect(dropWarnings.length).toBeGreaterThanOrEqual(1);
+    expect(dropWarnings[0].message).toMatch(/dropout|activations|dropped/i);
+  });
+
+  it("12.3: Dropout(p=0.5) fires no warning (boundary)", () => {
+    const d = new Diagram();
+    const inputId = d.nodes[0].id;
+    d.updateModule(inputId, { params: { out_features: { value: "784" } } });
+
+    const dropoutStereo = d.stereotypes.find((s) => s.name === "Dropout")!;
+    d.addModule(dropoutStereo, 200, 0);
+    const dropId = d.nodes[1].id;
+    d.edges.push(edge("e1", inputId, dropId));
+    d.updateModule(dropId, { params: { p: { value: "0.5" } } });
+
+    const result = TypeEngine.infer(d);
+    expectTypeSuccess(result);
+    // p=0.5 is NOT > 0.5, so no warning
+    expect(result.warnings.length).toBe(0);
+  });
+
+  // ── Conv2d kernel_size advisories ───────────────────────────────
+
+  it("12.4: Conv2d(kernel_size=3) on (16,16) spatial dims fires no warning", () => {
+    const env = new Map<string, ShapeDimPattern>();
+    env.set("H", { kind: "const", value: 16 });
+    env.set("W", { kind: "const", value: 16 });
+
+    const advisory: Advisory = {
+      condition: "kernel_size > $H || kernel_size > $W",
+      message: "kernel_size exceeds one or both input spatial dimensions",
+      kind: "perf",
+    };
+
+    const warning = TypeEngine.evaluateAdvisory(
+      advisory,
+      env as any,
+      { kernel_size: { value: "3" } },
+      "conv2d",
+    );
+    expect(warning).toBeNull();
+  });
+
+  it("12.5: Conv2d(kernel_size=32) on (16,16) spatial dims fires warning", () => {
+    const env = new Map<string, ShapeDimPattern>();
+    env.set("H", { kind: "const", value: 16 });
+    env.set("W", { kind: "const", value: 16 });
+
+    const advisory: Advisory = {
+      condition: "kernel_size > $H || kernel_size > $W",
+      message: "kernel_size exceeds one or both input spatial dimensions",
+      kind: "perf",
+    };
+
+    const warning = TypeEngine.evaluateAdvisory(
+      advisory,
+      env as any,
+      { kernel_size: { value: "32" } },
+      "conv2d",
+    );
+    expect(warning).not.toBeNull();
+    expect(warning!.kind).toBe("perf");
+    expect(warning!.message).toMatch(/kernel_size|exceeds|spatial/i);
+  });
+
+  it("12.6: Conv2d(kernel_size=(3,3)) on (32,32) fires no warning", () => {
+    const env = new Map<string, ShapeDimPattern>();
+    env.set("H", { kind: "const", value: 32 });
+    env.set("W", { kind: "const", value: 32 });
+
+    const advisory: Advisory = {
+      condition: "kernel_size > $H || kernel_size > $W",
+      message: "kernel_size exceeds one or both input spatial dimensions",
+      kind: "perf",
+    };
+
+    const warning = TypeEngine.evaluateAdvisory(
+      advisory,
+      env as any,
+      { kernel_size: { value: "(3, 3)" } },
+      "conv2d",
+    );
+    expect(warning).toBeNull();
+  });
+
+  it("12.7: Conv2d(kernel_size=(32,3)) on (16,32) fires warning (H exceeds)", () => {
+    const env = new Map<string, ShapeDimPattern>();
+    env.set("H", { kind: "const", value: 16 });
+    env.set("W", { kind: "const", value: 32 });
+
+    const advisory: Advisory = {
+      condition: "kernel_size > $H || kernel_size > $W",
+      message: "kernel_size exceeds one or both input spatial dimensions",
+      kind: "perf",
+    };
+
+    const warning = TypeEngine.evaluateAdvisory(
+      advisory,
+      env as any,
+      { kernel_size: { value: "(32, 3)" } },
+      "conv2d",
+    );
+    expect(warning).not.toBeNull();
+  });
+
+  // ── Conv1d kernel_size advisory ─────────────────────────────────
+
+  it("12.8: Conv1d(kernel_size=3) on (64) dimension fires no warning", () => {
+    const env = new Map<string, ShapeDimPattern>();
+    env.set("L", { kind: "const", value: 64 });
+
+    const advisory: Advisory = {
+      condition: "kernel_size > $L",
+      message: "kernel_size exceeds input spatial dimension",
+      kind: "perf",
+    };
+
+    const warning = TypeEngine.evaluateAdvisory(
+      advisory,
+      env as any,
+      { kernel_size: { value: "3" } },
+      "conv1d",
+    );
+    expect(warning).toBeNull();
+  });
+
+  it("12.9: Conv1d(kernel_size=128) on (64) dimension fires warning", () => {
+    const env = new Map<string, ShapeDimPattern>();
+    env.set("L", { kind: "const", value: 64 });
+
+    const advisory: Advisory = {
+      condition: "kernel_size > $L",
+      message: "kernel_size exceeds input spatial dimension",
+      kind: "perf",
+    };
+
+    const warning = TypeEngine.evaluateAdvisory(
+      advisory,
+      env as any,
+      { kernel_size: { value: "128" } },
+      "conv1d",
+    );
+    expect(warning).not.toBeNull();
+    expect(warning!.kind).toBe("perf");
+  });
+
+  // ── MaxPool2d kernel_size advisory ──────────────────────────────
+
+  it("12.10: MaxPool2d(kernel_size=3) on (32,32) fires no warning", () => {
+    const env = new Map<string, ShapeDimPattern>();
+    env.set("H", { kind: "const", value: 32 });
+    env.set("W", { kind: "const", value: 32 });
+
+    const advisory: Advisory = {
+      condition: "kernel_size > $H || kernel_size > $W",
+      message: "kernel_size exceeds one or both input spatial dimensions",
+      kind: "perf",
+    };
+
+    const warning = TypeEngine.evaluateAdvisory(
+      advisory,
+      env as any,
+      { kernel_size: { value: "3" } },
+      "pool2d",
+    );
+    expect(warning).toBeNull();
+  });
+
+  it("12.11: MaxPool2d(kernel_size=64) on (32,32) fires warning", () => {
+    const env = new Map<string, ShapeDimPattern>();
+    env.set("H", { kind: "const", value: 32 });
+    env.set("W", { kind: "const", value: 32 });
+
+    const advisory: Advisory = {
+      condition: "kernel_size > $H || kernel_size > $W",
+      message: "kernel_size exceeds one or both input spatial dimensions",
+      kind: "perf",
+    };
+
+    const warning = TypeEngine.evaluateAdvisory(
+      advisory,
+      env as any,
+      { kernel_size: { value: "64" } },
+      "pool2d",
+    );
+    expect(warning).not.toBeNull();
+  });
+
+  // ── Warnings array is empty for simple chain without advisories ──
+
+  it("12.12: Simple Input → Linear chain has empty warnings", () => {
+    const d = new Diagram();
+    const inputId = d.nodes[0].id;
+    d.updateModule(inputId, { params: { out_features: { value: "784" } } });
+
+    const linearStereo = d.stereotypes.find((s) => s.name === "Linear")!;
+    d.addModule(linearStereo, 200, 0);
+    const linearId = d.nodes[1].id;
+    d.edges.push(edge("e1", inputId, linearId));
+    d.updateModule(linearId, {
+      params: {
+        in_features: { value: "784" },
+        out_features: { value: "128" },
+      },
+    });
+
+    const result = TypeEngine.infer(d);
+    expectTypeSuccess(result);
+    expect(result.warnings).toBeDefined();
+    expect(result.warnings.length).toBe(0);
+  });
+
+  // ── Verify TypeWarning interface ─────────────────────────────────
+
+  it("12.13: TypeWarning has correct shape with nodeId, message, kind", () => {
+    const env = new Map<string, ShapeDimPattern>();
+    env.set("H", { kind: "const", value: 16 });
+
+    const advisory: Advisory = {
+      condition: "kernel_size > $H || kernel_size > $W",
+      message: "kernel_size exceeds input spatial dimension",
+      kind: "perf",
+    };
+
+    const warning = TypeEngine.evaluateAdvisory(
+      advisory,
+      env as any,
+      { kernel_size: { value: "32" } },
+      "test_node",
+    );
+    expect(warning).not.toBeNull();
+    expect(warning!.nodeId).toBe("test_node");
+    expect(typeof warning!.message).toBe("string");
+    expect(warning!.message.length).toBeGreaterThan(10);
+    expect(warning!.kind).toBe("perf");
   });
 });

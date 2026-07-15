@@ -190,6 +190,13 @@ export interface TypeSignature {
   constraints?: {
     concat?: { dim: string };
   };
+
+  /**
+   * Optional advisory warnings for this stereotype.
+   * Each advisory defines a condition evaluated after type inference
+   * that, when truthy, produces a warning in the type result.
+   */
+  advisories?: Advisory[];
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
@@ -209,6 +216,52 @@ export interface TypeError {
 
   /** `'error'` indicates the diagram cannot be converted; `'warning'` is informational. */
   severity: 'error' | 'warning';
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
+// 10b. TypeWarning — advisory warning (Phase B)
+// ─────────────────────────────────────────────────────────────────────────────
+
+/**
+ * A non-fatal advisory about the module configuration.
+ * Warnings are informational — they don't block compilation.
+ */
+export interface TypeWarning {
+  /** ID of the node that triggered the warning. */
+  nodeId: string;
+
+  /** Human-readable description of the potential issue. */
+  message: string;
+
+  /** Category of warning for filtering:
+   *  - `'dtype'`: dtype mismatch with expected input/output
+   *  - `'shape'`: unusual shape configuration
+   *  - `'perf'`: performance concern (e.g. excessive dropout)
+   *  - `'style'`: code style / best practice violation
+   */
+  kind: 'dtype' | 'shape' | 'perf' | 'style';
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
+// 10c. Advisory — declarative condition + message (Phase B)
+// ─────────────────────────────────────────────────────────────────────────────
+
+/**
+ * Declarative advisory embedded in a stereotype's type_signature.
+ * Each advisory defines a condition (evaluated at inference time)
+ * that, when truthy, produces a warning.
+ */
+export interface Advisory {
+  /** Expression condition — if truthy, warning fires.
+   *  Evaluated by TypeEngine.evaluateAdvisory() using the bound env
+   *  and node params after output type is computed. */
+  condition: string;
+
+  /** Human-readable message for the warning. */
+  message: string;
+
+  /** Category of the warning ('perf' | 'style'). */
+  kind: 'perf' | 'style';
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
@@ -253,6 +306,11 @@ export interface TypeResult {
   ok: boolean;
   annotations: Map<string, NodeTypeAnnotation>;
   errors: TypeError[];
+
+  /** Non-fatal advisory warnings about the module configuration.
+   *  Warnings are informational — they don't block compilation.
+   *  See TypeWarning for details. */
+  warnings: TypeWarning[];
 }
 
 // ─────────────────────────────────────────────────────────────────────────────

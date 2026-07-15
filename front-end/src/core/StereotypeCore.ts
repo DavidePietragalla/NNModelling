@@ -165,6 +165,7 @@ export class StereotypeCore {
       constraints: raw.constraints ? { ...raw.constraints } : undefined,
       subflow: raw.subflow ? { ...raw.subflow } : undefined,
       join: raw.join ? { ...raw.join } : undefined,
+      advisories: raw.advisories ? [...raw.advisories] : undefined,
     };
   }
 

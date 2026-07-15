@@ -23,6 +23,11 @@
     ],
     "output": [
       { "kind": "wildcard" }
-    ]
+    ],
+    "advisories": [{
+      "condition": "p > 0.5",
+      "message": "Dropout rate > 0.5: more than half of activations are dropped",
+      "kind": "perf"
+    }]
   }
 }
