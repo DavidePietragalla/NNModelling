@@ -85,7 +85,12 @@ NNModelling/
 │   │   ├── utils.test.ts       # checkValidConnection tests
 │   │   ├── BrowserRPCHandler.test.ts  # RPC handler tests
 │   │   ├── undoRedo.test.ts     # Undo/redo snapshot-based tests
-│   │   └── integration/        # Integration test suite (tiered, Python pipeline)
+│   │       ├── fuzz/               # Fuzz testing (compilability, serialization, operation commutativity)
+│   │       │   ├── helpers.ts
+│   │       │   ├── compilability.test.ts
+│   │       │   ├── serialization.test.ts
+│   │       │   └── operations.test.ts
+│   │       └── integration/        # Integration test suite (tiered, Python pipeline)
 │   │       ├── helpers.ts      # Shared helpers (manifest, uvRun, pipeline stages)
 │   │       ├── smoke.test.ts   # Tier 0: nnTree compilation
 │   │       ├── convert.test.ts # Tier 1: convert.py YAML generation
@@ -219,7 +224,7 @@ NNModelling/
 - **Pattern**: Pure TS unit tests, no DOM/browser
 - **Real Diagram**: Tests use real `Diagram` class (Svelte `$state.raw` compiled by Vite plugin). Stub `globalThis.window` before construction.
 - **Helpers**: `node(id, stereo, name, params, overrides?)` and `edge(id, source, target, handles?)` for concise fixtures.
-- **Coverage**: **146 tests** — sequential chain, skip/joins, autoencoder, subflow compilation, nested subflows, hidden nodes, error handling, connection validation, Fork node, type inference (Input, Linear, ReLU, Conv2d, Flatten, MaxPool2d, wildcards, mismatches, edge cases, computed dimensions, join type checking), BrowserRPCHandler, undo/redo, param merging, edge handle defaults, viewport injection, invalid parameter validation
+- **Coverage**: **170 tests (165 passed, 5 skipped)** — sequential chain, skip/joins, autoencoder, subflow compilation, nested subflows, hidden nodes, error handling, connection validation, Fork node, type inference (Input, Linear, ReLU, Conv2d, Flatten, MaxPool2d, wildcards, mismatches, edge cases, computed dimensions, join type checking, Repeat/HorizontalRepeat subflows, generic subflow recursion, nested subflows, loss nodes, complex modules), BrowserRPCHandler, undo/redo, param merging, edge handle defaults, viewport injection, invalid parameter validation, parentId placement, fuzz testing (compilability, serialization, operations)
 
 ### Testing — Integration (Vitest + Python Pipeline)
 
@@ -297,11 +302,13 @@ MCP Server (thin proxy, no DiagramCore)
 - **StereotypeCore** (core/StereotypeCore.ts) — Pure TypeScript stereotype with dual loader: `loadFromDirectory()` uses Vite's `import.meta.glob` for browser; `loadFromDirectoryNode(path)` uses `fs.readdirSync` for Node.js/MCP server.
 - **Stereotype** (stereotype.ts) — Thin wrapper extending `StereotypeCore`. Delegates to Vite loader via `StereotypeCore.loadFromDirectory()`.
 - **NNTree** (conversion/nnTree.ts) — Converts visual graph to tree representation. Handles sequential chains, joins (multiple parents), loss nodes, and subflow containers with Kahn's topological sort. Subflows are type `"subflow"` with `entryNode` + internal `nodes` map (not flattened to sequential). Supports recursive nested subflows via `compileSubflowGraph`. Output JSON consumed by Python side.
-- **TypeEngine** (conversion/typeEngine.ts) — Constraint-based static tensor type checker. Interprets `type_signature` from stereotype JSON. Data-driven — no hardcoded module-specific logic. Implements pattern matching with symbolic dimension binding, wildcard capture, param reference resolution, and dtype propagation. Supports: Input, Linear, ReLU (Phase 1). Join/subflow inference deferred to Phase 3/4.
+- **TypeEngine** (conversion/typeEngine.ts) — Constraint-based static tensor type checker. Interprets `type_signature` from stereotype JSON. Data-driven — no hardcoded module-specific logic. Implements pattern matching with symbolic dimension binding, wildcard capture, param reference resolution, and dtype propagation. Supports: Input, Linear, ReLU (Phase 1), computed dims (Phase 2), join type checking (Phase 3), and subflow type inference (Phase 4).
 
   **Phase 2 (computed dims)**: The engine supports `computed` dimension patterns with formula resolution (`conv2d_hw`, `pool2d_hw`, `flatten_prod`). Conv2d output H/W are computed from kernel/stride/padding/dilation parameters. Flatten computes the product of wildcard-captured dimensions.
 
   **Phase 3 (join type checking)**: Join nodes with `kind: "join"` in their type_signature undergo multi-input pattern matching. Symbolic unification validates constraints (e.g., `MatMul`: K must match across inputs). The `Concat` constraint type sums dimensions on a specified axis. ScaledDotProduct validates Q/K/V shape compatibility.
+
+  **Phase 4 (subflows + complex modules)**: Subflow containers now have recursive type inference. Generic subflows run the type engine on their internal graph, injecting the external input type as the internal Input node's output. Repeat subflows are shape-preserving (N sequential copies). HorizontalRepeat concatenates N parallel copies on the last dimension (output dim = input dim × N). All 35 stereotypes now have `type_signature` or are explicitly handled. Complex modules added: MultiheadAttention, TransformerEncoderLayer, TransformerDecoderLayer, Transformer, PositionalEncoding (shape-preserving), SequencePool (rank reduction: [B, L, D] → [B, D]), Unsample (computed dim via `upsample_hw` formula). Loss nodes (BCELoss, BCEWithLogitsLoss, CrossEntropyLoss, MSELoss) have `output: []` producing empty output shape. Fork has wildcard pass-through signature. Errors inside subflows are attributed to the internal node, not the container, for clear debugging.
 
   **Phase 5 (editor integration)**: The TypeEngine is wired into the visual editor. Edge connections, parameter changes, and diagram loads trigger real-time type inference. Errors appear as red badges on nodes and in a panel at the bottom of the Sidebar. Hovering an output handle shows the inferred output shape via tooltip.
 
@@ -383,7 +390,7 @@ Each stereotype JSON can optionally include a `type_signature` field declaring t
 
 **Dimension kinds**: `const` (literal int), `symbolic` (e.g. `$B` for batch), `param_ref` (references node param), `wildcard` (matches zero or more arbitrary dims).
 
-**Phase 1-3 modules** with type signatures: Input, Linear, ReLU, Tanh, Sigmoid, Softmax, Dropout, BatchNorm1d, BatchNorm2d, LayerNorm, Conv2d, MaxPool2d, AvgPool2d, Flatten, Embedding (+6 joins: Addition, Concat, MatMul, ScaledDotProduct, MaskedScaledDotProduct). Modules without a `type_signature` emit a warning and propagate an unknown type — the system supports gradual typing.
+**All 35 stereotypes** have type signatures or are explicitly handled. Modules with type_signature JSON: Input, Linear, ReLU, Tanh, Sigmoid, Softmax, Dropout, BatchNorm1d, BatchNorm2d, LayerNorm, Conv2d, MaxPool2d, AvgPool2d, Flatten, Embedding, MultiheadAttention, Transformer, TransformerEncoderLayer, TransformerDecoderLayer, PositionalEncoding, SequencePool, Unsample, Fork, BCELoss, BCEWithLogitsLoss, CrossEntropyLoss, MSELoss (+6 joins: Addition, Concat, MatMul, ScaledDotProduct, MaskedScaledDotProduct). Repeat and HorizontalRepeat have subflow-kind signatures handled by engine logic. Only Einsum has no type_signature — the system supports gradual typing with a warning and unknown type propagation.
 
 The TypeEngine interprets these declarative signatures via constraint-based inference. Adding a new module requires only updating its stereotype JSON — no TypeScript changes needed.
 
@@ -546,7 +553,7 @@ Removed server-side state duplication. The server is now a thin proxy:
 | `front-end/src/Sidebar.svelte` | Node create/edit form |
 | `front-end/src/nodes/SubflowNode.svelte` | Collapsible subflow UI |
 | `front-end/src/utils.ts` | Connection validation |
-| `front-end/src/__tests__/typeEngine.test.ts` | Type inference unit tests (18 tests, 5 skipped for Phase 2+) |
+| `front-end/src/__tests__/typeEngine.test.ts` | Type inference unit tests (Groups 1-10: basic, computed dims, joins, subflow recursion, complex modules, parentId) |
 | `converted/src/convert.py` | NNTree JSON → Hydra configs |
 | `converted/src/infer.py` | Inference: load trained model, run test set, save predictions/images |
 | `converted/src/net/base.py` | Dynamic LightningModule |
@@ -634,7 +641,7 @@ Three MCP synchronization bugs fixed, discovered during agent-driven diagram cre
 
 **Test count**: 96 → 120 (+24 tests for param merging, edge handle defaults, viewport injection)
 
-### Phase 15 — Type System Improvements + Documentation (current)
+### Phase 15 — Type System Improvements + Documentation
 
 Two type system improvements:
 
@@ -645,3 +652,19 @@ Two type system improvements:
 3. **Educational documentation**: Added `docs2/source/type_system.rst` — a full educational guide to the tensor type system. Covers the problem statement (catching shape errors before PyTorch), example-guided walkthrough (following a tensor through the graph), the five dimension kinds, type signatures for all modules, join type checking, computed dimensions, real-time editor feedback, and phase roadmap. Uses plain language, narrative examples, and formal math only where it helps understanding.
 
 **Test count**: 120 → 146 (+26 tests for invalid parameter validation and other improvements)
+
+### Phase 16 — Type System Phase 4: Subflows + Complex Modules (current)
+
+Completed the type system Phase 4, providing full type coverage across all 35 stereotypes:
+
+- **Subflow recursive inference**: `inferSubflow()` method walks internal subgraph via topological sort. Injects external input type into internal Input node. Supports nested subflows with arbitrary depth. Generic subflows infer their output type from their internal graph's exit node.
+- **Repeat subflow**: Shape-preserving. Output shape = input shape. No type_signature needed — handled by name in engine.
+- **HorizontalRepeat subflow**: Runs internal graph, then multiplies last dimension by `n` (concat on dim=-1). Error if `n` is unset.
+- **Complex module type signatures**: Added to MultiheadAttention, Transformer, TransformerEncoderLayer, TransformerDecoderLayer (all `[B, L, embed_dim]` → `[B, L, embed_dim]`), PositionalEncoding (`[B, L, D]` → `[B, L, D]` with symbolic D), SequencePool (`[B, L, D]` → `[B, D]` rank reduction), Unsample (computed `upsample_hw` formula for H×scale_factor).
+- **Loss node signatures**: BCELoss, BCEWithLogitsLoss, CrossEntropyLoss, MSELoss accept `[B, *]` input and produce empty output shape (`output: []`).
+- **Fork signature**: Wildcard pass-through — shape-preserving, dtype-preserving.
+- **Einsum**: Only stereotype without a type_signature (gradual typing). Emits warning, propagates unknown type.
+- **Error attribution**: Subflow-internal errors are attributed to the internal node (not the container), preserving the subflow node ID for context.
+- **New upsample_hw formula**: `resolveFormula("upsample_hw", [h, scale])` = h × scale.
+- **Fuzz testing**: Added 3 fuzz suites (compilability, serialization idempotence, operation commutativity) for randomized graph validation.
+- **Test count**: 146 → 170 tests (165 passed, 5 skipped).
