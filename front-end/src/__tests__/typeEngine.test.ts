@@ -1100,9 +1100,18 @@ describe("TypeEngine — Phase 4 Subflows", () => {
 
     // Subflow output = internal exit (ReLU) output = [B, 256]
     expectOutputShape(result, subflowId, ["$B", "256"]);
+
+    // Internal nodes should also have type annotations (FIX: they were missing before)
+    expect(result.annotations.has(internalInputId)).toBe(true);
+    expect(result.annotations.has(internalLinearId)).toBe(true);
+    expect(result.annotations.has(internalReluId)).toBe(true);
+
+    // Verify internal shapes
+    expectOutputShape(result, internalLinearId, ["$B", "256"]);
+    expectOutputShape(result, internalReluId, ["$B", "256"]);
   });
 
-  it("8.4: Generic subflow shape mismatch: Input(784) → Subflow(Linear(512→256))", () => {
+  it("8.4: Generic subflow shape mismatch: Input(784) → Subflow(Linear(512→256)) — error attributed to internal node", () => {
     const d = new Diagram();
     const inputId = d.nodes[0].id;
     d.updateModule(inputId, { params: { out_features: { value: "784" } } });
@@ -1143,12 +1152,18 @@ describe("TypeEngine — Phase 4 Subflows", () => {
     const result = TypeEngine.infer(d);
     expect(result.ok).toBe(false);
 
-    // Error should mention the subflow node with [Subflow] prefix or dimension mismatch
-    const sfErrors = result.errors.filter(
-      (e) => e.nodeId === subflowId && e.severity === "error",
+    // Error should now be attributed to the INTERNAL Linear node, not the subflow container
+    const linearErrors = result.errors.filter(
+      (e) => e.nodeId === internalLinearId && e.severity === "error",
     );
-    expect(sfErrors.length).toBeGreaterThanOrEqual(1);
-    expect(sfErrors[0].message).toMatch(/in_features|512|784|mismatch|dimension|param/i);
+    expect(linearErrors.length).toBeGreaterThanOrEqual(1);
+    expect(linearErrors[0].message).toMatch(/in_features|512|784|mismatch|dimension|param/i);
+
+    // The subflow container should NOT have the [Subflow] prefixed error
+    const sfPrefixed = result.errors.filter(
+      (e) => e.nodeId === subflowId && e.message.includes("[Subflow]"),
+    );
+    expect(sfPrefixed.length).toBe(0);
   });
 
   it("8.5: Nested subflow: Input(784) → Subflow_A(Subflow_B(ReLU))", () => {
@@ -1203,6 +1218,116 @@ describe("TypeEngine — Phase 4 Subflows", () => {
 
     // Outer subflow output = inner subflow output = ReLU output = [B, 784]
     expectOutputShape(result, outerId, ["$B", "784"]);
+  });
+
+  it("8.7: Internal node errors surface with correct internal nodeId", () => {
+    const d = new Diagram();
+    const inputId = d.nodes[0].id;
+    d.updateModule(inputId, { params: { out_features: { value: "784" } } });
+
+    // Create a generic subflow node
+    const subflowId = "err_sf";
+    d.nodes.push(
+      node(subflowId, "UnknownSF", "Subflow", {}, {
+        type: "subflow",
+      }),
+    );
+
+    const internalInputId = "err_in";
+    const internalLinearId = "err_lin";
+
+    // Internal Linear with wrong in_features (512 vs 784)
+    d.nodes.push(
+      node(internalInputId, "Input", "Input", {}, {
+        type: "custom",
+        isInput: true,
+        parentId: subflowId,
+      }),
+      node(internalLinearId, "Linear", "Linear", {
+        in_features: { value: "512" },
+        out_features: { value: "256" },
+      }, {
+        type: "custom",
+        parentId: subflowId,
+      }),
+    );
+
+    d.edges.push(edge("ie1", internalInputId, internalLinearId));
+    d.edges.push(edge("e1", inputId, subflowId));
+
+    const result = TypeEngine.infer(d);
+    expect(result.ok).toBe(false);
+
+    // Error should be attributed to the INTERNAL Linear node, not the subflow container
+    const linearErrors = result.errors.filter(
+      (e) => e.nodeId === internalLinearId && e.severity === "error",
+    );
+    expect(linearErrors.length).toBeGreaterThanOrEqual(1);
+
+    // The subflow container should NOT have a [Subflow] prefixed error
+    const sfPrefixed = result.errors.filter(
+      (e) => e.nodeId === subflowId && e.message.includes("[Subflow]"),
+    );
+    expect(sfPrefixed.length).toBe(0);
+  });
+
+  it("8.8: All nodes (top-level + subflow internals) have annotations", () => {
+    const d = new Diagram();
+    const inputId = d.nodes[0].id;
+    d.updateModule(inputId, { params: { out_features: { value: "784" } } });
+
+    // Top-level Linear: 784 → 128
+    const linearStereo = d.stereotypes.find((s) => s.name === "Linear")!;
+    d.addModule(linearStereo, 200, 0);
+    const topLinearId = d.nodes[1].id;
+    d.updateModule(topLinearId, {
+      params: {
+        in_features: { value: "784" },
+        out_features: { value: "128" },
+      },
+    });
+    d.edges.push(edge("e1", inputId, topLinearId));
+
+    // Generic subflow with internal ReLU
+    const subflowId = "view_sf";
+    d.nodes.push(
+      node(subflowId, "UnknownSF", "Subflow", {}, {
+        type: "subflow",
+      }),
+    );
+    const internalInputId = "vsf_in";
+    const internalReluId = "vsf_relu";
+    d.nodes.push(
+      node(internalInputId, "Input", "Input", {}, {
+        type: "custom",
+        isInput: true,
+        parentId: subflowId,
+      }),
+      node(internalReluId, "ReLU", "ReLU", {}, {
+        type: "custom",
+        parentId: subflowId,
+      }),
+    );
+    d.edges.push(edge("ie1", internalInputId, internalReluId));
+    // Connect topLinear → subflow
+    d.edges.push(edge("e2", topLinearId, subflowId));
+
+    const result = TypeEngine.infer(d);
+    expectTypeSuccess(result);
+
+    // ALL nodes should have annotations (top-level + subflow internals)
+    expect(result.annotations.has(inputId)).toBe(true);
+    expect(result.annotations.has(topLinearId)).toBe(true);
+    expect(result.annotations.has(subflowId)).toBe(true);
+    expect(result.annotations.has(internalInputId)).toBe(true);
+    expect(result.annotations.has(internalReluId)).toBe(true);
+
+    // Verify correct shapes
+    expectOutputShape(result, inputId, ["$B", "784"]);
+    expectOutputShape(result, topLinearId, ["$B", "128"]);
+    // Subflow exit = internal ReLU → shape-preserving: [B, 128]
+    expectOutputShape(result, subflowId, ["$B", "128"]);
+    expectOutputShape(result, internalReluId, ["$B", "128"]);
   });
 
   it("8.6: HorizontalRepeat with unresolved 'n' produces error", () => {

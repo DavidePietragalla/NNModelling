@@ -109,6 +109,8 @@ export class TypeEngine {
             diagram,
             localParams ?? {},
             env,
+            annotations,
+            errors,
           );
           if (isTensorType(result)) {
             annotations.set(nodeId, {
@@ -233,6 +235,8 @@ export class TypeEngine {
         inputTypes,
         diagram,
         nodeId,
+        annotations,
+        errors,
       );
 
       // ── Steps f/g: Handle result ─────────────────────────────────
@@ -286,6 +290,8 @@ export class TypeEngine {
     inputTypes?: TensorType[],
     diagram?: Diagram,
     nodeId?: string,
+    annotations?: Map<string, NodeTypeAnnotation>,
+    errors?: TypeError[],
   ): TensorType | TypeError {
     // Safety check: type signature must exist
     const sig = stereotype.typeSignature;
@@ -499,6 +505,9 @@ export class TypeEngine {
       // ── Subflow kind (Phase 4) ─────────────────────────────────
       case "subflow": {
         const stereoName = stereotype.name;
+        // Shared maps for writing internal node annotations/errors
+        const subflowAnnotations = annotations ?? new Map<string, NodeTypeAnnotation>();
+        const subflowErrors = errors ?? [];
 
         // ── Repeat: shape-preserving ──────────────────────────
         if (stereoName === "Repeat") {
@@ -549,9 +558,11 @@ export class TypeEngine {
             diagram,
             params,
             env,
+            subflowAnnotations,
+            subflowErrors,
           );
           if (!isTensorType(internalResult)) {
-            return internalResult; // propagate subflow error
+            return internalResult; // propagate subflow error (structural)
           }
           const n = nResolved.value;
           const newShape = internalResult.shape.map((d, i) => {
@@ -583,6 +594,8 @@ export class TypeEngine {
           diagram,
           params,
           env,
+          subflowAnnotations,
+          subflowErrors,
         );
       }
 
@@ -614,6 +627,8 @@ export class TypeEngine {
     diagram: Diagram,
     params: Record<string, unknown>,
     env: TypeEnvironment,
+    annotations: Map<string, NodeTypeAnnotation>,
+    errors: TypeError[],
   ): TensorType | TypeError {
     // 1. Collect internal nodes
     const internalNodes = diagram.nodes.filter(
@@ -673,7 +688,7 @@ export class TypeEngine {
       } satisfies TypeError;
     }
 
-    // 5. Build local annotations map.
+    // 5. Seed annotations for Input entry node.
     //    For Input entry nodes: seed with externalInputType as output
     //    (Input just passes through). For other entry nodes (e.g. nested subflow
     //    containers), we don't seed — the external input is passed as input to
@@ -682,9 +697,8 @@ export class TypeEngine {
       (entryNode.data as Record<string, unknown>).stereotype as string,
     );
     const isEntryInput = entryStereo?.isInput ?? false;
-    const localAnnotations = new Map<string, NodeTypeAnnotation>();
     if (externalInputType && isEntryInput) {
-      localAnnotations.set(entryNode.id, {
+      annotations.set(entryNode.id, {
         nodeId: entryNode.id,
         outputType: externalInputType,
       });
@@ -731,7 +745,7 @@ export class TypeEngine {
               (e) => e.target === internalNodeId,
             );
             if (incomingEdges.length === 1) {
-              const srcAnn = localAnnotations.get(
+              const srcAnn = annotations.get(
                 incomingEdges[0].source,
               );
               if (srcAnn)
@@ -745,13 +759,17 @@ export class TypeEngine {
             (n.data as Record<string, unknown>)
               .params as Record<string, unknown> ?? {},
             localEnv,
+            annotations,
+            errors,
           );
           if (isTensorType(nestedResult)) {
-            localAnnotations.set(internalNodeId, {
+            annotations.set(internalNodeId, {
               nodeId: internalNodeId,
               outputType: nestedResult,
             });
           } else {
+            // Structural error from nested subflow (no Input, no exit, etc.)
+            // Return as before — shows on the subflow container
             return {
               nodeId: subflowNodeId,
               message: `[Subflow] ${nestedResult.message}`,
@@ -760,7 +778,7 @@ export class TypeEngine {
           }
         } else {
           // Non-subflow node without type signature — warning
-          localAnnotations.set(internalNodeId, {
+          annotations.set(internalNodeId, {
             nodeId: internalNodeId,
             outputType: { shape: [], dtype: "unknown" },
           });
@@ -796,13 +814,13 @@ export class TypeEngine {
           return ha.localeCompare(hb);
         });
         for (const e of sortedEdges) {
-          const srcAnn = localAnnotations.get(e.source);
+          const srcAnn = annotations.get(e.source);
           if (srcAnn) collected.push(srcAnn.outputType);
         }
         localInputTypes =
           collected.length > 0 ? collected : undefined;
       } else if (localIncomingEdges.length === 1) {
-        const srcAnn = localAnnotations.get(
+        const srcAnn = annotations.get(
           localIncomingEdges[0].source,
         );
         if (srcAnn) localInputType = srcAnn.outputType;
@@ -817,10 +835,12 @@ export class TypeEngine {
         localInputTypes,
         diagram,
         internalNodeId,
+        annotations,
+        errors,
       );
 
       if (isTensorType(result)) {
-        localAnnotations.set(internalNodeId, {
+        annotations.set(internalNodeId, {
           nodeId: internalNodeId,
           outputType: result,
         });
@@ -830,17 +850,23 @@ export class TypeEngine {
           }
         }
       } else {
-        return {
-          nodeId: subflowNodeId,
-          message: `[Subflow] ${result.message}`,
-          severity: result.severity,
-        } satisfies TypeError;
+        // Push internal error with correct nodeId (the inferNode TypeError already
+        // has nodeId="" — patch it to the internal node ID)
+        if (!result.nodeId) {
+          result.nodeId = internalNodeId;
+        }
+        errors.push(result);
+        // Set fallback annotation so downstream internal nodes can continue
+        annotations.set(internalNodeId, {
+          nodeId: internalNodeId,
+          outputType: { shape: [], dtype: "unknown" },
+        });
       }
     }
 
     // 9. Return first exit node's output type
     const firstExit = exitNodes[0];
-    const exitAnn = localAnnotations.get(firstExit.id);
+    const exitAnn = annotations.get(firstExit.id);
     if (!exitAnn) {
       return {
         nodeId: subflowNodeId,
