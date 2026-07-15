@@ -163,6 +163,8 @@ export class StereotypeCore {
       output: raw.output.map((d) => StereotypeCore.stripDollar(d)),
       dtype: raw.dtype ? { ...raw.dtype } : undefined,
       constraints: raw.constraints ? { ...raw.constraints } : undefined,
+      subflow: raw.subflow ? { ...raw.subflow } : undefined,
+      join: raw.join ? { ...raw.join } : undefined,
     };
   }
 

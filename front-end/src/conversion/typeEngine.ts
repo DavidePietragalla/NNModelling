@@ -506,101 +506,129 @@ export class TypeEngine {
         return { shape: outputDims, dtype } satisfies TensorType;
       }
 
-      // ── Subflow kind (Phase 4) ─────────────────────────────────
+      // ── Subflow kind (Phase 4) — declarative subflow transforms ──────
       case "subflow": {
-        const stereoName = stereotype.name;
+        const subCfg = sig.subflow;
+        const action = subCfg?.action ?? "infer"; // default: generic subflow
         // Shared maps for writing internal node annotations/errors
         const subflowAnnotations = annotations ?? new Map<string, NodeTypeAnnotation>();
         const subflowErrors = errors ?? [];
 
-        // ── Repeat: shape-preserving ──────────────────────────
-        if (stereoName === "Repeat") {
-          if (!inputType) {
-            return {
-              nodeId: "",
-              message: "Repeat subflow has no input",
-              severity: "error",
-            } satisfies TypeError;
-          }
-          // Repeat executes N times → output shape equals input shape
-          return {
-            shape: inputType.shape.map((d) => ({ ...d })),
-            dtype: inputType.dtype,
-          } satisfies TensorType;
-        }
-
-        // ── HorizontalRepeat: run internal graph then concat on last dim ──
-        if (stereoName === "HorizontalRepeat") {
-          if (!inputType) {
-            return {
-              nodeId: "",
-              message: "HorizontalRepeat subflow has no input",
-              severity: "error",
-            } satisfies TypeError;
-          }
-          const nResolved = this.resolveParamRef("n", params);
-          if (nResolved.status !== "resolved") {
-            return {
-              nodeId: "",
-              message:
-                "HorizontalRepeat requires parameter 'n' to be set",
-              severity: "error",
-            } satisfies TypeError;
-          }
-          // First run the internal subflow graph to get its output type
-          if (!diagram || !nodeId) {
-            return {
-              nodeId: "",
-              message:
-                "HorizontalRepeat requires diagram context for recursive inference",
-              severity: "error",
-            } satisfies TypeError;
-          }
-          const internalResult = this.inferSubflow(
-            nodeId,
-            inputType,
-            diagram,
-            params,
-            env,
-            subflowAnnotations,
-            subflowErrors,
-          );
-          if (!isTensorType(internalResult)) {
-            return internalResult; // propagate subflow error (structural)
-          }
-          const n = nResolved.value;
-          const newShape = internalResult.shape.map((d, i) => {
-            if (
-              i === internalResult.shape.length - 1 &&
-              d.kind === "const"
-            ) {
-              return { kind: "const" as const, value: d.value * n };
+        switch (action) {
+          // ── identity: shape-preserving (Repeat equivalent) ──
+          case "identity": {
+            if (!inputType) {
+              return {
+                nodeId: "",
+                message: "Subflow has no input",
+                severity: "error",
+              } satisfies TypeError;
             }
-            return { ...d };
-          });
-          return {
-            shape: newShape,
-            dtype: internalResult.dtype,
-          } satisfies TensorType;
-        }
+            // Output shape = input shape (deep copy dims to avoid aliasing)
+            return {
+              shape: inputType.shape.map((d) => ({ ...d })),
+              dtype: inputType.dtype,
+            } satisfies TensorType;
+          }
 
-        // ── Generic subflow: recursive inference ────────────
-        if (!diagram || !nodeId) {
-          return {
-            nodeId: "",
-            message: `Subflow "${stereoName}" requires diagram context for recursive inference`,
-            severity: "error",
-          } satisfies TypeError;
+          // ── infer: generic subflow recursive inference ─────
+          case "infer": {
+            if (!diagram || !nodeId) {
+              return {
+                nodeId: "",
+                message: "Cannot infer subflow without diagram context",
+                severity: "error",
+              } satisfies TypeError;
+            }
+            return this.inferSubflow(
+              nodeId,
+              inputType,
+              diagram,
+              params,
+              env,
+              subflowAnnotations,
+              subflowErrors,
+            );
+          }
+
+          // ── infer_then_transform: infer internal, then apply transform ──
+          case "infer_then_transform": {
+            if (!inputType) {
+              return {
+                nodeId: "",
+                message: "Subflow has no input",
+                severity: "error",
+              } satisfies TypeError;
+            }
+            if (!diagram || !nodeId) {
+              return {
+                nodeId: "",
+                message: "Cannot infer subflow without diagram context",
+                severity: "error",
+              } satisfies TypeError;
+            }
+            const internalResult = this.inferSubflow(
+              nodeId,
+              inputType,
+              diagram,
+              params,
+              env,
+              subflowAnnotations,
+              subflowErrors,
+            );
+            if (!isTensorType(internalResult)) return internalResult;
+
+            // Apply transform
+            if (subCfg?.transform?.last_dim?.kind === "multiply") {
+              const nExpr = subCfg.transform.last_dim.expr;
+              const context: EvalContext = {
+                env,
+                captured: [],
+                params,
+                resolveParam: (name: string) => {
+                  const resolved = TypeEngine.resolveParamRef(name, params);
+                  if (resolved.status === "resolved") return resolved.value;
+                  return undefined;
+                },
+              };
+              try {
+                const ast = parseExpr(nExpr);
+                const n = evaluate(ast, context);
+                if (n === undefined) {
+                  return {
+                    nodeId: nodeId ?? "",
+                    message: "Subflow transform cannot resolve parameter for expression",
+                    severity: "error",
+                  } satisfies TypeError;
+                }
+                const newShape = internalResult.shape.map((d, i, arr) => {
+                  if (i === arr.length - 1 && d.kind === "const") {
+                    return { kind: "const" as const, value: d.value * n };
+                  }
+                  return { ...d };
+                });
+                return { shape: newShape, dtype: internalResult.dtype } satisfies TensorType;
+              } catch (e) {
+                if (e instanceof ParseError) {
+                  return {
+                    nodeId: nodeId ?? "",
+                    message: `Invalid transform expression "${nExpr}": ${e.message}`,
+                    severity: "error",
+                  } satisfies TypeError;
+                }
+                throw e;
+              }
+            }
+            return internalResult; // fallback: no transform specified
+          }
+
+          default:
+            return {
+              nodeId: nodeId ?? "",
+              message: `Unknown subflow action "${action}" for "${stereotype.name}"`,
+              severity: "error",
+            } satisfies TypeError;
         }
-        return this.inferSubflow(
-          nodeId,
-          inputType,
-          diagram,
-          params,
-          env,
-          subflowAnnotations,
-          subflowErrors,
-        );
       }
 
       default:

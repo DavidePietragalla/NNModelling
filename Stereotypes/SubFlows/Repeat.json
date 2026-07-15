@@ -15,6 +15,9 @@
   },
   "type_signature": {
     "kind": "subflow",
+    "subflow": {
+      "action": "identity"
+    },
     "input": [{ "kind": "wildcard" }],
     "output": [{ "kind": "wildcard" }]
   }

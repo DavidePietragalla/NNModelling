@@ -90,7 +90,55 @@ export type ShapeDimPattern =
 export type ShapePattern = ShapeDimPattern[];
 
 // ─────────────────────────────────────────────────────────────────────────────
-// 7. TypeSignature — stereotype-declared type signature
+// 7. SubflowConfig — declarative subflow transform descriptor
+// ─────────────────────────────────────────────────────────────────────────────
+
+/**
+ * Declarative subflow configuration embedded in a stereotype's type_signature.
+ *
+ * Controls how the type engine handles subflow inference:
+ * - `'identity'`: output shape = input shape (no recursive inference needed).
+ *   Equivalent to the old hardcoded Repeat behavior.
+ * - `'infer'`: run recursive inference on the subflow's internal graph.
+ *   Default when no `subflow` is specified.
+ * - `'infer_then_transform'`: run recursive inference, then apply a
+ *   transform (e.g. multiply last dim by `n`).
+ *   Equivalent to the old hardcoded HorizontalRepeat behavior.
+ */
+export interface SubflowConfig {
+  action: 'identity' | 'infer' | 'infer_then_transform';
+  transform?: SubflowTransform;
+}
+
+/**
+ * Transform to apply after subflow inference.
+ */
+export interface SubflowTransform {
+  /** Transform on the last dimension. */
+  last_dim?: {
+    kind: 'multiply';
+    /** Expression string that evaluates to the multiplier.
+     *  Typically a parameter reference (e.g. "n" for HorizontalRepeat). */
+    expr: string;
+  };
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
+// 8. JoinConfig — declarative join operation descriptor
+// ─────────────────────────────────────────────────────────────────────────────
+
+/**
+ * Declarative join configuration embedded in a stereotype's type_signature.
+ * Describes the join operation for output shape computation.
+ */
+export interface JoinConfig {
+  action?: 'element_wise' | 'concat' | 'matmul';
+  /** For concat joins: expression resolving to the concatenation dimension. */
+  dim_expr?: string;
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
+// 9. TypeSignature — stereotype-declared type signature
 // ─────────────────────────────────────────────────────────────────────────────
 
 /**
@@ -122,15 +170,28 @@ export interface TypeSignature {
     output?: DType;
   };
 
-  /** Optional additional constraints (e.g. concat dimension, hrepeat). */
+  /**
+   * Optional subflow configuration (for `kind: 'subflow'` signatures).
+   * Declares how the engine should handle subflow type inference.
+   */
+  subflow?: SubflowConfig;
+
+  /**
+   * Optional join configuration (for `kind: 'join'` signatures).
+   * Declares join-specific action (concat, element_wise, etc.).
+   */
+  join?: JoinConfig;
+
+  /** Optional additional constraints (e.g. concat dimension).
+   *  @deprecated Use `join` or `subflow` instead.
+   */
   constraints?: {
     concat?: { dim: string };
-    hrepeat?: { n: string };
   };
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
-// 8. TypeError — error/warning during type inference
+// 10. TypeError — error/warning during type inference
 // ─────────────────────────────────────────────────────────────────────────────
 
 /**
@@ -149,7 +210,7 @@ export interface TypeError {
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
-// 9. NodeTypeAnnotation — per-node type information
+// 11. NodeTypeAnnotation — per-node type information
 // ─────────────────────────────────────────────────────────────────────────────
 
 /**
@@ -176,7 +237,7 @@ export interface NodeTypeAnnotation {
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
-// 10. TypeResult — complete inference output
+// 12. TypeResult — complete inference output
 // ─────────────────────────────────────────────────────────────────────────────
 
 /**
@@ -193,7 +254,7 @@ export interface TypeResult {
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
-// 11. TypeEnvironment — symbolic name bindings
+// 13. TypeEnvironment — symbolic name bindings
 // ─────────────────────────────────────────────────────────────────────────────
 
 /**
@@ -206,7 +267,7 @@ export interface TypeResult {
 export type TypeEnvironment = Map<string, ShapeDimension>;
 
 // ─────────────────────────────────────────────────────────────────────────────
-// 12. ParamResolution — result of resolving a parameter reference
+// 14. ParamResolution — result of resolving a parameter reference
 // ─────────────────────────────────────────────────────────────────────────────
 
 /**

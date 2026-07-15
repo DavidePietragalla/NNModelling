@@ -1420,7 +1420,44 @@ describe("TypeEngine — Phase 4 Subflows", () => {
       (e) => e.nodeId === subflowId && e.severity === "error",
     );
     expect(hrErrors.length).toBeGreaterThanOrEqual(1);
-    expect(hrErrors[0].message).toMatch(/requires parameter.*n.*to be set/i);
+    expect(hrErrors[0].message).toMatch(/cannot resolve parameter/i);
+  });
+
+  it("8.9: Subflow with action 'identity' works regardless of stereotype name", () => {
+    const d = new Diagram();
+    const inputId = d.nodes[0].id;
+    d.updateModule(inputId, { params: { out_features: { value: "784" } } });
+
+    // Create a subflow node with a stereotype that has subflow.action = "identity"
+    // (Repeat stereotype has "identity" action)
+    const repeatStereo = d.stereotypes.find((s) => s.name === "Repeat")!;
+    d.addModule(repeatStereo, 400, 0);
+    const subflowId = d.nodes[1].id;
+
+    // Create internal nodes (won't be processed since identity skips recursive inference)
+    const internalInputId = "sf9_input";
+    const internalReluId = "sf9_relu";
+
+    d.nodes.push(
+      node(internalInputId, "Input", "Input", {}, {
+        type: "custom",
+        isInput: true,
+        parentId: subflowId,
+      }),
+      node(internalReluId, "ReLU", "ReLU", {}, {
+        type: "custom",
+        parentId: subflowId,
+      }),
+    );
+
+    d.edges.push(edge("ie1", internalInputId, internalReluId));
+    d.edges.push(edge("e1", inputId, subflowId));
+
+    const result = TypeEngine.infer(d);
+    expectTypeSuccess(result);
+
+    // Identity action: output shape = input shape = [B, 784]
+    expectOutputShape(result, subflowId, ["$B", "784"]);
   });
 });
 
