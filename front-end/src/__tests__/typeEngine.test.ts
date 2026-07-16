@@ -924,29 +924,16 @@ describe("TypeEngine — Phase 3 Joins", () => {
     expectOutputShape(result, joinId, ["$B", "192"]);
   });
 
-  it("7.6: ScaledDotProduct: Q(B,H,L,64) × K(B,H,S,64) × V(B,H,S,128) → (B,H,L,128)", () => {
+  it("7.6: ScaledDotProduct: Q(B,L,64) × K(B,S,64) → (B,L,S)", () => {
     const d = new Diagram();
     const inputId = d.nodes[0].id;
     // Input produces [B, out_features]. Set out_features large enough.
     d.updateModule(inputId, { params: { out_features: { value: "128" } } });
 
-    // We need three branches, each producing a different shape.
-    // Branch A (Q): [B, H, L, D] = [B, 8, 16, 64]
-    // Branch B (K): [B, H, S, D] = [B, 8, 32, 64]
-    // Branch C (V): [B, H, S, D_out] = [B, 8, 32, 128]
-    //
-    // The Input produces [B, 128] (2D). We need to get to 4D shapes.
-    // Since stereotype inference is data-driven, the ScaledDotProduct
-    // expects specific 4D patterns. Our Input → Linear chains produce
-    // 2D [B, X] shapes, which won't match the 4D patterns.
-    //
-    // This is fine — the test verifies that pattern matching catches
-    // the shape mismatch, demonstrating the engine correctly validates
-    // input shapes against the declared signatures.
-    //
-    // For a proper 4D test, we'd need a Reshape/View stereotype (Phase 4+).
-    // For now, verify that the engine tries to match and correctly
-    // reports a shape length mismatch.
+    // The ScaledDotProduct expects 3D input patterns [B, L, D] and [B, S, D].
+    // Our Input → Linear chains produce 2D [B, X] shapes, which won't match
+    // the 3D patterns. This verifies that pattern matching catches the
+    // shape length mismatch.
 
     // Linear for Q branch
     const linearStereo = d.stereotypes.find((s) => s.name === "Linear")!;
@@ -982,7 +969,7 @@ describe("TypeEngine — Phase 3 Joins", () => {
 
     const result = TypeEngine.infer(d);
 
-    // The 2D [B, X] shapes don't match the 4D patterns, so we expect errors
+    // The 2D [B, X] shapes don't match the 3D patterns, so we expect errors
     const hardErrors = result.errors.filter((e) => e.severity === "error");
     expect(hardErrors.length).toBeGreaterThanOrEqual(1);
     const joinErrors = hardErrors.filter((e) => e.nodeId === joinId);
@@ -3012,5 +2999,38 @@ describe("TypeEngine — Phase C Shape Suggestions", () => {
     expect(typeof sug.param).toBe("string");
     expect(typeof sug.value).toBe("number");
     expect(typeof sug.reason).toBe("string");
+  });
+});
+
+// ---------------------------------------------------------------------------
+// Integration: real-world diagram smoke tests
+// ---------------------------------------------------------------------------
+
+import { readFileSync } from "node:fs";
+import { resolve } from "node:path";
+
+describe("TypeEngine — Real-world diagrams", () => {
+  const DIAGRAMS_DIR = resolve(import.meta.dirname ?? __dirname, "../../../examples/diagrams");
+
+  function loadAndInfer(diagramName: string): TypeResult {
+    const filePath = resolve(DIAGRAMS_DIR, `${diagramName}.json`);
+    const content = readFileSync(filePath, "utf-8");
+
+    const d = new Diagram();
+    d.importFromJson(content);
+    return TypeEngine.infer(d);
+  }
+
+  it("transformer_classifier.json: zero type errors on load", () => {
+    const result = loadAndInfer("transformer_classifier");
+
+    const hardErrors = result.errors.filter((e) => e.severity === "error");
+    if (hardErrors.length > 0) {
+      console.error("Type errors found:");
+      for (const e of hardErrors) {
+        console.error(`  [${e.nodeId}] ${e.message}`);
+      }
+    }
+    expect(hardErrors).toHaveLength(0);
   });
 });
