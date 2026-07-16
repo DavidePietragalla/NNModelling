@@ -145,6 +145,44 @@ describe("BrowserRPCHandler", () => {
     });
   });
 
+  it("preserves parameter presentation metadata when values are updated", () => {
+    const { handler, diagram, mockSend } = createHandler();
+    const linear = diagram.getStereotype("Linear")!;
+    diagram.addModule(linear, 0, 0, {
+      params: { in_features: "784", out_features: "10" },
+    });
+    const nodeId = diagram.nodes[0].id;
+
+    // Reproduce a node damaged by the old RPC implementation.
+    diagram.nodes[0].data.params = {
+      in_features: { value: "784" },
+      out_features: { value: "10" },
+    };
+
+    const dispatch = (id: string, method: string, params: Record<string, unknown>) => {
+      mockSend.mockClear();
+      (handler as any).handleMessage({
+        data: JSON.stringify({ id, method, params }),
+      });
+      expect(mockSend).toHaveBeenCalledTimes(1);
+    };
+
+    dispatch("set-param", "set_parameter", {
+      nodeId,
+      key: "in_features",
+      value: "128",
+    });
+    dispatch("update-params", "update_parameters", {
+      nodeId,
+      params: { out_features: "64" },
+    });
+
+    expect(diagram.nodes[0].data.params).toMatchObject({
+      in_features: { value: "128", position: "top" },
+      out_features: { value: "64", position: "bottom" },
+    });
+  });
+
   it("returns an error when type information is requested for an unknown node", () => {
     const { handler, mockSend } = createHandler();
 

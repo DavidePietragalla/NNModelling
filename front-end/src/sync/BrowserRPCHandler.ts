@@ -650,9 +650,20 @@ export class BrowserRPCHandler {
 
     const currentParams = node.data.params as Record<string, { value: string }> | undefined;
     const previousValue = currentParams?.[key]?.value;
+    const stereotypeName = node.data.stereotype as string | undefined;
+    const parameterDefinition = stereotypeName
+      ? this.diagram.getStereotype(stereotypeName)?.parameters[key]
+      : undefined;
 
     this.diagram.updateModule(nodeId, {
-      params: { ...(currentParams || {}), [key]: { value } },
+      params: {
+        ...(currentParams || {}),
+        [key]: {
+          ...(parameterDefinition?.position ? { position: parameterDefinition.position } : {}),
+          ...(currentParams?.[key] || {}),
+          value,
+        },
+      },
     });
 
     return { nodeId, key, previousValue: previousValue ?? "", currentValue: value };
@@ -670,6 +681,10 @@ export class BrowserRPCHandler {
     if (!node) throw new Error(`Node not found: ${nodeId}`);
 
     const currentParams = (node.data.params as Record<string, { value: string }>) || {};
+    const stereotypeName = node.data.stereotype as string | undefined;
+    const stereotype = stereotypeName
+      ? this.diagram.getStereotype(stereotypeName)
+      : undefined;
     const updated: Array<{ key: string; previousValue: string; currentValue: string }> = [];
     const unchanged: string[] = [];
 
@@ -681,7 +696,15 @@ export class BrowserRPCHandler {
       } else {
         unchanged.push(key);
       }
-      newParams[key] = { value };
+      // Parameter objects also carry presentation metadata such as
+      // `position: "top" | "bottom"`. Recover it from the stereotype when an
+      // older RPC update has already stripped it from the live node.
+      const parameterDefinition = stereotype?.parameters[key];
+      newParams[key] = {
+        ...(parameterDefinition?.position ? { position: parameterDefinition.position } : {}),
+        ...(newParams[key] || {}),
+        value,
+      };
     }
 
     this.diagram.updateModule(nodeId, { params: newParams });
