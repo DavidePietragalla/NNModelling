@@ -28,7 +28,7 @@ import {
   ConversionFailedError,
   TrainingFailedError,
   InferenceFailedError,
-} from "./errors";
+} from "./errors.js";
 
 // ── Conversion Types ───────────────────────────────
 

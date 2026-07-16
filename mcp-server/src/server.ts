@@ -35,21 +35,21 @@ import {
 import { StereotypeCore } from "@nnmodelling/front-end/core/StereotypeCore";
 import { readdirSync, readFileSync } from "fs";
 import { join } from "path";
-import * as pipelineMod from "./pipeline";
-import { BrowserRPCClient } from "./browser-client";
+import * as pipelineMod from "./pipeline.js";
+import { BrowserRPCClient } from "./browser-client.js";
 
 // ── Import all tool modules ─────────────────────────────────────────────
 // Each file exports multiple named tools (e.g. create_node, delete_nodes).
 // We iterate over Object.entries to discover them automatically.
-import * as graphTools from "./tools/graph";
-import * as paramTools from "./tools/parameters";
-import * as selectionTools from "./tools/selection";
-import * as canvasTools from "./tools/canvas";
-import * as validationTools from "./tools/validation";
-import * as conversionTools from "./tools/conversion";
-import * as inspectionTools from "./tools/inspection";
-import * as lifecycleTools from "./tools/lifecycle";
-import * as connectionTools from "./tools/connection";
+import * as graphTools from "./tools/graph.js";
+import * as paramTools from "./tools/parameters.js";
+import * as selectionTools from "./tools/selection.js";
+import * as canvasTools from "./tools/canvas.js";
+import * as validationTools from "./tools/validation.js";
+import * as conversionTools from "./tools/conversion.js";
+import * as inspectionTools from "./tools/inspection.js";
+import * as lifecycleTools from "./tools/lifecycle.js";
+import * as connectionTools from "./tools/connection.js";
 
 // ── ServerContext ───────────────────────────────────────────────────────
 
@@ -64,6 +64,10 @@ export interface ServerContext {
   browser: BrowserRPCClient;
   pipeline: typeof pipelineMod;
   stereotypes: StereotypeCore[];
+}
+
+export interface CreateServerOptions {
+  wsPort?: number;
 }
 
 // ── Internal Types ──────────────────────────────────────────────────────
@@ -151,6 +155,7 @@ function loadStereotypesFromDirectory(stereotypesDir: string): StereotypeCore[] 
  */
 export async function createServer(
   stereotypesDir: string,
+  options: CreateServerOptions = {},
 ): Promise<{ server: Server; ctx: ServerContext; browser: BrowserRPCClient }> {
   // ── Step 1: Load stereotypes (static data) ──────────────────────────
   console.error(`[nnmodelling-mcp] Loading stereotypes from ${stereotypesDir}`);
@@ -158,7 +163,7 @@ export async function createServer(
   console.error(`[nnmodelling-mcp] Loaded ${stereotypes.length} stereotypes`);
 
   // ── Step 2: Create BrowserRPCClient and start listening ────────────
-  const browser = new BrowserRPCClient();
+  const browser = new BrowserRPCClient({ port: options.wsPort });
   await browser.start();
   console.error("[nnmodelling-mcp] Browser WebSocket server ready");
 

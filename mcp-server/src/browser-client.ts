@@ -123,16 +123,27 @@ export class BrowserRPCClient {
   }
 
   /** Close the WebSocket server, disconnect all tabs, reject pending. */
-  close(): void {
+  async close(): Promise<void> {
+    const wss = this.wss;
+    if (!wss) return;
+
+    // Clear the reference first so repeated close() calls are harmless and a
+    // later start() can create a fresh listener.
+    this.wss = null;
+
     for (const [, entry] of this.clients) {
       this.rejectAll(entry, new Error("Server shutting down"));
-      entry.ws.close();
+      entry.ws.terminate();
     }
     this.clients.clear();
     this.activeTab = null;
 
-    this.wss?.close();
-    this.wss = null;
+    await new Promise<void>((resolve, reject) => {
+      wss.close((err) => {
+        if (err) reject(err);
+        else resolve();
+      });
+    });
   }
 
   /**
