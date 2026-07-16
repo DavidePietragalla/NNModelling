@@ -69,7 +69,7 @@ MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.
   isVisible={selected}
 />
 
-<Handle type="target" position={Position.Top} />
+<Handle type="target" id="in" position={Position.Top} />
 
 <div class="subflow-wrapper" class:collapsed={data.isCollapsed} style="position: relative;">
   <div
@@ -114,7 +114,7 @@ MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.
   {/if}
 </div>
 
-<Handle type="source" position={Position.Bottom} />
+<Handle type="source" id="out" position={Position.Bottom} />
 
 <style>
   @import "../styles/subflow.css";
