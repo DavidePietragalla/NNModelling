@@ -16,6 +16,10 @@ export const capture_screenshot = {
     outputPath: z.string().min(1).optional(),
     pageUrl: z.string().url().optional(),
     fullPage: z.boolean().optional(),
+    reloadPage: z
+      .boolean()
+      .optional()
+      .describe("Reload the selected page and wait for it before capture"),
     hoverNodeId: z
       .string()
       .min(1)

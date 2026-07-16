@@ -55,7 +55,7 @@ MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.
   let outputShape = $derived.by(() => {
     const ann = diagram?.typeResult?.annotations.get(id);
     if (!ann) return null;
-    return ann.outputType.shape.map(d => d.kind === 'const' ? String(d.value) : d.kind === 'symbolic' ? '$' + d.name : d.kind).join(',');
+    return ann.outputType.shape.map(d => d.kind === 'const' ? String(d.value) : d.kind === 'symbolic' ? d.name : d.kind).join(',');
   });
 </script>
 

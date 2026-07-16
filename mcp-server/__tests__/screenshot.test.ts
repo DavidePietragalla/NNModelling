@@ -75,6 +75,7 @@ describe("captureChromiumScreenshot", () => {
         const request = JSON.parse(raw.toString()) as {
           id: number;
           method: string;
+          params?: { expression?: string };
         };
         methods.push(request.method);
 
@@ -86,6 +87,16 @@ describe("captureChromiumScreenshot", () => {
                 cssVisualViewport: { clientWidth: 1440, clientHeight: 900 },
                 cssContentSize: { width: 1440, height: 1200 },
               },
+            }),
+          );
+        } else if (
+          request.method === "Runtime.evaluate" &&
+          request.params?.expression === "document.readyState"
+        ) {
+          socket.send(
+            JSON.stringify({
+              id: request.id,
+              result: { result: { value: "complete" } },
             }),
           );
         } else if (request.method === "Page.captureScreenshot") {
@@ -112,6 +123,7 @@ describe("captureChromiumScreenshot", () => {
         pageUrl: "http://127.0.0.1:5174",
         outputPath,
         hoverNodeId: "linear-1",
+        reloadPage: true,
       });
 
       expect(result).toMatchObject({
@@ -127,6 +139,8 @@ describe("captureChromiumScreenshot", () => {
       expect(readFileSync(outputPath)).toEqual(png);
       expect(methods).toEqual([
         "Page.enable",
+        "Page.reload",
+        "Runtime.evaluate",
         "Runtime.enable",
         "Runtime.evaluate",
         "Page.getLayoutMetrics",

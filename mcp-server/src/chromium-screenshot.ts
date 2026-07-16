@@ -64,6 +64,7 @@ export interface CaptureScreenshotOptions {
   pageUrl?: string;
   fullPage?: boolean;
   hoverNodeId?: string;
+  reloadPage?: boolean;
   devtoolsUrl?: string;
   timeoutMs?: number;
 }
@@ -275,6 +276,30 @@ export async function captureChromiumScreenshot(
 
   try {
     await client.call("Page.enable");
+    if (options.reloadPage) {
+      await client.call("Page.reload", { ignoreCache: true });
+      const deadline = Date.now() + timeoutMs;
+      let loaded = false;
+      while (Date.now() < deadline) {
+        try {
+          const state = await client.call<RuntimeEvaluateResponse>(
+            "Runtime.evaluate",
+            {
+              expression: "document.readyState",
+              returnByValue: true,
+            },
+          );
+          if (state.result?.value === "complete") {
+            loaded = true;
+            break;
+          }
+        } catch {
+          // The execution context is briefly unavailable during navigation.
+        }
+        await new Promise((resolve) => setTimeout(resolve, 100));
+      }
+      if (!loaded) throw new Error("Timed out waiting for the page to reload");
+    }
     if (options.hoverNodeId) {
       await client.call("Runtime.enable");
       const nodeId = JSON.stringify(options.hoverNodeId);
@@ -290,6 +315,7 @@ export async function captureChromiumScreenshot(
               if (!handle) throw new Error("No output handle found for node " + nodeId);
               handle.dispatchEvent(new MouseEvent("mouseenter"));
               await new Promise((resolve) => requestAnimationFrame(() => requestAnimationFrame(resolve)));
+              await new Promise((resolve) => setTimeout(resolve, 150));
               return true;
             })()
           `,

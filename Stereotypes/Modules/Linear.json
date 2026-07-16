@@ -3,8 +3,8 @@
   "pythonClassName": "nn.Linear",
   "view": {
     "color": "#4779c4",
-    "width": 140,
-    "height": 60
+    "width": 180,
+    "height": 100
   },
   "params": {
     "in_features": {
