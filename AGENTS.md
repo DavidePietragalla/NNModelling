@@ -12,6 +12,20 @@ Three main packages (pnpm workspace):
 2. **converted/** — Python codegen target (PyTorch + Lightning + Hydra)
 3. **mcp-server/** — MCP server — thin proxy that queries browser diagram state via WebSocket RPC
 
+## NNModelling MCP Skill
+
+The repository provides the project skill
+`.agents/skills/nnmodelling-mcp/SKILL.md`. **Whenever the user asks an agent to
+use NNModelling**—including opening the editor, manipulating a diagram,
+inspecting tensor types, taking screenshots, converting, training, inference,
+or diagnosing the browser/MCP connection—the agent must load and follow
+`$nnmodelling-mcp` before acting.
+
+The skill documents the required browser-backed architecture, safe startup
+order, Chromium DevTools configuration, raw stdio fallback, MCP tools, type and
+screenshot inspection, training workflow, and port-leak diagnostics. Reuse its
+`scripts/nnm-stack.sh` helper instead of reconstructing lifecycle commands.
+
 ### Tech Stack
 
 - **Frontend**: Svelte 5, Svelte Flow (@xyflow/svelte), Vite 8, TypeScript
@@ -81,10 +95,17 @@ NNModelling/
 │   ├── __tests__/              # Vitest test suites
 │   │   ├── helpers.ts          # Test factories (stubWindow, node, edge)
 │   │   ├── nnTree.test.ts      # NNTree regression tests
+│   │   ├── typeEngine.test.ts  # Type inference unit tests
 │   │   ├── utils.test.ts       # checkValidConnection tests
 │   │   ├── BrowserRPCHandler.test.ts  # RPC handler tests
 │   │   ├── undoRedo.test.ts     # Undo/redo snapshot-based tests
-│   │   └── integration/        # Integration test suite (tiered, Python pipeline)
+│   │   ├── expr.test.ts        # Expression tokenizer, parser, evaluator (54 tests)
+│   │       ├── fuzz/               # Fuzz testing (compilability, serialization, operation commutativity)
+│   │       │   ├── helpers.ts
+│   │       │   ├── compilability.test.ts
+│   │       │   ├── serialization.test.ts
+│   │       │   └── operations.test.ts
+│   │       └── integration/        # Integration test suite (tiered, Python pipeline)
 │   │       ├── helpers.ts      # Shared helpers (manifest, uvRun, pipeline stages)
 │   │       ├── smoke.test.ts   # Tier 0: nnTree compilation
 │   │       ├── convert.test.ts # Tier 1: convert.py YAML generation
@@ -100,11 +121,19 @@ NNModelling/
 │   ├── sync/                     # Browser-side RPC handler
 │   │   └── BrowserRPCHandler.ts  # Responds to MCP server RPC calls
 │   ├── nodes/
-│   │   ├── CustomNode.svelte   # Standard NN module node
-│   │   ├── JoinNode.svelte     # Merge node (multi-input)
-│   │   └── SubflowNode.svelte  # Collapsible submodel container
+│   │   ├── CustomNode.svelte   # Standard NN module node (with type error indicator badges)
+│   │   ├── JoinNode.svelte     # Merge node (multi-input) (with type error indicator badges)
+│   │   └── SubflowNode.svelte  # Collapsible submodel container (with type error indicator badges)
 │   ├── conversion/
-│   │   └── nnTree.ts           # Diagram → tree representation
+│   │   ├── nnTree.ts           # Diagram → tree representation
+│   │   ├── tensortypes.ts      # Tensor type model interfaces
+│   │   └── typeEngine.ts       # Constraint-based type inference engine
+│   ├── expr/                     # Mini expression language for computed dims
+│   │   ├── types.ts              # Token, ExprNode, EvalContext, ParseError
+│   │   ├── tokenizer.ts          # String → Token[] lexer ($-prefixed tokens)
+│   │   ├── parser.ts             # Recursive descent parser (precedence, groups, calls)
+│   │   ├── evaluator.ts          # AST evaluator with env/params resolution
+│   │   └── index.ts              # Public API: parseExpr (cached), evaluate
 │   ├── styles/                 # CSS (flowcanvas, node, sidebar, join, subflow, dropdown)
 │   ├── components/
 │   │   ├── Sidebar.svelte      # Node create/edit form
@@ -200,6 +229,7 @@ NNModelling/
 │   │   ├── stereotypes.rst     # All 35 stereotypes with params and examples
 │   │   ├── python_api.rst      # Auto-generated Python API docs
 │   │   ├── typescript_api.rst  # TypeDoc integration page
+│   │   ├── type_system.rst     # Educational tensor type system guide
 │   │   ├── examples.rst        # Walkthrough of all 10 example diagrams
 │   │   └── _static/            # Static assets
 │   └── build/                  # Build output (generated)
@@ -215,7 +245,7 @@ NNModelling/
 - **Pattern**: Pure TS unit tests, no DOM/browser
 - **Real Diagram**: Tests use real `Diagram` class (Svelte `$state.raw` compiled by Vite plugin). Stub `globalThis.window` before construction.
 - **Helpers**: `node(id, stereo, name, params, overrides?)` and `edge(id, source, target, handles?)` for concise fixtures.
-- **Coverage**: **120 tests** — sequential chain, skip/joins, autoencoder, subflow compilation, nested subflows, hidden nodes, error handling, connection validation, Fork node, BrowserRPCHandler, undo/redo, param merging, edge handle defaults, viewport injection
+- **Coverage**: **291 tests passed, 5 skipped** — sequential chain, skip/joins, autoencoder, subflow compilation, nested subflows, hidden nodes, error handling, connection validation, Fork node, type inference (Input, Linear, ReLU, Conv1d, Conv2d, Flatten, Unflatten, MaxPool2d, wildcards, mismatches, edge cases, computed dimensions, param_spread, join type checking, Repeat/HorizontalRepeat subflows, generic subflow recursion, nested subflows, loss nodes, complex modules), BrowserRPCHandler, MCP type serialization, undo/redo, param merging, edge handle defaults, viewport injection, invalid parameter validation, parentId placement, fuzz testing, expression evaluator, dtype validation, advisory warnings, shape suggestions, join input labels, and Einsum shape inference
 
 ### Testing — Integration (Vitest + Python Pipeline)
 
@@ -238,7 +268,7 @@ NNModelling/
 
 - **Framework**: pytest (via `uv run pytest`)
 - **Files**: `converted/src/tests/` — pure Python tests (no TS/Vitest dependency)
-- **Coverage**: **103 Python unit tests** across `test_ops.py` (36), `test_convert.py` (35), `test_base.py` (21), `test_integration.py` (11); **6 Python pipeline tests** in `test_main.py` (2) and `test_infer.py` (4)
+- **Coverage**: **104 non-training Python tests** currently pass across `test_ops.py`, `test_convert.py`, `test_base.py`, and `test_integration.py`; training/inference pipeline tests remain separate because they are slow and may download data.
 - **Fixtures**: NNTree JSON files from `examples/nntrees/` — shared between Python and Vitest integration tests
 
 ### Front-end Data Flow
@@ -293,6 +323,22 @@ MCP Server (thin proxy, no DiagramCore)
 - **StereotypeCore** (core/StereotypeCore.ts) — Pure TypeScript stereotype with dual loader: `loadFromDirectory()` uses Vite's `import.meta.glob` for browser; `loadFromDirectoryNode(path)` uses `fs.readdirSync` for Node.js/MCP server.
 - **Stereotype** (stereotype.ts) — Thin wrapper extending `StereotypeCore`. Delegates to Vite loader via `StereotypeCore.loadFromDirectory()`.
 - **NNTree** (conversion/nnTree.ts) — Converts visual graph to tree representation. Handles sequential chains, joins (multiple parents), loss nodes, and subflow containers with Kahn's topological sort. Subflows are type `"subflow"` with `entryNode` + internal `nodes` map (not flattened to sequential). Supports recursive nested subflows via `compileSubflowGraph`. Output JSON consumed by Python side.
+- **TypeEngine** (conversion/typeEngine.ts) — Constraint-based static tensor type checker. **Fully data-driven** — no hardcoded module names, formula bodies, or constraint checks. Interprets `type_signature` from stereotype JSON. Implements pattern matching with symbolic dimension binding, wildcard capture, param reference resolution, dtype propagation, expression-based computed dims, declarative subflow transforms (`SubflowConfig`), declarative join operations (`JoinConfig`), dtype input validation, advisory warnings, shape suggestions, join input labels, and Einsum shape inference. Phases: computed dims (Phase 2), join checking (Phase 3), subflow inference (Phase 4), editor integration (Phase 5), expression language + declarative configs (Phase 6), type system improvements (Phase 7).
+
+  **Phase 2 (computed dims)**: Supports `computed` dimension patterns via an **expression language** — replacing the old hardcoded formula system (removed `resolveFormula`, `resolveComputedArg`). Conv2d output H/W: `floor(($H + 2*padding - dilation*(kernel_size - 1) - 1)/stride + 1)`. MaxPool2d/AvgPool2d: `floor(($H + 2*padding - kernel_size)/stride + 1)`. Flatten: `$*` (product of captured dims). Unsample: `$H * scale_factor`. All formulas are expression strings in JSON.
+
+  **Phase 3 (join type checking)**: Join nodes with `kind: "join"` undergo multi-input pattern matching. Symbolic unification validates constraints (e.g., `MatMul`: K must match across inputs). Join operations declared via `JoinConfig` (`action: "concat"`, `"element_wise"`, `"matmul"`; `dim_expr` for concat axis). Old hardcoded `resolveConcatDim`/`resolveConcatOutput` methods replaced by expression evaluation of the concat dimension.
+
+  **Phase 4 (subflows + complex modules)**: Subflow containers have recursive type inference via `SubflowConfig`. Declarative actions include `identity`, `infer`, `repeat` (compose the internal transform `iterations` times), and `infer_then_transform` (infer then multiply the last dim for HorizontalRepeat). All stereotypes have `type_signature` or are explicitly handled. Complex module signatures are pure JSON. Loss nodes are conceptual layers and produce a rank-1 batch tensor `[B]`. Fork has wildcard pass-through.
+
+  **Phase 5 (editor integration)**: The TypeEngine is wired into the visual editor. Edge connections, parameter changes, and diagram loads trigger real-time type inference. Errors appear as red badges on nodes and in a panel at the bottom of the Sidebar. Hovering an output handle shows the inferred output shape via tooltip.
+
+  **Phase 6 (expression language + declarative configs)**: Added `front-end/src/expr/` — a mini arithmetic expression language for computed dimensions (`parseExpr` tokenizer → parser → evaluator pipeline) with `$-`prefixed symbolic variables, `$*` wildcard product, 5 built-in functions (`floor`, `ceil`, `abs`, `max`, `min`). All `computed` dims migrated from `formula`+`args` to `expr` across 5 stereotypes (Conv2d, MaxPool2d, AvgPool2d, Flatten, Unsample). Subflow name checks replaced by declarative `SubflowConfig` (`identity`/`infer`/`infer_then_transform`) in Repeat.json and HorizontalRepeat.json. Join constraint checks replaced by declarative `JoinConfig` (`action` + `dim_expr`) in Concat.json. 54 expression tests covering tokenizer, parser, evaluator, round-trip, and errors.
+
+  **Phase 7 (type system improvements)**: Dtype input validation on 7 stereotypes (warnings, not errors), advisory warnings via `Advisory` interface (kernel_size-vs-spatial, param-threshold checks on 4 stereotypes), shape suggestions for unset `param_ref` dimensions matching const input dims, join input labels for clearer error messages (MatMul: A/B, ScaledDotProduct: Q/K/V), and Einsum shape inference via 5-step label-mapping algorithm with 14 test cases. Einsum.json now has a full `type_signature`.
+
+  **Parameter validation**: `resolveParamRef` returns a `ParamResolution` discriminated union (`unset` | `invalid` | `resolved`). Invalid parameter values (e.g. "cazz" for an int param) generate type errors instead of being silently treated as unset.
+- **Tensor Types** (conversion/tensortypes.ts) — Type model: ShapeDimension (const/symbolic/param_ref/wildcard discriminated union), TensorType (shape + dtype), TypeSignature (declarative input/output patterns), TypeEnvironment (symbolic bindings), TypeResult (annotations + errors), ParamResolution (unset/invalid/resolved for parameter validation).
 - **FlowCanvas.svelte** — Main editor component. Renders SvelteFlow canvas, toolbar (Save/Load/Convert), and Sidebar. Three node types: `custom`, `subflow`, `join`.
 - **Sidebar.svelte** — Node create/edit form. Resizable. Updates Diagram state reactively.
 
@@ -322,7 +368,7 @@ The `category` field in every stereotype JSON determines the node's role and han
 | `"Input"` | Network entry point (auto-spawned) | 0 in, 1 out |
 | `"Fork"` | Passthrough for explicit branching inside subflows | 1 in, 1 out |
 | `"Layer"` | Standard module (Linear, Conv2d, ReLU, Dropout, ...) | 1 in, 1 out |
-| `"Loss"` | Loss function / output node (BCELoss, CrossEntropyLoss, ...) | 1 in, 0 out |
+| `"Loss"` | Conceptual loss layer / output node (BCELoss, CrossEntropyLoss, ...) | 1 in, 1 conceptual output |
 | `"Join"` | Multi-input merge node (Addition, Concat, MatMul, ...) | N in, 1 out |
 | `"Subflow"` | Container holding a sub-graph with structural transformation | 1 in, 1 out |
 | `"Module"` | Generic; reserved for future use | Depends |
@@ -337,13 +383,41 @@ Params in stereotype JSON can have `position: "top"` or `"bottom"` for display p
 
 ### Full Stereotype List
 
-**Modules (27):** Input, Linear, Conv2d, ReLU, Tanh, Sigmoid, Softmax, Dropout, BatchNorm1d, BatchNorm2d, LayerNorm, Flatten, MaxPool2d, AvgPool2d, Embedding, MultiheadAttention, Transformer, TransformerEncoderLayer, TransformerDecoderLayer, Unsample, Fork, PositionalEncoding, SequencePool, BCELoss, BCEWithLogitsLoss, CrossEntropyLoss, MSELoss
+**Modules (29):** Input, Linear, Conv1d, Conv2d, ReLU, Tanh, Sigmoid, Softmax, Dropout, BatchNorm1d, BatchNorm2d, LayerNorm, Flatten, Unflatten, MaxPool2d, AvgPool2d, Embedding, MultiheadAttention, Transformer, TransformerEncoderLayer, TransformerDecoderLayer, Unsample, Fork, PositionalEncoding, SequencePool, BCELoss, BCEWithLogitsLoss, CrossEntropyLoss, MSELoss
 
 **Joins (6):** Addition, Einsum, MatMul, ScaledDotProduct, Concat, MaskedScaledDotProduct
 
 **SubFlows (2):** Repeat (iterations param), HorizontalRepeat (n param)
 
 **Ops (11):** Addition, Einsum, MatMul, ScaledDotProduct, Concat, Subflow, Repeat, HorizontalRepeat, MaskedScaledDotProduct, PositionalEncoding, SequencePool
+
+### Type Signatures
+
+Each stereotype JSON can optionally include a `type_signature` field declaring the module's tensor shape contract:
+
+```json
+{
+  "type_signature": {
+    "kind": "module",
+    "input": [
+      { "kind": "symbolic", "name": "$B" },
+      { "kind": "wildcard" },
+      { "kind": "param_ref", "name": "in_features" }
+    ],
+    "output": [
+      { "kind": "symbolic", "name": "$B" },
+      { "kind": "wildcard" },
+      { "kind": "param_ref", "name": "out_features" }
+    ]
+  }
+}
+```
+
+**Dimension kinds**: `const` (literal int), `symbolic` (e.g. `$B` for batch), `param_ref` (references node param), `wildcard` (matches zero or more arbitrary dims), `computed` (expression-based formula), `param_spread` (expands tuple parameter into multiple output dimensions).
+
+**All 36 stereotypes** have type signatures or are explicitly handled. Modules with type_signature JSON: Input, Linear, ReLU, Tanh, Sigmoid, Softmax, Dropout, BatchNorm1d, BatchNorm2d, LayerNorm, Conv1d, Conv2d, MaxPool2d, AvgPool2d, Flatten, Unflatten, Embedding, MultiheadAttention, Transformer, TransformerEncoderLayer, TransformerDecoderLayer, PositionalEncoding, SequencePool, Unsample, Fork, BCELoss, BCEWithLogitsLoss, CrossEntropyLoss, MSELoss (+6 joins: Addition, Concat, MatMul, ScaledDotProduct, MaskedScaledDotProduct, Einsum). Repeat and HorizontalRepeat have subflow-kind signatures handled by engine logic. Einsum uses a declarative `join.action: "einsum"` with a 5-step label-mapping inference algorithm.
+
+The TypeEngine interprets these declarative signatures via constraint-based inference. Adding a new module requires only updating its stereotype JSON — no TypeScript changes needed.
 
 ## Design Requirements
 
@@ -353,7 +427,7 @@ From `analysis/requirements/reqs.md` — the DSL spec:
 
 - **Module** — Receives 1 connection, can output to N nodes. Associated with expression language (code run when token passes through).
 - **Input** — Only outgoing connection, no input.
-- **Output/Loss** — Loss functions or undefined outputs. User chooses model output type.
+- **Output/Loss** — A Loss is conceptually a layer whose result is a rank-1 tensor `[B]`. The editor keeps its output handle so this type remains inspectable and composable in the DSL. The current `converted/` backend still extracts Loss nodes as terminal training objectives; propagating the conceptual output through the generated runtime is an explicit future implementation task.
 - **SubModel** — Loadable from existing model file. Definable inside model. Saveable individually to disk. Nestable (submodels inside submodels).
 
 ### Stereotypes
@@ -496,11 +570,15 @@ Removed server-side state duplication. The server is now a thin proxy:
 | `front-end/src/core/types.ts` | Shared type definitions (DomainEvent, WS messages, configs) |
 | `front-end/src/core/validation.ts` | Standalone connection validation on Edge[] |
 | `front-end/src/conversion/nnTree.ts` | Graph → tree conversion |
+| `front-end/src/conversion/tensortypes.ts` | Tensor type model: ShapeDimension, TensorType, TypeSignature, TypeResult |
+| `front-end/src/conversion/typeEngine.ts` | Constraint-based type inference: pattern matching, symbolic binding, dtype propagation |
 | `front-end/src/sync/BrowserRPCHandler.ts` | Browser-side RPC handler |
+| `docs/designs/tensor-type-system/` | Full architectural design (7 docs): architecture, type model, engine spec, computed dims, join checking, editor integration, review |
 | `front-end/src/FlowCanvas.svelte` | Main editor + toolbar |
 | `front-end/src/Sidebar.svelte` | Node create/edit form |
 | `front-end/src/nodes/SubflowNode.svelte` | Collapsible subflow UI |
 | `front-end/src/utils.ts` | Connection validation |
+| `front-end/src/__tests__/typeEngine.test.ts` | Type inference unit tests (Groups 1-10: basic, computed dims, joins, subflow recursion, complex modules, parentId) |
 | `converted/src/convert.py` | NNTree JSON → Hydra configs |
 | `converted/src/infer.py` | Inference: load trained model, run test set, save predictions/images |
 | `converted/src/net/base.py` | Dynamic LightningModule |
@@ -542,7 +620,7 @@ Removed server-side state duplication. The server is now a thin proxy:
 | `mcp-server/src/pipeline.ts` | Python subprocess interface |
 | `pnpm-workspace.yaml` | pnpm monorepo config |
 
-### Phase 12 — Undo/Redo System (current)
+### Phase 12 — Undo/Redo System
 
 Snapshot-based undo/redo for the visual editor:
 
@@ -568,7 +646,7 @@ Fixed the stereotype category system and rewrote the documentation:
   - Notes section with gotchas (loss nodes, flatten, join ordering, etc.)
 - **No code changes needed**: all category-driven logic uses stereotype name or dedicated flags (`isLoss`, `isInput`, etc.), not raw category strings
 
-### Phase 14 — MCP Sync Fixes (current)
+### Phase 14 — MCP Sync Fixes
 
 Three MCP synchronization bugs fixed, discovered during agent-driven diagram creation:
 
@@ -587,3 +665,62 @@ Three MCP synchronization bugs fixed, discovered during agent-driven diagram cre
 - **`FlowCanvas.svelte`**: Extracts `fitView`/`setCenter` from `useSvelteFlow()` and passes to `BrowserRPCHandler`. Added `$effect` calling `fitView()` on every `graph_changed` event for auto-centering after RPC mutations.
 
 **Test count**: 96 → 120 (+24 tests for param merging, edge handle defaults, viewport injection)
+
+### Phase 15 — Type System Improvements + Documentation
+
+Two type system improvements:
+
+1. **Invalid parameter validation**: Previously, non-numeric parameter values (e.g. "cazz" for `in_features`) were silently treated as "unset", creating symbolic variables instead of reporting errors. Now `resolveParamRef` returns a `ParamResolution` discriminated union (`unset` | `invalid` | `resolved`), and invalid values generate type errors in the Type Check panel.
+
+2. **Output handle alignment**: Fixed output handle centering (was `display: inline-block`, now `width: 100%; display: flex; justify-content: center`). Fixed shape tooltip positioning — always shown above the handle to avoid overlapping with node body.
+
+3. **Educational documentation**: Added `docs2/source/type_system.rst` — a full educational guide to the tensor type system. Covers the problem statement (catching shape errors before PyTorch), example-guided walkthrough (following a tensor through the graph), the five dimension kinds, type signatures for all modules, join type checking, computed dimensions, real-time editor feedback, and phase roadmap. Uses plain language, narrative examples, and formal math only where it helps understanding.
+
+**Test count**: 120 → 146 (+26 tests for invalid parameter validation and other improvements)
+
+### Phase 16 — Type System Phase 4: Subflows + Complex Modules
+
+Completed the type system Phase 4, providing full type coverage across all 35 stereotypes:
+
+- **Subflow recursive inference**: `inferSubflow()` method walks internal subgraph via topological sort. Injects external input type into internal Input node. Supports nested subflows with arbitrary depth. Generic subflows infer their output type from their internal graph's exit node.
+- **Repeat subflow**: Composes the internal subflow type transformation `iterations` times. The count must be an integer greater than or equal to one; shape-changing subflows are supported when consecutive applications type-check.
+- **HorizontalRepeat subflow**: Runs internal graph, then multiplies last dimension by `n` (concat on dim=-1). Error if `n` is unset.
+- **Complex module type signatures**: Added to MultiheadAttention, Transformer, TransformerEncoderLayer, TransformerDecoderLayer (all `[B, L, embed_dim]` → `[B, L, embed_dim]`), PositionalEncoding (`[B, L, D]` → `[B, L, D]` with symbolic D), SequencePool (`[B, L, D]` → `[B, D]` rank reduction), Unsample (computed `upsample_hw` formula for H×scale_factor).
+- **Loss node signatures**: BCELoss, BCEWithLogitsLoss, CrossEntropyLoss, MSELoss accept `[B, *]` input and produce the conceptual rank-1 output shape `[B]`. They retain a source handle in the editor. The `converted/` runtime remains terminal for now and must be extended in a future backend phase to execute and propagate this output consistently.
+- **Fork signature**: Wildcard pass-through — shape-preserving, dtype-preserving.
+- **Einsum**: Only stereotype without a type_signature (gradual typing). Emits warning, propagates unknown type.
+- **Error attribution**: Subflow-internal errors are attributed to the internal node (not the container), preserving the subflow node ID for context.
+- **New upsample_hw formula**: `resolveFormula("upsample_hw", [h, scale])` = h × scale.
+- **Fuzz testing**: Added 3 fuzz suites (compilability, serialization idempotence, operation commutativity) for randomized graph validation.
+- **Test count**: 146 → 170 tests (165 passed, 5 skipped).
+
+### Phase 17 — Expression Language + Declarative Configs
+
+Replaced all hardcoded logic in the TypeEngine with a mini expression language and declarative subflow/join configurations:
+
+- **Expression language**: Created `front-end/src/expr/` — tokenizer, recursive descent parser, AST evaluator, and public API (`parseExpr` with caching, `evaluate`). Grammar supports `$-`prefixed symbolic variables, `$*` wildcard product, 5 built-in functions (`floor`, `ceil`, `abs`, `max`, `min`), standard arithmetic (`+`, `-`, `*`, `/`, `//`, `%`), and grouped expressions.
+- **Removed hardcoded formulas**: Deleted `resolveFormula()` (4 formula bodies) and `resolveComputedArg()` from typeEngine.ts — `conv2d_hw`, `pool2d_hw`, `flatten_prod`, `upsample_hw` replaced by expression strings in JSON.
+- **Migrated 5 stereotypes**: Conv2d, MaxPool2d, AvgPool2d, Flatten, Unsample — all changed from `formula`+`args` to `expr` field in `type_signature`.
+- **Declarative SubflowConfig**: Repeat.json and HorizontalRepeat.json use `subflow.action` (`repeat` / `infer_then_transform`) instead of hardcoded name checks in the engine. Generic subflows default to `action: "infer"`.
+- **Declarative JoinConfig**: Concat.json now uses `join.action: "concat"` with `join.dim_expr` instead of the old hardcoded `constraints.concat` check. Removed `resolveConcatDim()` and `resolveConcatOutput()`.
+- **TypeScript interfaces**: Added `SubflowConfig`, `SubflowTransform`, `JoinConfig` to `tensortypes.ts`. Updated `ShapeDimPattern` to support optional `expr` field alongside legacy `formula`+`args`.
+- **54 expression tests**: Covering tokenizer (numbers, identifiers, dollar-prefixed tokens, whitespace, errors), parser (precedence, grouping, function calls, unary minus, error handling), evaluator (symbolic env, params, wildcard product, unresolved vars), and round-trip parse→evaluate.
+- **All current unit tests pass** (291 passed, 5 skipped), including the later soundness and MCP diagnostic regressions.
+
+### Phase 18 — Type System Improvements II: Dtype, Advisories, Suggestions, Labels, Einsum
+
+Five new type system capabilities (Phases A–E from the design plan):
+
+**Phase A — Dtype input validation**: `type_signature.dtype.input`/`output` added to 7 stereotypes (Embedding, BatchNorm1d, BatchNorm2d, LayerNorm, CrossEntropyLoss, Softmax, Dropout). Engine checks that incoming tensor dtype matches the declared contract, emitting warnings (not errors — PyTorch is forgiving about dtype via autocast). Embedding expects `int64` input tokens; normalization layers expect `float32`.
+
+**Phase B — Advisory warnings (reasonable shape checks)**: `TypeWarning` interface with 4 categories (`dtype`, `shape`, `perf`, `style`). `Advisory` interface for declarative conditions in stereotype JSON. `evaluateAdvisory()` with two strategies: kernel_size-vs-spatial dimension check (Conv2d, Conv1d, MaxPool2d) and param-threshold comparison (Dropout p > 0.5). 4 stereotypes have advisories. Warnings flow through `TypeResult.warnings`.
+
+**Phase C — Shape suggestions for unset parameters**: `TypeSuggestion` interface. When a `param_ref` resolves as `"unset"` and the corresponding input dimension is `const`, the engine suggests filling it (e.g. "suggest in_features=784"). `patternMatch()` accepts optional `suggestions` out-parameter. Suggestions flow through `TypeResult.suggestions`.
+
+**Phase D — Join input labels for better error messages**: `input_labels` field on `JoinConfig`. MatMul labels inputs `"A"/"B"`, ScaledDotProduct labels `"Q"/"K"/"V"`, MaskedScaledDotProduct labels `"Q"/"K"/"V"/"mask"`. Error messages now read e.g. "A mismatch" instead of "Input 0 mismatch".
+
+**Phase E — Einsum shape inference**: `JoinConfig.action: "einsum"` with `einsum_param` field. `inferEinsumShape()` implements a 5-step label-mapping algorithm: parse equation, validate arity/ranks, determine output labels (explicit `->` or implicit single-occurrence), map labels to input dims, unify shared labels. Rejects ellipsis `...` with explicit error. 14 test cases covering matmul (batched and simple), contraction, trace, diagonal, implicit output, 3-input chains, arity/rank/label mismatch errors, empty equation, ellipsis rejection, and conflicting dims. Einsum.json now has a full `type_signature` with `join.action: "einsum"`.
+
+**Historical test count for this phase**: 225 → 269 (+44); the current suite has grown further to 291 passing tests.
+
+**Files changed**: `tensortypes.ts` (TypeWarning, TypeSuggestion, Advisory, JoinConfig.input_labels/einsum_param, TypeResult.warnings/suggestions), `typeEngine.ts` (dtype validation, evaluateAdvisory, inferEinsumShape, patternMatch suggestions out-param), `typeEngine.test.ts` (44 new tests), 7 stereotype JSONs (dtype), 4 JSONs (advisories), 4 JSONs (input_labels + Einsum type_signature)

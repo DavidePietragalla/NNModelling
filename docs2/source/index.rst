@@ -26,6 +26,7 @@ The project consists of three main packages:
    stereotypes
    python_api
    typescript_api
+   type_system
    examples
    license
 

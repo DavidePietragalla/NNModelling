@@ -142,9 +142,7 @@ if (shouldRun) {
     });
   });
 } else {
-  describe("Convert", () => {
-    it("skipped — NNM_TIER is not 'convert' or 'all'", () => {
-      expect(true).toBe(true);
-    });
+  describe.skip("Convert tier disabled", () => {
+    it("runs only when NNM_TIER is convert or all", () => {});
   });
 }

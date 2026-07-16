@@ -20,9 +20,8 @@ MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.
   } from "@xyflow/svelte";
   import { type Node } from "@xyflow/svelte";
   import { getContext } from "svelte";
-  import type { DiagramCore } from "../core/DiagramCore";
-
-  const diagram = getContext<DiagramCore>("diagram");
+  import { DIAGRAM_CONTEXT_KEY, type Diagram } from "../Diagram.svelte";
+  import { getNodeDiagnosticSummary } from "../conversion/typeDiagnostics";
 
   type SubflowData = {
     label: string;
@@ -35,6 +34,7 @@ MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.
   type MySubflowNode = Node<SubflowData, "subflow">;
 
   let { data, selected, id }: NodeProps<MySubflowNode> = $props();
+  const diagram = getContext<Diagram>(DIAGRAM_CONTEXT_KEY);
 
   let topParams = $derived(
     Object.entries(data.params || {}).filter(
@@ -47,6 +47,18 @@ MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.
       ([_, p]: any) => p?.position === "bottom",
     ),
   );
+
+  function focusInSidebar() {
+    diagram.nodes = diagram.nodes.map((n) => ({
+      ...n,
+      selected: n.id === id,
+    }));
+  }
+
+  let nodeDiagnostic = $derived(
+    getNodeDiagnosticSummary(diagram?.typeResult ?? null, id),
+  );
+
 </script>
 
 <NodeResizer
@@ -55,9 +67,9 @@ MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.
   isVisible={selected}
 />
 
-<Handle type="target" position={Position.Top} />
+<Handle type="target" id="in" position={Position.Top} />
 
-<div class="subflow-wrapper" class:collapsed={data.isCollapsed}>
+<div class="subflow-wrapper" class:collapsed={data.isCollapsed} style="position: relative;">
   <div
     class="subflow-header"
     style:background={String(data.color || "#007bff")}
@@ -94,9 +106,15 @@ MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.
       {/each}
     </div>
   {/if}
+
+  {#if nodeDiagnostic}
+    <div class="node-indicator {nodeDiagnostic.severity}" title={nodeDiagnostic.message}>
+      {nodeDiagnostic.severity === "suggestion" ? "?" : "!"}
+    </div>
+  {/if}
 </div>
 
-<Handle type="source" position={Position.Bottom} />
+<Handle type="source" id="out" position={Position.Bottom} />
 
 <style>
   @import "../styles/subflow.css";

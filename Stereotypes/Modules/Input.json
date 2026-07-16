@@ -8,8 +8,19 @@
   },
   "params": {
     "out_features": {
-      "type": "int",
+      "type": "int | tuple",
       "default": "784"
+    }
+  },
+  "type_signature": {
+    "kind": "module",
+    "input": [],
+    "output": [
+      { "kind": "symbolic", "name": "$B" },
+      { "kind": "param_spread", "param": "out_features" }
+    ],
+    "dtype": {
+      "output": "float32"
     }
   }
 }

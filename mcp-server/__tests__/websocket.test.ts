@@ -398,6 +398,18 @@ describe("BrowserRPCClient - multi-tab", () => {
 });
 
 describe("BrowserRPCClient - close", () => {
+  it("close() releases the listening port before resolving", async () => {
+    const port = await findAvailablePort();
+    const client = new BrowserRPCClient({ port });
+
+    await client.start();
+    await client.close();
+
+    const replacement = new BrowserRPCClient({ port });
+    await expect(replacement.start()).resolves.toBeUndefined();
+    await replacement.close();
+  });
+
   it("close() shuts down server and rejects pending calls", async () => {
     const port = await findAvailablePort();
     const client = new BrowserRPCClient({

@@ -16,6 +16,7 @@ MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.
   import type { Diagram } from "../Diagram.svelte";
   import type { Stereotype } from "../stereotype";
   import type { Node } from "@xyflow/svelte";
+  import type { TypeSuggestion } from "../conversion/tensortypes";
 
   interface Props {
     diagram: Diagram;
@@ -67,6 +68,16 @@ MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.
   }
 
   let lastLoadedId = $state<string | null>(null);
+
+  // --- TYPE CHECK - Debounced inference on param change ---
+  let typeCheckTimer: ReturnType<typeof setTimeout>;
+
+  function scheduleTypeCheck() {
+    clearTimeout(typeCheckTimer);
+    typeCheckTimer = setTimeout(() => {
+      diagram.refreshTypes();
+    }, 300);
+  }
 
   $effect(() => {
     const id = selectedNode?.id ?? null;
@@ -139,6 +150,7 @@ MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.
       }
     }
     form.params = initialValues;
+    scheduleTypeCheck();
   }
 
   function onSubflowStereotypeChange(e: Event) {
@@ -157,6 +169,7 @@ MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.
       initialValues[key] = { value: prop.default, position: prop.position };
     }
     form.params = initialValues;
+    scheduleTypeCheck();
   }
 
   function handleCreate() {
@@ -180,7 +193,44 @@ MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.
       });
     }
     resetForm();
+    scheduleTypeCheck();
   }
+
+  function getNodeLabel(nodeId: string): string {
+    const n = diagram.nodes.find(node => node.id === nodeId);
+    if (!n) return nodeId;
+    return (n.data as Record<string, unknown>)?.name as string ?? (n.data as Record<string, unknown>)?.stereotype as string ?? nodeId;
+  }
+
+  function selectDiagnosticNode(nodeId: string) {
+    if (!diagram.nodes.some((node) => node.id === nodeId)) return;
+    diagram.nodes = diagram.nodes.map((node) => ({
+      ...node,
+      selected: node.id === nodeId,
+    }));
+  }
+
+  function applySuggestion(suggestion: TypeSuggestion) {
+    const target = diagram.getNodeById(suggestion.nodeId);
+    if (!target) return;
+    const params = (target.data.params as Record<string, Record<string, unknown>>) ?? {};
+    const existing = params[suggestion.param] ?? {};
+    diagram.updateModule(suggestion.nodeId, {
+      params: {
+        ...params,
+        [suggestion.param]: {
+          ...existing,
+          value: String(suggestion.value),
+        },
+      },
+    });
+  }
+
+  let diagnosticCount = $derived(
+    (diagram.typeResult?.errors.length ?? 0) +
+      (diagram.typeResult?.warnings.length ?? 0) +
+      (diagram.typeResult?.suggestions.length ?? 0),
+  );
 
   function handleManualUpdate() {
     if (isEditing && selectedNode) {
@@ -208,12 +258,11 @@ MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.
           params: { ...form.params }
         });
       }
+      scheduleTypeCheck();
     }
   }
 
- function handleLiveUpdate() {
-    handleManualUpdate();
-  } 
+ 
 </script>
 
 {#if isOpen}
@@ -237,15 +286,15 @@ MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.
     <div class="form-container">
       <label>
         {isSubflow ? "Etichetta Sottografo" : "Nome"}
-        <input type="text" bind:value={form.name} oninput={handleLiveUpdate} />
+        <input type="text" bind:value={form.name} oninput={handleManualUpdate} />
       </label>
 
       <div class="row">
         {#if !isSubflow || (isSubflow && selection !== null)}
-          <label>Colore <input type="color" bind:value={form.color} oninput={handleLiveUpdate} /></label>
+          <label>Colore <input type="color" bind:value={form.color} oninput={handleManualUpdate} /></label>
         {/if}
-        <label>Width <input type="number" bind:value={form.width} oninput={handleLiveUpdate} /></label>
-        <label>Height <input type="number" bind:value={form.height} oninput={handleLiveUpdate} /></label>
+        <label>Width <input type="number" bind:value={form.width} oninput={handleManualUpdate} /></label>
+        <label>Height <input type="number" bind:value={form.height} oninput={handleManualUpdate} /></label>
       </div>
 
       {#if isSubflow}
@@ -265,7 +314,7 @@ MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.
             {#each Object.entries(selection.parameters || {}) as [key, config]}
               <div class="param-row">
                 <label for={key}>{key}</label>
-                <input type="text" id={key} bind:value={form.params[key].value} oninput={handleLiveUpdate} />
+                <input type="text" id={key} bind:value={form.params[key].value} oninput={handleManualUpdate} />
               </div>
             {/each}
           </div>
@@ -284,7 +333,7 @@ MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.
             {#each Object.entries(selection.parameters || {}) as [key, config]}
               <div class="param-row">
                 <label for={key}>{key}</label>
-                <input type="text" id={key} bind:value={form.params[key].value} oninput={handleLiveUpdate} />
+                <input type="text" id={key} bind:value={form.params[key].value} oninput={handleManualUpdate} />
               </div>
             {/each}
           </div>
@@ -300,9 +349,113 @@ MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.
       {/if}
       
     </div>
+
+    {#if diagram.typeResult}
+      <div class="type-error-panel">
+        <div class="type-error-panel-header">
+          Type Check ({diagnosticCount} issues)
+        </div>
+        {#if diagnosticCount === 0}
+          <div class="type-errors-empty">No type errors or warnings.</div>
+        {:else}
+          {#each diagram.typeResult.errors as err}
+            <!-- svelte-ignore a11y_no_static_element_interactions a11y_click_events_have_key_events -->
+            <div class="type-error-item {err.severity}" onclick={() => selectDiagnosticNode(err.nodeId)} onkeydown={(e) => { if (e.key === 'Enter' || e.key === ' ') selectDiagnosticNode(err.nodeId); }} role="button" tabindex="0">
+              <span class="type-error-icon">{err.severity === 'error' ? '❌' : '⚠️'}</span>
+              <div class="type-error-text">
+                <span class="type-error-node">{getNodeLabel(err.nodeId)}</span>
+                <span class="type-error-msg">{err.message}</span>
+              </div>
+            </div>
+          {/each}
+
+          {#each diagram.typeResult.warnings as warning}
+            <div class="type-error-item warning" onclick={() => selectDiagnosticNode(warning.nodeId)} onkeydown={(e) => { if (e.key === 'Enter' || e.key === ' ') selectDiagnosticNode(warning.nodeId); }} role="button" tabindex="0">
+              <span class="type-error-icon">⚠️</span>
+              <div class="type-error-text">
+                <span class="type-error-node">{getNodeLabel(warning.nodeId)} · {warning.kind}</span>
+                <span class="type-error-msg">{warning.message}</span>
+              </div>
+            </div>
+          {/each}
+
+          {#each diagram.typeResult.suggestions as suggestion}
+            <div class="type-error-item suggestion" onclick={() => selectDiagnosticNode(suggestion.nodeId)} onkeydown={(e) => { if (e.key === 'Enter' || e.key === ' ') selectDiagnosticNode(suggestion.nodeId); }} role="button" tabindex="0">
+              <span class="type-error-icon">💡</span>
+              <div class="type-error-text">
+                <span class="type-error-node">{getNodeLabel(suggestion.nodeId)} · {suggestion.param}</span>
+                <span class="type-error-msg">Set to {suggestion.value}: {suggestion.reason}</span>
+                <button class="apply-suggestion-btn" onclick={(event) => { event.stopPropagation(); applySuggestion(suggestion); }}>
+                  Applica
+                </button>
+              </div>
+            </div>
+          {/each}
+        {/if}
+      </div>
+    {/if}
+
   </aside>
 {/if}
 
 <style>
   @import "../styles/sidebar.css";
+
+  .type-error-panel {
+    margin-top: 16px;
+    border-top: 1px solid #e5e7eb;
+    padding-top: 8px;
+    padding-left: 8px;
+    padding-right: 8px;
+  }
+  .type-error-panel-header {
+    font-weight: 600;
+    font-size: 0.85rem;
+    margin-bottom: 6px;
+  }
+  .type-errors-empty {
+    font-style: italic;
+    color: #6b7280;
+    font-size: 0.8rem;
+  }
+  .type-error-item {
+    display: flex;
+    align-items: flex-start;
+    gap: 6px;
+    padding: 3px 0;
+    cursor: pointer;
+    font-size: 0.8rem;
+  }
+  .type-error-item:hover {
+    background: #f3f4f6;
+  }
+  .type-error-item.error .type-error-msg {
+    color: #dc2626;
+  }
+  .type-error-item.warning .type-error-msg {
+    color: #f59e0b;
+  }
+  .type-error-item.suggestion .type-error-msg {
+    color: #2563eb;
+  }
+  .type-error-icon {
+    flex-shrink: 0;
+  }
+  .type-error-text {
+    display: flex;
+    flex-direction: column;
+  }
+  .type-error-node {
+    font-weight: 600;
+  }
+  .apply-suggestion-btn {
+    align-self: flex-start;
+    margin-top: 4px;
+    padding: 3px 8px;
+    border: 1px solid #2563eb;
+    border-radius: 4px;
+    background: #eff6ff;
+    color: #1d4ed8;
+    cursor: pointer;
+  }
 </style>

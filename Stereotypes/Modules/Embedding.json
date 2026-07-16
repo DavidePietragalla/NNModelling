@@ -43,5 +43,18 @@
       "type": "str",
       "default": "None"
     }
+  },
+  "type_signature": {
+    "kind": "module",
+    "dtype": { "input": "int64", "output": "float32" },
+    "input": [
+      { "kind": "symbolic", "name": "$B" },
+      { "kind": "symbolic", "name": "#L" }
+    ],
+    "output": [
+      { "kind": "symbolic", "name": "$B" },
+      { "kind": "symbolic", "name": "#L" },
+      { "kind": "param_ref", "name": "embedding_dim" }
+    ]
   }
 }

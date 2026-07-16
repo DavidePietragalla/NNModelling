@@ -14,6 +14,14 @@
         "tsx",
         "mcp-server/src/index.ts"
       ]
+    },
+    "glimpse-mcp": {
+      "type": "local",
+      "command": [
+        "npx",
+        "-y",
+        "glimpse-mcp"
+      ]
     }
   }
 }

@@ -125,10 +125,8 @@ if (shouldRun) {
   const targets = allTargets.filter((t) => t.entry.trainable);
 
   if (!PYTHON_AVAILABLE) {
-    describe("Forward", () => {
-      it("skipped — Python environment (uv) not available", () => {
-        expect(true).toBe(true);
-      });
+    describe.skip("Forward — Python environment unavailable", () => {
+      it("requires uv and the converted Python environment", () => {});
     });
   } else {
     describe.each(targets)(
@@ -244,9 +242,7 @@ if (shouldRun) {
     );
   }
 } else {
-  describe("Forward", () => {
-    it("skipped — NNM_TIER is not 'forward' or 'all'", () => {
-      expect(true).toBe(true);
-    });
+  describe.skip("Forward tier disabled", () => {
+    it("runs only when NNM_TIER is forward or all", () => {});
   });
 }

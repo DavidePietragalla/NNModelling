@@ -60,6 +60,8 @@ export interface DiagramEntry {
   numClasses?: number;
   taskType: "classification" | "regression";
   trainable: boolean;
+  /** Included in the default fast training/inference matrix. */
+  trainingSmoke?: boolean;
   description: string;
 }
 
@@ -74,6 +76,8 @@ export interface SpawnResult {
   exitCode: number;
   stdout: string;
   stderr: string;
+  signal?: NodeJS.Signals | null;
+  error?: string;
 }
 
 export interface NamedEntry {
@@ -83,9 +87,12 @@ export interface NamedEntry {
 
 export interface TrainResult {
   exitCode: number;
-  ckptDir: string;
+  outputDir: string;
+  weightsPath: string;
   stdout: string;
   stderr: string;
+  signal?: NodeJS.Signals | null;
+  error?: string;
 }
 
 // ---------------------------------------------------------------------------
@@ -124,7 +131,7 @@ export function getTargetDiagrams(
 
   if (tier === "train" || tier === "infer") {
     return Object.entries(diagrams)
-      .filter(([_, entry]) => entry.trainable)
+      .filter(([_, entry]) => entry.trainable && entry.trainingSmoke === true)
       .map(([name, entry]) => ({ name, entry }));
   }
 
@@ -191,6 +198,8 @@ export function uvRun(
     exitCode: result.status ?? -1,
     stdout: result.stdout || "",
     stderr: result.stderr || "",
+    signal: result.signal,
+    error: result.error?.message,
   };
 }
 
@@ -247,7 +256,7 @@ export const EXPECTED_YAML_FILES = [
 
 /**
  * Run main.py training with a Hydra config dir.
- * Returns { exitCode, ckptDir, stdout, stderr }.
+ * Every run writes checkpoints and weights into its own output directory.
  */
 export function runTraining(
   cfgDir: string,
@@ -256,19 +265,25 @@ export function runTraining(
     fastDevRun?: boolean;
     device?: string;
     dataset?: string;
+    outputDir?: string;
     timeout?: number;
   },
 ): TrainResult {
   const device = options?.device || process.env.NNM_DEVICE || "cpu";
+  const outputDir = options?.outputDir || resolve(dirname(cfgDir), "training-output");
+  mkdirSync(outputDir, { recursive: true });
   const overrides: string[] = [
     `trainer.accelerator=${device}`,
-    `trainer.devices=${device === "gpu" ? "auto" : "1"}`,
+    `+trainer.devices=${device === "gpu" ? "auto" : "1"}`,
     `+trainer.enable_progress_bar=false`,
+    `+trainer.default_root_dir=${outputDir}`,
     `+wandb.mode=${process.env.NNM_WANDB_MODE || "disabled"}`,
+    `hydra.run.dir=${outputDir}`,
+    "hydra.job.chdir=true",
   ];
 
   if (options?.fastDevRun) {
-    overrides.push("trainer.fast_dev_run=true");
+    overrides.push("+trainer.fast_dev_run=true");
   } else if (options?.maxEpochs) {
     overrides.push(`trainer.max_epochs=${options.maxEpochs}`);
   }
@@ -280,21 +295,38 @@ export function runTraining(
   const args = [
     "python",
     "src/main.py",
-    `--config-dir=${cfgDir}`,
-    "--config-name=base",
+    "--config-path",
+    cfgDir,
+    "--config-name",
+    "base",
     ...overrides,
   ];
 
   const result = uvRun(args, { timeout: options?.timeout ?? 600_000 });
 
-  // Training saves weights.pt to CWD (the directory uv is run from)
-  const ckptDir = CONVERTED_DIR;
   return {
-    exitCode: result.exitCode,
-    ckptDir,
-    stdout: result.stdout,
-    stderr: result.stderr,
+    ...result,
+    outputDir,
+    weightsPath: join(outputDir, "weights.pt"),
   };
+}
+
+/** Compose the generated Hydra config without starting a training run. */
+export function composeHydraConfig(
+  cfgDir: string,
+  overrides: string[] = [],
+): SpawnResult {
+  return uvRun([
+    "python",
+    "src/main.py",
+    "--config-path",
+    cfgDir,
+    "--config-name",
+    "base",
+    "--cfg",
+    "job",
+    ...overrides,
+  ]);
 }
 
 /**
@@ -317,14 +349,18 @@ export function runInference(
   const args = [
     "python",
     "src/infer.py",
-    `--config-path=${cfgDir}`,
-    `--config-name=${options?.configName || "base"}`,
-    `--weights=${ckptPath}`,
-    `--output=${outPath}`,
+    "--config-path",
+    cfgDir,
+    "--config-name",
+    options?.configName || "base",
+    "--weights",
+    ckptPath,
+    "--output",
+    outPath,
   ];
 
   if (options?.imageDir) {
-    args.push(`--image-dir=${options.imageDir}`);
+    args.push("--image-dir", options.imageDir);
   }
 
   return uvRun(args, { timeout: options?.timeout ?? 300_000 });

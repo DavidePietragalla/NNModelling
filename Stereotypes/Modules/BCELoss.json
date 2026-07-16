@@ -24,5 +24,16 @@
       "type": "str",
       "default": "mean"
     }
+  },
+  "type_signature": {
+    "kind": "module",
+    "input": [
+      { "kind": "symbolic", "name": "$B" },
+      { "kind": "wildcard" }
+    ],
+    "output": [
+      { "kind": "symbolic", "name": "$B" }
+    ],
+    "dtype": { "output": "float32" }
   }
 }

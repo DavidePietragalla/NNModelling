@@ -23,11 +23,24 @@
  * Environment variables:
  *   NNM_WS_PORT    — WebSocket server port (default: 9339)
  *   NNM_STEREOTYPES — Override path to Stereotypes directory
+ *   NNM_CDP_URL     — Chromium DevTools HTTP URL (default: http://127.0.0.1:9223)
+ *   NNM_FRONTEND_URL — Preferred frontend page URL for screenshots
  */
 
 import { StdioServerTransport } from "@modelcontextprotocol/sdk/server/stdio.js";
 import { resolve } from "path";
-import { createServer } from "./server";
+import { createServer } from "./server.js";
+
+function parseWebSocketPort(value: string | undefined): number | undefined {
+  if (value === undefined) return undefined;
+
+  const port = Number(value);
+  if (!Number.isInteger(port) || port < 1 || port > 65535) {
+    throw new Error(`Invalid NNM_WS_PORT '${value}'`);
+  }
+
+  return port;
+}
 
 async function main(): Promise<void> {
   // Resolve the Stereotypes directory relative to this source file
@@ -39,7 +52,8 @@ async function main(): Promise<void> {
   console.error(`[nnmodelling-mcp] Stereotypes dir: ${stereotypesDir}`);
 
   // ── Create the MCP server with full tool/resource registration ──────
-  const { server, ctx, browser } = await createServer(stereotypesDir);
+  const wsPort = parseWebSocketPort(process.env.NNM_WS_PORT);
+  const { server, browser } = await createServer(stereotypesDir, { wsPort });
 
   // ── Connect stdio transport (MCP protocol) ─────────────────────────
   const transport = new StdioServerTransport();
@@ -48,11 +62,20 @@ async function main(): Promise<void> {
   console.error("[nnmodelling-mcp] Server connected via stdio");
 
   // ── Graceful shutdown ──────────────────────────────────────────────
-  const shutdown = async (): Promise<void> => {
-    console.error("[nnmodelling-mcp] Shutting down...");
+  let shuttingDown = false;
+
+  const shutdown = async (reason: string): Promise<void> => {
+    if (shuttingDown) return;
+    shuttingDown = true;
+
+    console.error(`[nnmodelling-mcp] Shutting down (${reason})...`);
 
     // Close browser WebSocket connection
-    browser.close();
+    try {
+      await browser.close();
+    } catch (err) {
+      console.error("[nnmodelling-mcp] Browser WebSocket close error:", err);
+    }
 
     // Close MCP server (returns Promise<void>)
     try {
@@ -61,11 +84,13 @@ async function main(): Promise<void> {
       console.error("[nnmodelling-mcp] MCP server close error:", err);
     }
 
-    process.exit(0);
+    process.exitCode = 0;
   };
 
-  process.on("SIGTERM", shutdown);
-  process.on("SIGINT", shutdown);
+  process.once("SIGTERM", () => void shutdown("SIGTERM"));
+  process.once("SIGINT", () => void shutdown("SIGINT"));
+  process.stdin.once("end", () => void shutdown("stdin ended"));
+  process.stdin.once("close", () => void shutdown("stdin closed"));
 }
 
 main().catch((err: unknown) => {

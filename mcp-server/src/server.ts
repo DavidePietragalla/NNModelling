@@ -16,7 +16,7 @@
  * registers all tools, and returns the MCP Server instance and context.
  *
  * This is the wiring hub of the NNModelling MCP server. It:
- *   1. Loads stereotypes via StereotypeCore.loadFromDirectoryNode
+ *   1. Loads the stereotype metadata required by the MCP fallback cache
  *   2. Creates a BrowserRPCClient for browser communication
  *   3. Creates the MCP Server instance
  *   4. Registers all tools from tools/*.ts (iterates exports, finds {schema,handler} pairs)
@@ -32,24 +32,24 @@ import {
   CallToolRequestSchema,
   ListToolsRequestSchema,
 } from "@modelcontextprotocol/sdk/types.js";
-import { StereotypeCore } from "@nnmodelling/front-end/core/StereotypeCore";
 import { readdirSync, readFileSync } from "fs";
 import { join } from "path";
-import * as pipelineMod from "./pipeline";
-import { BrowserRPCClient } from "./browser-client";
+import * as pipelineMod from "./pipeline.js";
+import { BrowserRPCClient } from "./browser-client.js";
 
 // ── Import all tool modules ─────────────────────────────────────────────
 // Each file exports multiple named tools (e.g. create_node, delete_nodes).
 // We iterate over Object.entries to discover them automatically.
-import * as graphTools from "./tools/graph";
-import * as paramTools from "./tools/parameters";
-import * as selectionTools from "./tools/selection";
-import * as canvasTools from "./tools/canvas";
-import * as validationTools from "./tools/validation";
-import * as conversionTools from "./tools/conversion";
-import * as inspectionTools from "./tools/inspection";
-import * as lifecycleTools from "./tools/lifecycle";
-import * as connectionTools from "./tools/connection";
+import * as graphTools from "./tools/graph.js";
+import * as paramTools from "./tools/parameters.js";
+import * as selectionTools from "./tools/selection.js";
+import * as canvasTools from "./tools/canvas.js";
+import * as validationTools from "./tools/validation.js";
+import * as conversionTools from "./tools/conversion.js";
+import * as inspectionTools from "./tools/inspection.js";
+import * as lifecycleTools from "./tools/lifecycle.js";
+import * as connectionTools from "./tools/connection.js";
+import * as screenshotTools from "./tools/screenshot.js";
 
 // ── ServerContext ───────────────────────────────────────────────────────
 
@@ -63,7 +63,27 @@ import * as connectionTools from "./tools/connection";
 export interface ServerContext {
   browser: BrowserRPCClient;
   pipeline: typeof pipelineMod;
-  stereotypes: StereotypeCore[];
+  stereotypes: CachedStereotype[];
+}
+
+interface CachedStereotype {
+  name: string;
+  category: string;
+  pythonClassName: string;
+  isJoin: boolean;
+  isInput: boolean;
+  isLoss: boolean;
+  isSubFlow: boolean;
+  parameters: Record<string, {
+    type: string;
+    default: string;
+    position?: "top" | "bottom";
+  }>;
+  view: { color: string; width: number; height: number };
+}
+
+export interface CreateServerOptions {
+  wsPort?: number;
 }
 
 // ── Internal Types ──────────────────────────────────────────────────────
@@ -115,8 +135,8 @@ function discoverTools(module: Record<string, unknown>): Map<string, MCPToolEntr
 // ESM. This local function uses statically-imported readdirSync/readFileSync
 // to achieve the same result without CJS interop.
 
-function loadStereotypesFromDirectory(stereotypesDir: string): StereotypeCore[] {
-  const loaded: StereotypeCore[] = [];
+function loadStereotypesFromDirectory(stereotypesDir: string): CachedStereotype[] {
+  const loaded: CachedStereotype[] = [];
 
   function walkDir(dir: string): void {
     const entries = readdirSync(dir, { withFileTypes: true });
@@ -127,8 +147,39 @@ function loadStereotypesFromDirectory(stereotypesDir: string): StereotypeCore[] 
       } else if (entry.name.endsWith(".json")) {
         try {
           const content = readFileSync(fullPath, "utf-8");
-          const jsonData = JSON.parse(content);
-          loaded.push(new StereotypeCore(fullPath, jsonData));
+          const jsonData = JSON.parse(content) as Record<string, any>;
+          const name = entry.name.slice(0, -".json".length);
+          const category = jsonData.category || "Uncategorized";
+          const rawView = jsonData.view || {};
+          const parameters = Object.fromEntries(
+            Object.entries(jsonData.params || {}).map(([key, raw]) => {
+              const parameter = raw as Record<string, unknown>;
+              const position = parameter.position === "top" || parameter.position === "bottom"
+                ? parameter.position as "top" | "bottom"
+                : undefined;
+              return [key, {
+                type: String(parameter.type || "string"),
+                default: String(parameter.default || ""),
+                ...(position ? { position } : {}),
+              }];
+            }),
+          );
+
+          loaded.push({
+            name,
+            category,
+            pythonClassName: jsonData.pythonClassName || "",
+            isJoin: category === "Join" || fullPath.includes("/Joins/"),
+            isInput: category === "Input",
+            isLoss: category === "Loss",
+            isSubFlow: category === "Subflow" || fullPath.includes("/SubFlows/"),
+            parameters,
+            view: {
+              color: rawView.color || "#4779c4",
+              width: rawView.width || 140,
+              height: rawView.height || 60,
+            },
+          });
         } catch (e) {
           console.error(`Error loading stereotype from ${fullPath}:`, e);
         }
@@ -151,6 +202,7 @@ function loadStereotypesFromDirectory(stereotypesDir: string): StereotypeCore[] 
  */
 export async function createServer(
   stereotypesDir: string,
+  options: CreateServerOptions = {},
 ): Promise<{ server: Server; ctx: ServerContext; browser: BrowserRPCClient }> {
   // ── Step 1: Load stereotypes (static data) ──────────────────────────
   console.error(`[nnmodelling-mcp] Loading stereotypes from ${stereotypesDir}`);
@@ -158,7 +210,7 @@ export async function createServer(
   console.error(`[nnmodelling-mcp] Loaded ${stereotypes.length} stereotypes`);
 
   // ── Step 2: Create BrowserRPCClient and start listening ────────────
-  const browser = new BrowserRPCClient();
+  const browser = new BrowserRPCClient({ port: options.wsPort });
   await browser.start();
   console.error("[nnmodelling-mcp] Browser WebSocket server ready");
 
@@ -190,6 +242,7 @@ export async function createServer(
     inspectionTools,
     lifecycleTools,
     connectionTools,
+    screenshotTools,
   ] as Record<string, unknown>[];
 
   for (const module of allToolModules) {

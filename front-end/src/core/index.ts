@@ -16,15 +16,9 @@ export { EventBus } from './EventBus';
 export { StereotypeCore } from './StereotypeCore';
 export type {
   DomainEvent,
-  EventCallback,
-  EventBusEvents,
-  WSSnapshotMessage,
-  WSDeltaMessage,
-  DeltaOperation,
-  AppConfig,
-  NetConfig,
-  DatasetConfig,
-  OptimizerConfig,
-  TrainerConfig,
+  Position,
+  NodeConfig,
+  JoinNodeConfig,
+  DiagramCoreSnapshot,
 } from './types';
 export { checkValidConnection } from './validation';

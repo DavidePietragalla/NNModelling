@@ -239,6 +239,22 @@ describe("inspection tools", () => {
     expect(result).toEqual(expectedResult);
   });
 
+  it("get_type_info calls browser with optional node and refresh arguments", async () => {
+    const expectedResult = {
+      annotation: { nodeId: "n1", outputType: { shape: [], dtype: "float32" } },
+      errors: [],
+      warnings: [],
+      suggestions: [],
+    };
+    (mockBrowser.call as ReturnType<typeof vi.fn>).mockResolvedValue(expectedResult);
+
+    const input = { nodeId: "n1", refresh: true };
+    const result = await inspectionTools.get_type_info.handler(ctx, input);
+
+    expect(mockBrowser.call).toHaveBeenCalledWith("get_type_info", input);
+    expect(result).toEqual(expectedResult);
+  });
+
   it("graph_statistics calls browser with correct method", async () => {
     const expectedResult = { nodeCount: 5, edgeCount: 4, typeCounts: {} };
     (mockBrowser.call as ReturnType<typeof vi.fn>).mockResolvedValue(expectedResult);

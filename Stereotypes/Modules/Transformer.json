@@ -67,5 +67,18 @@
       "type": "Any",
       "default": "None"
     }
+  },
+  "type_signature": {
+    "kind": "module",
+    "input": [
+      { "kind": "symbolic", "name": "$B" },
+      { "kind": "symbolic", "name": "#L" },
+      { "kind": "param_ref", "name": "d_model" }
+    ],
+    "output": [
+      { "kind": "symbolic", "name": "$B" },
+      { "kind": "symbolic", "name": "#L" },
+      { "kind": "param_ref", "name": "d_model" }
+    ]
   }
 }

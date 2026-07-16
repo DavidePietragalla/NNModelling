@@ -15,5 +15,20 @@
       "type": "bool",
       "default": "False"
     }
+  },
+  "type_signature": {
+    "kind": "module",
+    "dtype": { "input": "float32", "output": "float32" },
+    "input": [
+      { "kind": "wildcard" }
+    ],
+    "output": [
+      { "kind": "wildcard" }
+    ],
+    "advisories": [{
+      "condition": "p > 0.5",
+      "message": "Dropout rate > 0.5: more than half of activations are dropped",
+      "kind": "perf"
+    }]
   }
 }

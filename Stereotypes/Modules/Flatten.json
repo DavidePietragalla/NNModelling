@@ -15,5 +15,16 @@
       "type": "int",
       "default": "-1"
     }
+  },
+  "type_signature": {
+    "kind": "module",
+    "input": [
+      { "kind": "symbolic", "name": "$B" },
+      { "kind": "wildcard" }
+    ],
+    "output": [
+      { "kind": "symbolic", "name": "$B" },
+      { "kind": "computed", "expr": "$*" }
+    ]
   }
 }

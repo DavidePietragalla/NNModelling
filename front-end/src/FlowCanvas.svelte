@@ -41,12 +41,12 @@ MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.
   import { NNTree } from "./conversion/nnTree";
 
   // 1. Importiamo la classe Diagram
-  import { Diagram } from "./Diagram.svelte";
+  import { Diagram, DIAGRAM_CONTEXT_KEY } from "./Diagram.svelte";
+  import { setContext } from "svelte";
   import { toPng } from "html-to-image";
 
   // Context per SubflowNode — gli permette di chiamare diagram.toggleSubflow
   // senza bisogno di callback nel node data
-  import { setContext } from "svelte";
   import type { DiagramCore } from "./core/DiagramCore";
 
   // RPC handler — receives MCP server requests and dispatches to Diagram
@@ -61,6 +61,7 @@ MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.
   // 2. Istanziamo il nostro "Controller/Model"
   // Grazie a Svelte 5, le sue proprietà interne $state saranno reattive qui dentro!
   const diagram = new Diagram();
+  setContext(DIAGRAM_CONTEXT_KEY, diagram);
 
   // Esponiamo il diagram via context per SubflowNode e altri componenti
   setContext<DiagramCore>("diagram", diagram);
@@ -100,10 +101,10 @@ MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.
 
   // Forziamo il ricalcolo della vista su ogni cambiamento strutturale
   $effect(() => {
-    diagram.events.on("graph_changed", () => {
-      fitView();
+    const unsubscribe = diagram.events.on("graph_changed", () => {
+      fitView({ maxZoom: 1, padding: 0.2 });
     });
-    return () => diagram.events.off("graph_changed");
+    return unsubscribe;
   });
 
   function handleKeyDown(e: KeyboardEvent) {
@@ -124,7 +125,6 @@ MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.
       return;
     }
   }
-
   function getSpawnPosition() {
     // Troviamo il centro della finestra e lo convertiamo in coordinate del canvas
     const center = screenToFlowPosition({
@@ -172,6 +172,19 @@ MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.
   }
 
   async function handleConversion() {
+    const typeResult = diagram.refreshTypes();
+    const blockingErrors = typeResult.errors.filter(
+      (error) => error.severity === "error",
+    );
+    if (blockingErrors.length > 0) {
+      const summary = blockingErrors
+        .slice(0, 5)
+        .map((error) => `${error.nodeId || "graph"}: ${error.message}`)
+        .join("\n");
+      alert(`Conversione bloccata da ${blockingErrors.length} errori di tipo:\n${summary}`);
+      return;
+    }
+
     const nnTree = new NNTree(diagram);
     const data = nnTree.toJson();
 
@@ -224,8 +237,16 @@ MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.
           getInternalNode,
         );
         if (newNodes !== undefined) diagram.nodes = newNodes;
+        diagram.refreshTypes();
+      }}
+      onconnect={() => {
+        diagram.refreshTypes();
+      }}
+      ondelete={() => {
+        diagram.refreshTypes();
       }}
       fitView
+      fitViewOptions={{ maxZoom: 1, padding: 0.2 }}
     >
       <Background />
       <Controls />
@@ -235,7 +256,9 @@ MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.
         >
         <button
           onclick={() => {
-            handleLoadModel(diagram);
+            handleLoadModel(diagram, () => {
+              diagram.refreshTypes();
+            });
             isSidebarOpen = false;
           }}
           class="toolbar-btn">📂 Carica</button

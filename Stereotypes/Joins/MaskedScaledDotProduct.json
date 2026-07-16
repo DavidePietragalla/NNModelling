@@ -8,5 +8,29 @@
     "color": "#e74c3c",
     "width": 30,
     "height": 30
+  },
+  "type_signature": {
+    "kind": "join",
+    "input": [
+      [
+        { "kind": "symbolic", "name": "$B" },
+        { "kind": "symbolic", "name": "#L" },
+        { "kind": "symbolic", "name": "#D" }
+      ],
+      [
+        { "kind": "symbolic", "name": "$B" },
+        { "kind": "symbolic", "name": "#S" },
+        { "kind": "symbolic", "name": "#D" }
+      ]
+    ],
+    "output": [
+      { "kind": "symbolic", "name": "$B" },
+      { "kind": "symbolic", "name": "#L" },
+      { "kind": "symbolic", "name": "#S" }
+    ],
+    "join": {
+      "action": "element_wise",
+      "input_labels": ["Q", "K"]
+    }
   }
 }

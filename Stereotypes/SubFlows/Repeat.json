@@ -12,5 +12,14 @@
       "default": "1",
       "position": "top"
     }
+  },
+  "type_signature": {
+    "kind": "subflow",
+    "subflow": {
+      "action": "repeat",
+      "iterations_param": "iterations"
+    },
+    "input": [{ "kind": "wildcard" }],
+    "output": [{ "kind": "wildcard" }]
   }
 }

@@ -23,6 +23,10 @@
 
 import type { Diagram } from "../Diagram.svelte";
 import { NNTree } from "../conversion/nnTree";
+import {
+  getNodeTypeInfo,
+  serializeTypeResult,
+} from "../conversion/typeDiagnostics";
 import type { Node, Edge } from "@xyflow/svelte";
 
 // ── RPC Types ──────────────────────────────────────────────────────────
@@ -38,6 +42,11 @@ interface RPCResponse {
   result?: unknown;
   error?: { message: string };
 }
+
+// The WebSocket protocol defines OPEN as readyState 1. Keeping the value
+// local makes response dispatch independent of a global WebSocket constructor,
+// which is absent in Node 20 test environments.
+const WEBSOCKET_OPEN = 1;
 
 // ── Viewport Controller Interface ────────────────────────────────────────
 
@@ -142,7 +151,7 @@ export class BrowserRPCHandler {
 
   /** Send a response back through the WebSocket. */
   private sendResponse(response: RPCResponse): void {
-    if (this.ws && this.ws.readyState === WebSocket.OPEN) {
+    if (this.ws && this.ws.readyState === WEBSOCKET_OPEN) {
       this.ws.send(JSON.stringify(response));
     }
   }
@@ -161,6 +170,9 @@ export class BrowserRPCHandler {
           break;
         case "get_node":
           result = this.handleGetNode(params);
+          break;
+        case "get_type_info":
+          result = this.handleGetTypeInfo(params);
           break;
         case "get_edges":
           result = this.handleGetEdges(params);
@@ -302,7 +314,12 @@ export class BrowserRPCHandler {
   // ── Inspection Handlers ─────────────────────────────────────────────
 
   private handleGetGraph(): Record<string, unknown> {
-    return { nodes: this.diagram.nodes, edges: this.diagram.edges };
+    const typeResult = this.diagram.refreshTypes();
+    return {
+      nodes: this.diagram.nodes,
+      edges: this.diagram.edges,
+      typeInfo: serializeTypeResult(typeResult),
+    };
   }
 
   private handleGetNode(params: Record<string, unknown>): Record<string, unknown> {
@@ -310,7 +327,24 @@ export class BrowserRPCHandler {
     if (!nodeId) throw new Error("Missing required parameter: nodeId");
     const node = this.diagram.getNodeById(nodeId);
     if (!node) throw new Error(`Node not found: ${nodeId}`);
-    return node;
+    const typeResult = this.diagram.refreshTypes();
+    return { ...node, typeInfo: getNodeTypeInfo(typeResult, nodeId) };
+  }
+
+  private handleGetTypeInfo(params: Record<string, unknown>): unknown {
+    const nodeId = params.nodeId as string | undefined;
+    if (nodeId && !this.diagram.getNodeById(nodeId)) {
+      throw new Error(`Node not found: ${nodeId}`);
+    }
+
+    const refresh = params.refresh !== false;
+    const typeResult = refresh || !this.diagram.typeResult
+      ? this.diagram.refreshTypes()
+      : this.diagram.typeResult;
+
+    return nodeId
+      ? getNodeTypeInfo(typeResult, nodeId)
+      : serializeTypeResult(typeResult);
   }
 
   private handleGetEdges(params: Record<string, unknown>): { edges: Edge[] } {
@@ -621,9 +655,20 @@ export class BrowserRPCHandler {
 
     const currentParams = node.data.params as Record<string, { value: string }> | undefined;
     const previousValue = currentParams?.[key]?.value;
+    const stereotypeName = node.data.stereotype as string | undefined;
+    const parameterDefinition = stereotypeName
+      ? this.diagram.getStereotype(stereotypeName)?.parameters[key]
+      : undefined;
 
     this.diagram.updateModule(nodeId, {
-      params: { ...(currentParams || {}), [key]: { value } },
+      params: {
+        ...(currentParams || {}),
+        [key]: {
+          ...(parameterDefinition?.position ? { position: parameterDefinition.position } : {}),
+          ...(currentParams?.[key] || {}),
+          value,
+        },
+      },
     });
 
     return { nodeId, key, previousValue: previousValue ?? "", currentValue: value };
@@ -641,6 +686,10 @@ export class BrowserRPCHandler {
     if (!node) throw new Error(`Node not found: ${nodeId}`);
 
     const currentParams = (node.data.params as Record<string, { value: string }>) || {};
+    const stereotypeName = node.data.stereotype as string | undefined;
+    const stereotype = stereotypeName
+      ? this.diagram.getStereotype(stereotypeName)
+      : undefined;
     const updated: Array<{ key: string; previousValue: string; currentValue: string }> = [];
     const unchanged: string[] = [];
 
@@ -652,7 +701,15 @@ export class BrowserRPCHandler {
       } else {
         unchanged.push(key);
       }
-      newParams[key] = { value };
+      // Parameter objects also carry presentation metadata such as
+      // `position: "top" | "bottom"`. Recover it from the stereotype when an
+      // older RPC update has already stripped it from the live node.
+      const parameterDefinition = stereotype?.parameters[key];
+      newParams[key] = {
+        ...(parameterDefinition?.position ? { position: parameterDefinition.position } : {}),
+        ...(newParams[key] || {}),
+        value,
+      };
     }
 
     this.diagram.updateModule(nodeId, { params: newParams });
@@ -833,6 +890,20 @@ export class BrowserRPCHandler {
   // ── Compilation / Serialization Handlers ────────────────────────────
 
   private handleCompileNntree(): Record<string, unknown> {
+    const typeResult = this.diagram.refreshTypes();
+    const blockingErrors = typeResult.errors.filter(
+      (error) => error.severity === "error",
+    );
+    if (blockingErrors.length > 0) {
+      const summary = blockingErrors
+        .slice(0, 5)
+        .map((error) => `${error.nodeId || "graph"}: ${error.message}`)
+        .join("; ");
+      throw new Error(
+        `NNTree compilation blocked by ${blockingErrors.length} type error(s): ${summary}`,
+      );
+    }
+
     const nnTree = new NNTree(this.diagram as any);
     const json = nnTree.toJson();
 

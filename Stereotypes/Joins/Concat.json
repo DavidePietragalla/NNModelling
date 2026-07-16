@@ -12,5 +12,17 @@
       "default": "-1",
       "position": "top"
     }
+  },
+  "type_signature": {
+    "kind": "join",
+    "input": [
+      [{ "kind": "wildcard" }],
+      [{ "kind": "wildcard" }]
+    ],
+    "output": [{ "kind": "wildcard" }],
+    "join": {
+      "action": "concat",
+      "dim_expr": "dim"
+    }
   }
 }

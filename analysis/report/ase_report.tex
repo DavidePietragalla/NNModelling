@@ -6,6 +6,7 @@
 \usepackage{xcolor}
 \usepackage{titlesec}
 \usepackage{amsmath}
+\usepackage{amssymb}
 \usepackage{cite}
 \usepackage{subcaption}
 \usepackage{placeins}
@@ -308,16 +309,21 @@ semantics of the original model.
 
 \paragraph{Loss Nodes}
 
-Loss nodes are treated as terminal elements of the graph.
+In the DSL, a Loss is conceptually a layer. Given a batch of predictions, its
+conceptual output is a rank-one tensor $[B]$, containing one loss value for each
+batch element. The editor therefore retains the source handle and exposes this
+output to static type inspection.
 
-Although represented visually as standard nodes, they are excluded from the execution graph
-and stored separately. Their purpose is to define the optimization objective
+The current Python conversion backend has not implemented this data-flow
+semantics yet. It extracts Loss nodes from the execution graph and stores them
+as terminal optimization objectives
 
 \[
 	L(\hat{y},y),
 \]
 
-used during training.
+used during training. Propagation of the conceptual $[B]$ result through the
+\texttt{converted/} runtime is explicit future work.
 
 \paragraph{Compilation Algorithm}
 
@@ -385,6 +391,333 @@ into Hydra configurations and PyTorch modules.
 
 \pagebreak
 
+\section{Static Tensor Type System}
+
+A fundamental challenge in visual DSLs for neural network design is the lack of compile-time feedback about tensor shape compatibility. In NNModelling, a user may connect a \texttt{Linear} layer expecting 784 input features to a \texttt{Conv2d} layer producing a 3D tensor without any editor-level warning. The shape mismatch is only discovered at runtime when PyTorch raises a dimension error during training.
+
+To address this, we introduce a \textbf{static tensor type system} capable of verifying tensor shapes and dtypes during visual editing and front-end compilation. The type system is integrated into the DSL as a separate verification pass, preserving the existing architecture while extending the language with compile-time safety guarantees.
+
+\subsection{Tensor Types}
+
+A tensor type $\tau$ is a pair consisting of a shape and a dtype:
+
+\[
+	\tau ::= \text{Tensor}(\sigma, \delta)
+\]
+
+where $\sigma$ is a tensor shape and $\delta$ is a tensor dtype (e.g., \texttt{float32}, \texttt{float64}, \texttt{int64}).
+
+\subsection{Shape Dimensions}
+
+A shape $\sigma$ is a finite sequence of dimensions $d_1, d_2, \ldots, d_n$. Each dimension $d$ belongs to one of the following categories:
+
+\[
+	d ::= c \mid x \mid p \mid *
+\]
+
+where:
+\begin{itemize}
+	\item $c \in \mathbb{N}$ is a \textbf{constant} dimension (e.g., $3$, $784$, $1$)
+	\item $x \in \mathcal{X}$ is a \textbf{symbolic} dimension variable (e.g., $B$ for batch size, $C$ for channels, $H$ for height, $W$ for width) --- these represent unknown dimensions whose values are determined during type inference but remain symbolic in the type representation
+	\item $p \in \mathcal{P}$ is a \textbf{parameter reference} (e.g., \texttt{in\_features}, \texttt{out\_channels}) --- these refer to node parameter values that are resolved at inference time
+	\item $*$ is the \textbf{wildcard} dimension, matching zero or more arbitrary dimensions of any size. A wildcard in an input pattern consumes any matching dimensions from the actual tensor; in an output pattern, it reproduces the dimensions consumed during input matching
+\end{itemize}
+
+This representation allows the type system to express shapes that are partially known (containing symbolic variables and wildcards) rather than requiring every dimension to be a concrete integer. This is essential for modeling neural network architectures, where batch size is unknown at definition time and intermediate feature dimensions depend on upstream layers.
+
+\subsection{Typing Context}
+
+The typing context $\Gamma$ is a partial mapping from symbolic dimension names to their resolved dimension values:
+
+\[
+	\Gamma ::= \{ x_1 \mapsto d_1,\; x_2 \mapsto d_2,\; \ldots \}
+\]
+
+The context is populated incrementally during type inference as symbolic dimensions are bound to concrete values. Additionally, $\Gamma$ carries the dtype environment and maintains a mapping from node identifiers to their inferred tensor types.
+
+\subsection{Typing Judgments}
+
+The central judgment form for node-level type inference is:
+
+\[
+	\Gamma, P \vdash M : (\tau_{\text{in}} \rightarrow \tau_{\text{out}})
+\]
+
+meaning: ``in context $\Gamma$ with parameter values $P$, module $M$ maps input type $\tau_{\text{in}}$ to output type $\tau_{\text{out}}$.''
+
+For graph-level inference, we extend the judgment to:
+
+\[
+	\Gamma \vdash G : \Gamma'
+\]
+
+meaning: ``graph $G$ is well-typed, producing the extended environment $\Gamma'$ containing type annotations for every node.''
+
+\subsection{Inference Rules}
+
+The typing rules are defined per module type. Each rule is derived declaratively from the \texttt{type\_signature} field in the module's stereotype JSON, rather than being hardcoded in the inference engine. This data-driven approach ensures that adding a new module requires only extending its stereotype definition, with no changes to the TypeScript implementation.
+
+\paragraph{Input Node}
+
+The Input node is a source in the computation graph. It produces a tensor whose last dimension is determined by its \texttt{out\_features} parameter and whose batch dimension is a fresh symbolic variable:
+
+\[
+	\frac{
+	\text{stereotype}(v) = \text{Input}
+	\qquad
+	P = \text{params}(v)
+	}{
+	\Gamma \vdash v :
+	\text{Tensor}((B,\, P.\text{out\_features}),\, \text{float32})
+	}\]
+
+where $B$ is a fresh symbolic dimension variable introduced into $\Gamma$.
+
+\paragraph{Linear Layer}
+
+A \texttt{Linear} layer with parameters $P$ applies an affine transformation to the last dimension of its input. Given an input tensor of type $\text{Tensor}((B, \alpha_1, \ldots, \alpha_k, F), \delta)$:
+
+\[
+	\frac{
+	\Gamma \vdash x :
+	\text{Tensor}((B, \alpha_1, \ldots, \alpha_k, F), \delta)
+	\qquad
+	F = P.\text{in\_features}
+	}{
+	\Gamma \vdash \text{Linear}(P)(x) :
+	\text{Tensor}((B, \alpha_1, \ldots, \alpha_k, P.\text{out\_features}), \delta)
+	}\]
+
+where $\alpha_1, \ldots, \alpha_k$ are intermediate dimensions matched by a wildcard pattern and carried forward unchanged. The last dimension $F$ must equal the declared \texttt{in\_features} parameter; if this constraint is violated, a type error is emitted. The output preserves the batch dimension, all intermediate dimensions, and the dtype, while the last dimension becomes \texttt{out\_features}.
+
+\paragraph{ReLU Activation}
+
+Activation functions are shape-preserving and dtype-preserving:
+
+\[
+	\frac{
+		\Gamma \vdash x : \text{Tensor}(\sigma, \delta)
+	}{
+		\Gamma \vdash \text{ReLU}(x) : \text{Tensor}(\sigma, \delta)
+	}\]
+
+The same rule applies to all element-wise activation functions (Tanh, Sigmoid, Softmax) and normalization layers (BatchNorm, LayerNorm, Dropout), making their type signatures trivial to add.
+
+\subsection{Constraint-Based Inference Algorithm}
+
+Rather than implementing module-specific typing logic as TypeScript conditionals, the type engine implements a \textbf{constraint generation and constraint solving} approach. This design choice is fundamental to the extensibility of the type system.
+
+The algorithm operates in two phases:
+
+\begin{enumerate}
+	\item \textbf{Constraint Generation}: For each node visited in topological order, the engine reads the node's stereotype \texttt{type\_signature} and generates constraints by pattern-matching the actual input tensor shape against the declared input pattern. This produces:
+	      \begin{itemize}
+		      \item \textbf{Bindings}: symbolic dimensions in the pattern are bound to their matched concrete values
+		      \item \textbf{Substitutions}: wildcard dimensions capture a suffix of the actual shape for reuse in the output pattern
+		      \item \textbf{Resolutions}: parameter references are resolved to the node's current parameter values
+	      \end{itemize}
+
+	\item \textbf{Constraint Solving}: The engine substitutes bound variables and captured wildcards into the output pattern, producing the output tensor type. If any constraint is violated (e.g., a constant dimension does not match, a dtype constraint fails, or a parameter reference cannot be resolved), a \texttt{TypeError} is recorded.
+\end{enumerate}
+
+The inference is \textbf{forward-only} in Phase~1: types propagate from the Input node through the graph, and each node's output type is computed before its successors are visited. Future phases will support backward inference (e.g., deducing input sizes from loss function requirements) and bidirectional constraint propagation (e.g., inferring \texttt{in\_features} from context).
+
+\subsection{Pattern Matching Semantics}
+
+The pattern matching algorithm handles each dimension kind as follows:
+
+\begin{itemize}
+	\item \textbf{Constant ($c$)}: The actual input dimension at this position must equal $c$. If it does not, a type error is emitted (e.g., ``dimension mismatch: expected 3, got 1'').
+	\item \textbf{Symbolic ($x$)}: If $x$ is already bound in $\Gamma$, the actual dimension must equal the bound value (unification). If $x$ is unbound, a new binding $x \mapsto d$ is added to $\Gamma$.
+	\item \textbf{Parameter reference ($p$)}: The parameter $p$ is resolved from the node's parameter map. The actual dimension must equal the resolved value.
+	\item \textbf{Wildcard ($*$)}: Consumes zero or more dimensions from the actual input shape. The consumed dimensions are captured and substituted into the corresponding position in the output pattern.
+\end{itemize}
+
+
+\subsection{Computed Dimensions}
+
+Not all output dimensions can be expressed as direct parameter references or symbolic copies of input dimensions. Modules with spatial operations --- convolutions, pooling, flattening, and upsampling --- produce output sizes that depend on their configuration through well-known formulas. To handle these cases declaratively, the type system introduces a \textbf{computed} dimension kind.
+
+A computed dimension is declared in the \texttt{type\_signature} JSON with the structure:
+
+\[
+\{ \text{kind}: \text{computed},\; \text{formula}: f,\; \text{args}: [a_1, a_2, \ldots, a_n] \}
+\]
+
+where $f$ is a named formula identifier and each $a_i$ is an argument referencing either a symbolic dimension captured from the input pattern, a parameter value, or a literal constant. The formula is resolved on the output side during constraint solving; on the input side, the computed dimension acts as a pass-through (its exact value is not validated against the input pattern, since it is the output formula that determines it).
+
+\paragraph{Conv2d}
+
+The output height and width of a 2D convolution are computed from the input size, kernel size, stride, padding, and dilation:
+
+\[
+H_{\text{out}} = \left\lfloor \frac{H + 2p - d(k - 1) - 1}{s} + 1 \right\rfloor
+\]
+
+where $H$ is the input spatial dimension, $k$ is the kernel size, $s$ is the stride, $p$ is the padding, and $d$ is the dilation. The formula is registered under the name \texttt{conv2d\_hw}. For a $3 \times 3$ convolution with stride 1 and padding 1 on a $32 \times 32$ input, the output spatial dimensions remain $32 \times 32$.
+
+\paragraph{MaxPool2d and AvgPool2d}
+
+Pooling layers follow a similar formula with no dilation term:
+
+\[
+H_{\text{out}} = \left\lfloor \frac{H + 2p - k}{s} + 1 \right\rfloor
+\]
+
+The formula is registered under the name \texttt{pool2d\_hw}. For $2 \times 2$ max-pooling with stride 2 on a $32 \times 32$ input, the output is $16 \times 16$.
+
+\paragraph{Flatten}
+
+The Flatten module collapses all non-batch dimensions into a single dimension whose size is the product of the captured wildcard dimensions:
+
+\[
+d_{\text{flat}} = \prod_i d_i
+\]
+
+The formula is registered under the name \texttt{flatten\_prod}. For an input of shape $[B, 128, 7, 7]$, the wildcard captures the last three dimensions and the formula computes $128 \times 7 \times 7 = 6272$, producing $[B, 6272]$.
+
+\paragraph{Upsample}
+
+The Upsample module scales spatial dimensions by a user-specified scale factor:
+
+\[
+H_{\text{out}} = \lfloor H \times \text{scale\_factor} \rfloor
+\]
+
+The formula is registered under the name \texttt{upsample\_hw}.
+
+These computed dimension formulas are implemented as a registry within the type engine, indexed by formula name. Adding a new spatial operation requires only registering a new formula and updating the corresponding stereotype JSON --- no TypeScript changes to the engine are needed.
+
+\subsection{Join Type Checking}
+
+Join nodes accept multiple input tensors and merge them into a single output tensor. Unlike standard modules, which have a single input pattern, join nodes carry an array of input patterns --- one per incoming connection. The type engine validates multi-input shape compatibility by pattern-matching each input against its corresponding pattern and applying symbolic unification across all matches.
+
+\paragraph{Addition}
+
+The Addition join requires all input tensors to have identical shapes. The engine captures dimensions from the first input using the wildcard pattern and verifies that all subsequent inputs produce identical captured dimensions:
+
+\[
+\frac{
+\Gamma \vdash x_1 : \text{Tensor}(\sigma, \delta) \quad
+\Gamma \vdash x_i : \text{Tensor}(\sigma_i, \delta) \quad
+\sigma_i = \sigma \text{ for all } i
+}{
+\Gamma \vdash \text{Addition}(x_1, \ldots, x_n) : \text{Tensor}(\sigma, \delta)
+}
+\]
+
+If one branch produces $[B, 256]$ and another produces $[B, 128]$, a type error is reported at the Addition node.
+
+\paragraph{Concat}
+
+The Concat join concatenates along a user-specified dimension $d$. All other dimensions must match across inputs. The output size on dimension $d$ is the sum of the corresponding input dimensions:
+
+\[
+\text{Concat}(\text{dim}=d)(x_1, \ldots, x_n)[d] = \sum_{i=1}^n x_i[d]
+\]
+
+For $[B, 128]$ and $[B, 64]$ with $\text{dim}=-1$, the output is $[B, 192]$. A type error occurs if the non-concatenated dimensions do not match across inputs.
+
+\paragraph{MatMul}
+
+The MatMul join constrains the inner dimensions of two inputs to match through symbolic unification:
+
+\[
+(M, K) \times (K, N) \rightarrow (M, N)
+\]
+
+The symbolic variable $K$ appears in both input patterns. During constraint generation, the engine binds $K$ from the first input and unifies with the second. If the first input is $(32, 64)$ and the second is $(128, 64)$, $K$ is bound to 64 from the first input but the second input has 128 at the $K$ position --- a unification error is reported.
+
+\paragraph{ScaledDotProduct}
+
+ScaledDotProduct implements the attention shape contract with four symbolic variables shared across three inputs:
+
+\[
+Q(B, H, L, D) \times K(B, H, S, D) \times V(B, H, S, D_{\text{out}}) \rightarrow (B, H, L, D_{\text{out}})
+\]
+
+Symbolic unification ensures that $B$, $H$, and $D$ are consistent across Q, K, and V. The output preserves the query length $L$ from Q and the value depth $D_{\text{out}}$ from V.
+
+\paragraph{MaskedScaledDotProduct}
+
+MaskedScaledDotProduct extends ScaledDotProduct with an additional mask input. The mask is validated as a boolean tensor with shape compatible with the attention logits matrix $(B, H, L, S)$. The shape constraints on Q, K, and V are identical to the unmasked variant.
+
+\paragraph{Error Example}
+
+Consider an Addition join receiving $[B, 256]$ from one branch and $[B, 128]$ from another:
+
+\[
+\text{Addition}: \text{dimension 1 mismatch: 256 vs 128}
+\]
+
+The engine records this as a type error at the Addition node, marking it with a red indicator in the editor. Similarly, a MatMul join receiving $(32, 64)$ and $(128, 64)$ produces:
+
+\[
+\text{MatMul}: \text{symbolic unification failed: } K \text{ bound to 64, cannot unify with 128}
+\]
+
+Note that Einsum has no type signature because its shape constraints depend on a free-form equation string parameter. The engine emits a warning and treats its type as unknown --- a deliberate application of gradual typing.
+
+\subsection{Subflow Type Inference}
+
+Subflow nodes encapsulate an internal subgraph. Type inference for subflows proceeds recursively: the external input type is injected as the input type of the subflow's internal Input node, the internal graph is inferred in topological order, and the subflow's output type is the inferred type of its exit node.
+
+Formally, given a subflow $S$ with internal graph $G_S = (V_S, E_S)$, entry node $e \in V_S$, and exit node $x \in V_S$:
+
+\[
+\frac{
+\Gamma \vdash \tau_{\text{in}} \quad
+\Gamma[e \mapsto \tau_{\text{in}}] \vdash G_S : \Gamma_S \quad
+\Gamma_S(x) = \tau_{\text{out}}
+}{
+\Gamma \vdash S : (\tau_{\text{in}} \rightarrow \tau_{\text{out}})
+}
+\]
+
+where $\Gamma[e \mapsto \tau_{\text{in}}]$ denotes extending the context with the entry node's input type.
+
+\paragraph{Generic Subflows}
+
+For subflows without a behavioral stereotype, the internal graph defines the type transformation directly. The engine performs a full topological inference pass on the internal nodes, propagating types from entry to exit. This enables type checking of arbitrary nested architectures including subflows within subflows.
+
+\paragraph{Repeat}
+
+The Repeat behavioral stereotype instantiates $N$ sequential copies of the internal subgraph. If the internal subgraph defines the type transformation $S$, Repeat composes that transformation $N$ times:
+
+\[
+\text{Repeat}(N)(S)(\tau) = S^N(\tau)
+\]
+
+The output need not equal the input: a shape-changing subgraph is valid when the output of each iteration satisfies the input constraints of the next. The engine validates that $N$ is an integer greater than or equal to one and reports errors from any failed composition on the Repeat node.
+
+\paragraph{HorizontalRepeat}
+
+The HorizontalRepeat behavioral stereotype creates $N$ parallel copies of the internal subgraph, executed independently via \texttt{vmap} with \texttt{functional\_call}. The outputs are concatenated along the last dimension:
+
+\[
+\text{HorizontalRepeat}(N)(S) : \tau \rightarrow \tau'
+\]
+
+where $\tau'$ has the same shape as $\tau$ except the last dimension is multiplied by $N$. If the internal subgraph maps $[B, D]$ to $[B, D']$, then HorizontalRepeat produces $[B, N \cdot D']$.
+
+\subsection{Editor Integration}
+
+The type system is integrated into the visual editor to provide real-time feedback. The \texttt{TypeEngine.infer()} method is invoked automatically on every graph mutation: when edges are added or removed, when node parameters change (with 300\,ms debounce), and when a diagram is loaded from disk.
+
+The inference results are stored as reactive \texttt{typeResult} state, which drives three visual feedback mechanisms:
+
+\begin{itemize}
+	\item \textbf{Error Panel}: A collapsible section at the bottom of the Sidebar lists all type errors and warnings. Errors (displayed in red) indicate shape mismatches that would cause runtime crashes; warnings (displayed in amber) indicate missing type signatures or unresolved parameters. Clicking an error selects the offending node on the canvas.
+	\item \textbf{Node Indicators}: Nodes with type errors, warnings, or suggestions display distinct red, amber, or blue indicators. They disappear when the underlying diagnostic is resolved.
+	\item \textbf{Shape Tooltips}: Hovering over a node's output handle displays the inferred output shape (e.g., \texttt{[B, 256]}). This allows users to inspect intermediate tensor shapes without leaving the editor; MCP inspection additionally returns dtype and diagnostics.
+\end{itemize}
+
+This integration makes the type system a practical tool for day-to-day diagram editing, catching shape mismatches at design time rather than at runtime. The inferred types also feed into the front-end compilation pipeline, guaranteeing that the generated NNTree is consistent with the visual diagram.
+
+The type system is fully documented in the project's user guide at \texttt{docs2/source/type\_system.rst}, which includes an educational walkthrough, formal definitions, and detailed examples for every module.
+
+\pagebreak
+
 \section{Implementation}
 
 The system is divided into two independent subsystems. The front-end contains all DSL logic (visual editing, graph compilation, stereotype management) and runs entirely in the browser. The back-end consumes the compiled JSON output and instantiates the corresponding PyTorch model. Currently, communication between the two subsystems occurs via file exchange (JSON export/import).
@@ -400,6 +733,8 @@ The central state manager is the \texttt{Diagram} class, implemented using Svelt
 The stereotype mechanism provides the bridge between the UML metamodel and the executable DSL. Each stereotype is stored as a JSON artifact that instantiates the concepts defined in the metamodel, specifying visual attributes, semantic category, and configurable parameters. At startup, all stereotype definitions are discovered and loaded from the \texttt{Stereotypes/**/*.json} directory.
 
 To simplify their use within the editor, the \texttt{Stereotype} class (\texttt{stereotype.ts}) wraps the raw JSON representation and exposes derived predicates such as \texttt{isJoin}, \texttt{isInput}, \texttt{isLoss}, and \texttt{isSubFlow}. This approach provides a type-safe interface and supports extensibility without requiring modifications to the compilation or rendering logic.
+
+The static tensor type system described in Section~4 is implemented as a separate verification pass within the front-end. The \texttt{TypeEngine} class provides constraint-based type inference using declarative \texttt{type\_signature} fields in the stereotype definitions. Currently, the system covers 15 module type signatures, 5 join type signatures, computed dimension formulas for spatial operations (Conv2d, MaxPool2d, AvgPool2d, Flatten, Upsample), and subflow type inference for generic and behavioral subflows (Repeat, HorizontalRepeat). The engine is invoked automatically on graph mutations and drives the real-time error feedback described in Section~4.11.
 
 \subsubsection{Node Rendering}
 
@@ -487,7 +822,7 @@ The \texttt{Net} class, a \texttt{LightningModule}, dynamically builds its archi
 	\item A \texttt{ModuleDict} is populated by dispatching on node type: \texttt{sequential} chains are wrapped in \texttt{nn.Sequential}; \texttt{module} nodes are instantiated individually via Hydra's \texttt{instantiate}; \texttt{join} nodes reference custom operation classes; and \texttt{subflow} nodes reference Subflow, Repeat, or HorizontalRepeat operation classes.
 	\item The forward pass uses BFS traversal with in-degree tracking to ensure correct execution order through complex fork-join topologies.
 	\item Join nodes collect all inputs ordered by \texttt{targetHandle} before executing the merge operation.
-	\item Loss functions are excluded from the execution graph and stored separately for metric selection. Although the DSL models loss nodes as regular layers with a scalar tensor output, the runtime does not wire this value into the optimizer --- loss nodes remain terminal.
+	\item Loss functions are excluded from the execution graph and stored separately for metric selection. Although the DSL models a Loss as a layer with a conceptual rank-one $[B]$ tensor output, the current runtime keeps it terminal. Executing and propagating that output in \texttt{converted/} remains future work.
 \end{itemize}
 
 \subsubsection{Custom Operations}

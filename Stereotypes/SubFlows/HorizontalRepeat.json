@@ -12,5 +12,19 @@
       "default": "1",
       "position": "top"
     }
+  },
+  "type_signature": {
+    "kind": "subflow",
+    "subflow": {
+      "action": "infer_then_transform",
+      "transform": {
+        "last_dim": {
+          "kind": "multiply",
+          "expr": "n"
+        }
+      }
+    },
+    "input": [{ "kind": "wildcard" }],
+    "output": [{ "kind": "wildcard" }]
   }
 }

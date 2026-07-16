@@ -13,7 +13,11 @@
         "stereotype": "Input",
         "name": "Input",
         "color": "#27b376",
-        "params": {},
+        "params": {
+          "out_features": {
+            "value": "128"
+          }
+        },
         "isInput": true,
         "isLoss": false
       },

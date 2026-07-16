@@ -12,7 +12,7 @@
  */
 
 import { describe, it, expect, afterAll, afterEach } from "vitest";
-import { readFileSync, writeFileSync, readdirSync, existsSync } from "node:fs";
+import { readFileSync, writeFileSync, existsSync, statSync } from "node:fs";
 import { resolve, join } from "node:path";
 import { Diagram } from "../../Diagram.svelte";
 import { NNTree } from "../../conversion/nnTree";
@@ -25,6 +25,7 @@ import {
   conditionalCleanup,
   runConvert,
   runTraining,
+  composeHydraConfig,
   isPythonAvailable,
   type Tier,
   type NamedEntry,
@@ -71,10 +72,8 @@ if (shouldRun) {
   const allTargets = getTargetDiagrams(manifest, "train");
 
   if (!PYTHON_AVAILABLE) {
-    describe("Train", () => {
-      it("skipped — Python environment (uv) not available", () => {
-        expect(true).toBe(true);
-      });
+    describe.skip("Train — Python environment unavailable", () => {
+      it("requires uv and the converted Python environment", () => {});
     });
   } else {
     describe.each(allTargets)(
@@ -109,45 +108,56 @@ if (shouldRun) {
               throw e;
             }
 
+            // Prove that Hydra can compose this exact generated directory
+            // before spending time on training.
+            const netYaml = readFileSync(
+              join(cfgDir, "net", "custom_sequence.yaml"),
+              "utf-8",
+            );
+            const root = /^root:\s*([^\s]+)$/m.exec(netYaml)?.[1];
+            expect(root).toBeDefined();
+            expect(netYaml).toContain("nodes:");
+
+            const composed = composeHydraConfig(cfgDir);
+            if (composed.exitCode !== 0) {
+              throw new Error(
+                `Hydra composition failed for ${name} (exit ${composed.exitCode}, signal ${composed.signal ?? "none"}):\n` +
+                  `${composed.error ?? ""}\nSTDERR:\n${composed.stderr}\nSTDOUT:\n${composed.stdout}`,
+              );
+            }
+            expect(composed.stdout).toContain(`root: ${root}`);
+            expect(composed.stdout).toContain("_target_: torch.nn.Linear");
+            expect(composed.stdout).toContain("_target_: dataset.mnist.MNISTDataset");
+
+            if (!process.env.NNM_DIAGRAM) {
+              expect(name).not.toMatch(/transformer|auto.?encoder/i);
+            }
+
             // Tier 3: Train for 1 epoch
+            const startedAt = Date.now();
             const trainResult = runTraining(cfgDir, {
               maxEpochs: 1,
               fastDevRun: process.env.NNM_FAST_DEV_RUN === "true",
               device: process.env.NNM_DEVICE || "cpu",
             });
 
-            expect(trainResult.exitCode).toBe(0);
-
-            // Check that stdout contains training log
-            expect(trainResult.stdout.length).toBeGreaterThan(0);
-
-            // Check for checkpoints — they may be in cfgDir or a subdirectory
-            const hasCkptDir = existsSync(trainResult.ckptDir);
-            if (hasCkptDir) {
-              const allFiles = readdirSync(trainResult.ckptDir, {
-                recursive: true,
-              }) as string[];
-              const ckpts = allFiles.filter(
-                (f: string) => f.endsWith(".ckpt"),
+            if (trainResult.exitCode !== 0) {
+              throw new Error(
+                `Training failed for ${name} (exit ${trainResult.exitCode}, signal ${trainResult.signal ?? "none"}):\n` +
+                  `${trainResult.error ?? ""}\nSTDERR:\n${trainResult.stderr}\nSTDOUT:\n${trainResult.stdout}`,
               );
-              // Note: With max_epochs=1 and fast_dev_run, there might
-              // not be a checkpoint. This assertion is soft — we check
-              // the exit code primarily.
-              if (ckpts.length > 0) {
-                console.log(
-                  `Found ${ckpts.length} checkpoint(s) for ${name}`,
-                );
-              }
             }
+
+            expect(trainResult.stdout).toContain("Training...");
+            expect(existsSync(trainResult.weightsPath)).toBe(true);
+            expect(statSync(trainResult.weightsPath).mtimeMs).toBeGreaterThanOrEqual(startedAt);
           },
         );
       },
     );
   }
 } else {
-  describe("Train", () => {
-    it("skipped — NNM_TIER is not 'train' or 'all'", () => {
-      expect(true).toBe(true);
-    });
+  describe.skip("Train tier disabled", () => {
+    it("runs only when NNM_TIER is train or all", () => {});
   });
 }

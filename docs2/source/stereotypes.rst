@@ -31,8 +31,8 @@ configuration:
      - Standard module (Linear, Conv2d, ReLU, Dropout, ...)
      - 1 input, 1 output
    * - ``Loss``
-     - Loss function / output node (BCELoss, CrossEntropyLoss, ...)
-     - 1 input, 0 output
+     - Conceptual loss layer / output node (BCELoss, CrossEntropyLoss, ...)
+     - 1 input, 1 conceptual output
    * - ``Join``
      - Multi-input merge node (Addition, Concat, MatMul, ...)
      - N inputs, 1 output
@@ -209,11 +209,20 @@ Notes
 
 * **Loss nodes** determine task type for metric selection: ``CrossEntropyLoss``
   and ``BCEWithLogitsLoss`` set classification, ``MSELoss`` sets regression.
-  They have no output handle — they are terminal nodes.
+  In the DSL a Loss is a layer with a conceptual rank-1 output ``[B]`` and the
+  editor keeps its output handle so the inferred type can be inspected. The
+  current ``converted/`` backend still extracts Loss nodes as terminal training
+  objectives. Executing and propagating this conceptual output in the backend
+  is planned future work.
 
 * **Flatten is explicit**: there is no auto-flatten heuristic in the forward
   pass. You must insert a Flatten node when transitioning from convolutional
   to linear layers.
+
+* **Unflatten uses param_spread**: the ``Unflatten`` module expands a
+  flattened dimension back into multiple dimensions using a tuple parameter
+  (``unflattened_size``). The type system models this via the ``param_spread``
+  pattern kind, which reads the tuple and produces multiple output dimensions.
 
 * **HorizontalRepeat** has its join hardcoded to concat on ``dim=-1``. Output
   shape becomes ``[batch, ..., n * d]``. This is not configurable.

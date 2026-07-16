@@ -21,14 +21,14 @@
  */
 
 import { spawn } from "child_process";
-import { writeFileSync, mkdtempSync, rmSync, readdirSync } from "fs";
+import { existsSync, writeFileSync, mkdtempSync, rmSync, readdirSync } from "fs";
 import { join, resolve } from "path";
 import { tmpdir } from "os";
 import {
   ConversionFailedError,
   TrainingFailedError,
   InferenceFailedError,
-} from "./errors";
+} from "./errors.js";
 
 // ── Conversion Types ───────────────────────────────
 
@@ -216,7 +216,15 @@ export async function executeConversion(
     // Parse stdout for task type
     // convert.py prints: "Detected task type: classification" or "Detected task type: regression"
     const taskTypeMatch = stdout.match(/Detected task type: (\w+)/);
-    const taskType = taskTypeMatch ? taskTypeMatch[1] : "unknown";
+    let taskType = taskTypeMatch ? taskTypeMatch[1] : "unknown";
+    try {
+      const nntree = JSON.parse(nntreeJson) as {
+        lossNode?: { taskType?: string };
+      };
+      taskType = nntree.lossNode?.taskType ?? taskType;
+    } catch {
+      // Conversion already validated the payload; retain the stdout fallback.
+    }
 
     // Walk the output directory to list generated .yaml files
     const configFiles: string[] = [];
@@ -251,6 +259,34 @@ export async function executeConversion(
 
 // ── executeTraining ────────────────────────────────
 
+export function buildTrainingArgs(
+  options: TrainingOptions,
+  runDir: string,
+): string[] {
+  const args = [
+    "src/main.py",
+    "--config-path",
+    resolve(options.configDir),
+    "--config-name",
+    options.configName || "base",
+  ];
+
+  if (options.maxEpochs !== undefined) {
+    args.push(`trainer.max_epochs=${options.maxEpochs}`);
+  }
+  if (options.device !== undefined) {
+    args.push(`trainer.accelerator=${options.device}`);
+    args.push("+trainer.devices=1");
+  }
+
+  args.push(`hydra.run.dir=${runDir}`);
+  args.push("hydra.job.chdir=true");
+  args.push(`+trainer.default_root_dir=${runDir}`);
+  args.push("+trainer.enable_progress_bar=false");
+  args.push("+wandb.mode=disabled");
+  return args;
+}
+
 /**
  * Execute model training via `main.py`.
  *
@@ -265,25 +301,8 @@ export async function executeConversion(
 export async function executeTraining(
   options: TrainingOptions,
 ): Promise<TrainingResult> {
-  const absConfigDir = resolve(options.configDir);
-
-  const args = [
-    "src/main.py",
-    "--config-path",
-    absConfigDir,
-    "--config-name",
-    options.configName || "base",
-  ];
-
-  // Pass maxEpochs if set
-  if (options.maxEpochs !== undefined) {
-    args.push("--max-epochs", String(options.maxEpochs));
-  }
-
-  // Pass device if set
-  if (options.device !== undefined) {
-    args.push("--device", options.device);
-  }
+  const runDir = mkdtempSync(join(tmpdir(), "nnmodelling-training-"));
+  const args = buildTrainingArgs(options, runDir);
 
   const startTime = Date.now();
   const { stdout, stderr, exitCode } = await spawnPython(args);
@@ -295,39 +314,8 @@ export async function executeTraining(
     );
   }
 
-  // Hydra saves outputs under configDir/../outputs/<date>/<time>/checkpoints/
-  // Scan for the most recent .ckpt file; if none found, return null.
-  let checkpointPath: string | null = null;
-  const hydraOutputDir = resolve(absConfigDir, "..", "outputs");
-  try {
-    const dateDirs = readdirSync(hydraOutputDir, { withFileTypes: true })
-      .filter((d) => d.isDirectory())
-      .map((d) => d.name)
-      .sort()
-      .reverse(); // Most recent date first
-    for (const dateDir of dateDirs) {
-      const timeDirs = readdirSync(join(hydraOutputDir, dateDir), { withFileTypes: true })
-        .filter((d) => d.isDirectory())
-        .map((d) => d.name)
-        .sort()
-        .reverse(); // Most recent time first
-      for (const timeDir of timeDirs) {
-        const ckptDir = join(hydraOutputDir, dateDir, timeDir, "checkpoints");
-        try {
-          const ckptFiles = readdirSync(ckptDir).filter((f) => f.endsWith(".ckpt"));
-          if (ckptFiles.length > 0) {
-            checkpointPath = join(ckptDir, ckptFiles[0]);
-            break;
-          }
-        } catch {
-          // No checkpoints directory in this run; continue scanning
-        }
-      }
-      if (checkpointPath) break;
-    }
-  } catch {
-    // outputs/ directory doesn't exist yet
-  }
+  const weightsPath = join(runDir, "weights.pt");
+  const checkpointPath = existsSync(weightsPath) ? weightsPath : null;
 
   // Attempt to parse metrics from stdout
   // Expected patterns: "val_metric: 0.98", "train_loss: 0.123"
@@ -351,7 +339,7 @@ export async function executeTraining(
     success: true,
     checkpointPath,
     metrics,
-    logPath: resolve(absConfigDir, "..", "wandb"),
+    logPath: runDir,
     duration,
   };
 }

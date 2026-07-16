@@ -11,5 +11,17 @@
       "type": "string",
       "default": ""
     }
+  },
+  "type_signature": {
+    "kind": "join",
+    "input": [
+      [{ "kind": "wildcard" }],
+      [{ "kind": "wildcard" }]
+    ],
+    "output": [{ "kind": "wildcard" }],
+    "join": {
+      "action": "einsum",
+      "einsum_param": "expr"
+    }
   }
 }
