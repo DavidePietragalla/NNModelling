@@ -16,7 +16,7 @@
  * registers all tools, and returns the MCP Server instance and context.
  *
  * This is the wiring hub of the NNModelling MCP server. It:
- *   1. Loads stereotypes via StereotypeCore.loadFromDirectoryNode
+ *   1. Loads the stereotype metadata required by the MCP fallback cache
  *   2. Creates a BrowserRPCClient for browser communication
  *   3. Creates the MCP Server instance
  *   4. Registers all tools from tools/*.ts (iterates exports, finds {schema,handler} pairs)
@@ -32,7 +32,6 @@ import {
   CallToolRequestSchema,
   ListToolsRequestSchema,
 } from "@modelcontextprotocol/sdk/types.js";
-import { StereotypeCore } from "@nnmodelling/front-end/core/StereotypeCore";
 import { readdirSync, readFileSync } from "fs";
 import { join } from "path";
 import * as pipelineMod from "./pipeline.js";
@@ -64,7 +63,23 @@ import * as screenshotTools from "./tools/screenshot.js";
 export interface ServerContext {
   browser: BrowserRPCClient;
   pipeline: typeof pipelineMod;
-  stereotypes: StereotypeCore[];
+  stereotypes: CachedStereotype[];
+}
+
+interface CachedStereotype {
+  name: string;
+  category: string;
+  pythonClassName: string;
+  isJoin: boolean;
+  isInput: boolean;
+  isLoss: boolean;
+  isSubFlow: boolean;
+  parameters: Record<string, {
+    type: string;
+    default: string;
+    position?: "top" | "bottom";
+  }>;
+  view: { color: string; width: number; height: number };
 }
 
 export interface CreateServerOptions {
@@ -120,8 +135,8 @@ function discoverTools(module: Record<string, unknown>): Map<string, MCPToolEntr
 // ESM. This local function uses statically-imported readdirSync/readFileSync
 // to achieve the same result without CJS interop.
 
-function loadStereotypesFromDirectory(stereotypesDir: string): StereotypeCore[] {
-  const loaded: StereotypeCore[] = [];
+function loadStereotypesFromDirectory(stereotypesDir: string): CachedStereotype[] {
+  const loaded: CachedStereotype[] = [];
 
   function walkDir(dir: string): void {
     const entries = readdirSync(dir, { withFileTypes: true });
@@ -132,8 +147,39 @@ function loadStereotypesFromDirectory(stereotypesDir: string): StereotypeCore[] 
       } else if (entry.name.endsWith(".json")) {
         try {
           const content = readFileSync(fullPath, "utf-8");
-          const jsonData = JSON.parse(content);
-          loaded.push(new StereotypeCore(fullPath, jsonData));
+          const jsonData = JSON.parse(content) as Record<string, any>;
+          const name = entry.name.slice(0, -".json".length);
+          const category = jsonData.category || "Uncategorized";
+          const rawView = jsonData.view || {};
+          const parameters = Object.fromEntries(
+            Object.entries(jsonData.params || {}).map(([key, raw]) => {
+              const parameter = raw as Record<string, unknown>;
+              const position = parameter.position === "top" || parameter.position === "bottom"
+                ? parameter.position as "top" | "bottom"
+                : undefined;
+              return [key, {
+                type: String(parameter.type || "string"),
+                default: String(parameter.default || ""),
+                ...(position ? { position } : {}),
+              }];
+            }),
+          );
+
+          loaded.push({
+            name,
+            category,
+            pythonClassName: jsonData.pythonClassName || "",
+            isJoin: category === "Join" || fullPath.includes("/Joins/"),
+            isInput: category === "Input",
+            isLoss: category === "Loss",
+            isSubFlow: category === "Subflow" || fullPath.includes("/SubFlows/"),
+            parameters,
+            view: {
+              color: rawView.color || "#4779c4",
+              width: rawView.width || 140,
+              height: rawView.height || 60,
+            },
+          });
         } catch (e) {
           console.error(`Error loading stereotype from ${fullPath}:`, e);
         }

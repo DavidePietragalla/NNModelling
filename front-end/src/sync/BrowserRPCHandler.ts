@@ -43,6 +43,11 @@ interface RPCResponse {
   error?: { message: string };
 }
 
+// The WebSocket protocol defines OPEN as readyState 1. Keeping the value
+// local makes response dispatch independent of a global WebSocket constructor,
+// which is absent in Node 20 test environments.
+const WEBSOCKET_OPEN = 1;
+
 // ── Viewport Controller Interface ────────────────────────────────────────
 
 /**
@@ -146,7 +151,7 @@ export class BrowserRPCHandler {
 
   /** Send a response back through the WebSocket. */
   private sendResponse(response: RPCResponse): void {
-    if (this.ws && this.ws.readyState === WebSocket.OPEN) {
+    if (this.ws && this.ws.readyState === WEBSOCKET_OPEN) {
       this.ws.send(JSON.stringify(response));
     }
   }

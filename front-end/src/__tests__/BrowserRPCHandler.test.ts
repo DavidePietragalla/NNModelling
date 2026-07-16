@@ -72,6 +72,20 @@ describe("BrowserRPCHandler", () => {
     expect(response.result.edges[0].id).toBe("e1");
   });
 
+  it("sends RPC responses without requiring a global WebSocket constructor", () => {
+    const { handler, mockSend } = createHandler();
+    vi.stubGlobal("WebSocket", undefined);
+
+    try {
+      (handler as any).handleMessage({
+        data: JSON.stringify({ id: "node20-response", method: "ping" }),
+      });
+      expect(mockSend).toHaveBeenCalledTimes(1);
+    } finally {
+      vi.unstubAllGlobals();
+    }
+  });
+
   it("dispatches get_node and returns the matching node", () => {
     const { handler, diagram, mockSend } = createHandler();
 
