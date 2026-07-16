@@ -23,23 +23,17 @@
         { "kind": "symbolic", "name": "$H" },
         { "kind": "symbolic", "name": "$S" },
         { "kind": "symbolic", "name": "$D" }
-      ],
-      [
-        { "kind": "symbolic", "name": "$B" },
-        { "kind": "symbolic", "name": "$H" },
-        { "kind": "symbolic", "name": "$S" },
-        { "kind": "symbolic", "name": "$D_out" }
       ]
     ],
     "output": [
       { "kind": "symbolic", "name": "$B" },
       { "kind": "symbolic", "name": "$H" },
       { "kind": "symbolic", "name": "$L" },
-      { "kind": "symbolic", "name": "$D_out" }
+      { "kind": "symbolic", "name": "$S" }
     ],
     "join": {
       "action": "element_wise",
-      "input_labels": ["Q", "K", "V", "mask"]
+      "input_labels": ["Q", "K"]
     }
   }
 }

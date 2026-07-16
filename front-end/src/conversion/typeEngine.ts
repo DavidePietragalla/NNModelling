@@ -648,6 +648,26 @@ export class TypeEngine {
                 severity: "error",
               } satisfies TypeError;
             }
+            // Still infer internal nodes for annotations (side effects),
+            // but output type is always identity (input shape preserved).
+            if (diagram && nodeId) {
+              const internalResult = this.inferSubflow(
+                nodeId,
+                inputType,
+                diagram,
+                params,
+                env,
+                subflowAnnotations,
+                subflowErrors,
+                warnings,
+                suggestions,
+              );
+              // Surface internal inference errors, but keep identity output
+              if (!isTensorType(internalResult)) {
+                if (!internalResult.nodeId) internalResult.nodeId = nodeId;
+                subflowErrors.push(internalResult);
+              }
+            }
             // Output shape = input shape (deep copy dims to avoid aliasing)
             return {
               shape: inputType.shape.map((d) => ({ ...d })),

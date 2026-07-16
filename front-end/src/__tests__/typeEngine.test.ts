@@ -971,26 +971,14 @@ describe("TypeEngine — Phase 3 Joins", () => {
     });
     d.edges.push(edge("e2", inputId, linearKId));
 
-    // Linear for V branch
-    d.addModule(linearStereo, 200, 200);
-    const linearVId = d.nodes[3].id;
-    d.updateModule(linearVId, {
-      params: {
-        in_features: { value: "128" },
-        out_features: { value: "128" },
-      },
-    });
-    d.edges.push(edge("e3", inputId, linearVId));
-
-    // ScaledDotProduct join
+    // ScaledDotProduct join (2 inputs: Q, K)
     const sdpStereo = d.stereotypes.find(
       (s) => s.name === "ScaledDotProduct",
     )!;
     d.addJoinNode(sdpStereo, 200, 300);
-    const joinId = d.nodes[4].id;
-    d.edges.push(edge("e4", linearQId, joinId, { targetHandle: "in-0" }));
-    d.edges.push(edge("e5", linearKId, joinId, { targetHandle: "in-1" }));
-    d.edges.push(edge("e6", linearVId, joinId, { targetHandle: "in-2" }));
+    const joinId = d.nodes[3].id;
+    d.edges.push(edge("e3", linearQId, joinId, { targetHandle: "in-0" }));
+    d.edges.push(edge("e4", linearKId, joinId, { targetHandle: "in-1" }));
 
     const result = TypeEngine.infer(d);
 
@@ -1049,14 +1037,14 @@ describe("TypeEngine — Phase 3 Joins", () => {
     expect(messages).toMatch(/\b[Aab]\b/i);
   });
 
-  it("7.8: ScaledDotProduct error uses input_labels: 'Q', 'K', 'V'", () => {
+  it("7.8: ScaledDotProduct error uses input_labels: 'Q' and 'K'", () => {
     const d = new Diagram();
     const inputId = d.nodes[0].id;
     d.updateModule(inputId, { params: { out_features: { value: "128" } } });
 
     const linearStereo = d.stereotypes.find((s) => s.name === "Linear")!;
 
-    // Three branches, each producing 2D [B, X] shapes
+    // Two branches (Q, K), each producing 2D [B, X] shapes
     d.addModule(linearStereo, 200, 0);
     const linearQId = d.nodes[1].id;
     d.updateModule(linearQId, {
@@ -1077,33 +1065,22 @@ describe("TypeEngine — Phase 3 Joins", () => {
     });
     d.edges.push(edge("e2", inputId, linearKId));
 
-    d.addModule(linearStereo, 200, 200);
-    const linearVId = d.nodes[3].id;
-    d.updateModule(linearVId, {
-      params: {
-        in_features: { value: "128" },
-        out_features: { value: "128" },
-      },
-    });
-    d.edges.push(edge("e3", inputId, linearVId));
-
     const sdpStereo = d.stereotypes.find(
       (s) => s.name === "ScaledDotProduct",
     )!;
     d.addJoinNode(sdpStereo, 200, 300);
-    const joinId = d.nodes[4].id;
-    d.edges.push(edge("e4", linearQId, joinId, { targetHandle: "in-0" }));
-    d.edges.push(edge("e5", linearKId, joinId, { targetHandle: "in-1" }));
-    d.edges.push(edge("e6", linearVId, joinId, { targetHandle: "in-2" }));
+    const joinId = d.nodes[3].id;
+    d.edges.push(edge("e3", linearQId, joinId, { targetHandle: "in-0" }));
+    d.edges.push(edge("e4", linearKId, joinId, { targetHandle: "in-1" }));
 
     const result = TypeEngine.infer(d);
     const hardErrors = result.errors.filter((e) => e.severity === "error");
     const joinErrors = hardErrors.filter((e) => e.nodeId === joinId);
     expect(joinErrors.length).toBeGreaterThanOrEqual(1);
 
-    // Error messages should contain "Q", "K", or "V" labels
+    // Error messages should contain input_labels "Q" or "K"
     const messages = joinErrors.map((e) => e.message).join("; ");
-    expect(messages).toMatch(/[QKV]/);
+    expect(messages).toMatch(/[QK]/);
   });
 });
 
