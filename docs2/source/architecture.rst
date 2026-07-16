@@ -183,7 +183,9 @@ This is the heart of the frontend logic, written with zero Svelte dependencies.
     * **Repeat unrolling** — ``Repeat`` stereotypes are compiled to
       sequential copies
     * **Loss nodes** — identified by stereotype category (``Loss``), they
-      set the task type for metric selection
+      expose a conceptual rank-1 ``[B]`` output in the editor and set the task
+      type for metric selection. The current Python backend still extracts them
+      as terminal objectives; runtime output propagation is future work.
 
 ### mcp-server/ (Thin Proxy)
 

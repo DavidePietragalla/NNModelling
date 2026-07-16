@@ -309,16 +309,21 @@ semantics of the original model.
 
 \paragraph{Loss Nodes}
 
-Loss nodes are treated as terminal elements of the graph.
+In the DSL, a Loss is conceptually a layer. Given a batch of predictions, its
+conceptual output is a rank-one tensor $[B]$, containing one loss value for each
+batch element. The editor therefore retains the source handle and exposes this
+output to static type inspection.
 
-Although represented visually as standard nodes, they are excluded from the execution graph
-and stored separately. Their purpose is to define the optimization objective
+The current Python conversion backend has not implemented this data-flow
+semantics yet. It extracts Loss nodes from the execution graph and stores them
+as terminal optimization objectives
 
 \[
 	L(\hat{y},y),
 \]
 
-used during training.
+used during training. Propagation of the conceptual $[B]$ result through the
+\texttt{converted/} runtime is explicit future work.
 
 \paragraph{Compilation Algorithm}
 
@@ -677,13 +682,13 @@ For subflows without a behavioral stereotype, the internal graph defines the typ
 
 \paragraph{Repeat}
 
-The Repeat behavioral stereotype instantiates $N$ sequential copies of the internal subgraph. Since the copies are executed in sequence with identical structure, the type transformation is shape-preserving:
+The Repeat behavioral stereotype instantiates $N$ sequential copies of the internal subgraph. If the internal subgraph defines the type transformation $S$, Repeat composes that transformation $N$ times:
 
 \[
-\text{Repeat}(N)(S) : \tau \rightarrow \tau
+\text{Repeat}(N)(S)(\tau) = S^N(\tau)
 \]
 
-The output shape equals the input shape. Type errors inside the repeated subgraph are detected during recursive inference and reported on the Repeat node.
+The output need not equal the input: a shape-changing subgraph is valid when the output of each iteration satisfies the input constraints of the next. The engine validates that $N$ is an integer greater than or equal to one and reports errors from any failed composition on the Repeat node.
 
 \paragraph{HorizontalRepeat}
 
@@ -703,8 +708,8 @@ The inference results are stored as reactive \texttt{typeResult} state, which dr
 
 \begin{itemize}
 	\item \textbf{Error Panel}: A collapsible section at the bottom of the Sidebar lists all type errors and warnings. Errors (displayed in red) indicate shape mismatches that would cause runtime crashes; warnings (displayed in amber) indicate missing type signatures or unresolved parameters. Clicking an error selects the offending node on the canvas.
-	\item \textbf{Node Indicators}: Nodes with type errors display a red border (2\,px) and an \texttt{✗} indicator in the top-right corner. Nodes with warnings display an amber border with a \texttt{⚠} indicator. Both indicators disappear when the underlying issue is resolved.
-	\item \textbf{Shape Tooltips}: Hovering over a node's output handle displays a tooltip showing the inferred output shape and dtype (e.g., \texttt{Output: [B, 256] float32}). This allows users to inspect intermediate tensor shapes without leaving the editor.
+	\item \textbf{Node Indicators}: Nodes with type errors, warnings, or suggestions display distinct red, amber, or blue indicators. They disappear when the underlying diagnostic is resolved.
+	\item \textbf{Shape Tooltips}: Hovering over a node's output handle displays the inferred output shape (e.g., \texttt{[B, 256]}). This allows users to inspect intermediate tensor shapes without leaving the editor; MCP inspection additionally returns dtype and diagnostics.
 \end{itemize}
 
 This integration makes the type system a practical tool for day-to-day diagram editing, catching shape mismatches at design time rather than at runtime. The inferred types also feed into the front-end compilation pipeline, guaranteeing that the generated NNTree is consistent with the visual diagram.
@@ -817,7 +822,7 @@ The \texttt{Net} class, a \texttt{LightningModule}, dynamically builds its archi
 	\item A \texttt{ModuleDict} is populated by dispatching on node type: \texttt{sequential} chains are wrapped in \texttt{nn.Sequential}; \texttt{module} nodes are instantiated individually via Hydra's \texttt{instantiate}; \texttt{join} nodes reference custom operation classes; and \texttt{subflow} nodes reference Subflow, Repeat, or HorizontalRepeat operation classes.
 	\item The forward pass uses BFS traversal with in-degree tracking to ensure correct execution order through complex fork-join topologies.
 	\item Join nodes collect all inputs ordered by \texttt{targetHandle} before executing the merge operation.
-	\item Loss functions are excluded from the execution graph and stored separately for metric selection. Although the DSL models loss nodes as regular layers with a scalar tensor output, the runtime does not wire this value into the optimizer --- loss nodes remain terminal.
+	\item Loss functions are excluded from the execution graph and stored separately for metric selection. Although the DSL models a Loss as a layer with a conceptual rank-one $[B]$ tensor output, the current runtime keeps it terminal. Executing and propagating that output in \texttt{converted/} remains future work.
 \end{itemize}
 
 \subsubsection{Custom Operations}

@@ -40,6 +40,17 @@ export const get_node = {
   },
 };
 
+export const get_type_info = {
+  schema: z.object({
+    nodeId: z.string().min(1).optional(),
+    refresh: z.boolean().optional(),
+  }),
+
+  async handler(ctx: ServerContext, input: z.infer<typeof this.schema>) {
+    return ctx.browser.call("get_type_info", input);
+  },
+};
+
 export const get_edges = {
   schema: z.object({ nodeId: z.string().optional() }),
 

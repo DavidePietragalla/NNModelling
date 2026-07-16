@@ -1689,18 +1689,17 @@ describe("TypeEngine — Phase 4 Subflows", () => {
     expect(hrErrors[0].message).toMatch(/cannot resolve parameter/i);
   });
 
-  it("8.9: Subflow with action 'identity' works regardless of stereotype name", () => {
+  it("8.9: Repeat composes a shape-preserving internal graph", () => {
     const d = new Diagram();
     const inputId = d.nodes[0].id;
     d.updateModule(inputId, { params: { out_features: { value: "784" } } });
 
-    // Create a subflow node with a stereotype that has subflow.action = "identity"
-    // (Repeat stereotype has "identity" action)
+    // Repeat uses the declarative repeat action.
     const repeatStereo = d.stereotypes.find((s) => s.name === "Repeat")!;
     d.addModule(repeatStereo, 400, 0);
     const subflowId = d.nodes[1].id;
 
-    // Create internal nodes (won't be processed since identity skips recursive inference)
+    // Create a shape-preserving internal graph.
     const internalInputId = "sf9_input";
     const internalReluId = "sf9_relu";
 
@@ -1722,7 +1721,7 @@ describe("TypeEngine — Phase 4 Subflows", () => {
     const result = TypeEngine.infer(d);
     expectTypeSuccess(result);
 
-    // Identity action: output shape = input shape = [B, 784]
+    // Repeating ReLU preserves the input shape.
     expectOutputShape(result, subflowId, ["$B", "784"]);
   });
 });
@@ -1878,7 +1877,7 @@ describe("TypeEngine — Phase 4 Complex Signatures", () => {
     expect(mhaErrors[0].message).toMatch(/embed_dim|512|256|mismatch|dimension/i);
   });
 
-  it("9.6: Loss node (BCEWithLogitsLoss) accepts valid input and produces empty output", () => {
+  it("9.6: Loss node accepts valid input and exposes a conceptual rank-1 output", () => {
     const d = new Diagram();
     const inputId = d.nodes[0].id;
     d.updateModule(inputId, { params: { out_features: { value: "10" } } });
@@ -1895,7 +1894,7 @@ describe("TypeEngine — Phase 4 Complex Signatures", () => {
       },
     });
 
-    // BCEWithLogitsLoss: accepts [B, *] → empty output
+    // BCEWithLogitsLoss: accepts [B, *] → conceptual per-sample [B].
     const lossStereo = d.stereotypes.find((s) => s.name === "BCEWithLogitsLoss")!;
     d.addModule(lossStereo, 200, 100);
     const lossId = d.nodes[2].id;
@@ -1904,10 +1903,12 @@ describe("TypeEngine — Phase 4 Complex Signatures", () => {
     const result = TypeEngine.infer(d);
     expectTypeSuccess(result);
 
-    // Loss node should have empty output shape
+    // The converted backend still treats Loss as terminal.
     const lossAnn = result.annotations.get(lossId);
     expect(lossAnn).toBeDefined();
-    expect(lossAnn!.outputType.shape).toEqual([]);
+    expect(lossAnn!.outputType.shape).toEqual([
+      { kind: "symbolic", name: "B" },
+    ]);
   });
 
   it("9.7: Unsample formula resolves correctly via expression evaluator: (32,2)→64, (16,1)→16", () => {
@@ -2999,6 +3000,298 @@ describe("TypeEngine — Phase C Shape Suggestions", () => {
     expect(typeof sug.param).toBe("string");
     expect(typeof sug.value).toBe("number");
     expect(typeof sug.reason).toBe("string");
+  });
+});
+
+// ---------------------------------------------------------------------------
+// Soundness regressions found during the type-system PR audit
+// ---------------------------------------------------------------------------
+
+describe("TypeEngine — audit soundness regressions", () => {
+  it("expands tuple-shaped Input parameters into full tensor rank", () => {
+    const d = new Diagram();
+    const inputId = d.nodes[0].id;
+    d.updateModule(inputId, {
+      params: { out_features: { value: "(1, 28, 28)" } },
+    });
+
+    const result = TypeEngine.infer(d);
+    expectTypeSuccess(result);
+    expectOutputShape(result, inputId, ["$B", "1", "28", "28"]);
+  });
+
+  it("rejects a contracted Einsum label with conflicting dimensions", () => {
+    const result = TypeEngine.inferEinsumShape(
+      "ij,jk->ik",
+      [
+        {
+          shape: [
+            { kind: "const", value: 2 },
+            { kind: "const", value: 3 },
+          ],
+          dtype: "float32",
+        },
+        {
+          shape: [
+            { kind: "const", value: 4 },
+            { kind: "const", value: 5 },
+          ],
+          dtype: "float32",
+        },
+      ],
+      "Einsum",
+    );
+
+    expect(Array.isArray(result)).toBe(false);
+    expect((result as TypeError).message).toMatch(/label "j".*conflicting/i);
+  });
+
+  it("rejects a non-square diagonal operand in Einsum", () => {
+    const result = TypeEngine.inferEinsumShape(
+      "ii->",
+      [
+        {
+          shape: [
+            { kind: "const", value: 3 },
+            { kind: "const", value: 4 },
+          ],
+          dtype: "float32",
+        },
+      ],
+      "Einsum",
+    );
+
+    expect(Array.isArray(result)).toBe(false);
+    expect((result as TypeError).message).toMatch(/label "i".*conflicting/i);
+  });
+
+  it("infers the internal output for a one-iteration shape-changing Repeat", () => {
+    const d = new Diagram();
+    const inputId = d.nodes[0].id;
+    d.updateModule(inputId, { params: { out_features: { value: "784" } } });
+
+    const repeatStereo = d.stereotypes.find((s) => s.name === "Repeat")!;
+    d.addModule(repeatStereo, 400, 0, {
+      params: { iterations: { value: "1" } },
+    });
+    const repeatId = d.nodes[1].id;
+    const internalInputId = "repeat_shape_input";
+    const internalLinearId = "repeat_shape_linear";
+    d.nodes.push(
+      node(internalInputId, "Input", "Input", {}, {
+        type: "custom",
+        isInput: true,
+        parentId: repeatId,
+      }),
+      node(
+        internalLinearId,
+        "Linear",
+        "Linear",
+        {
+          in_features: { value: "784" },
+          out_features: { value: "256" },
+        },
+        { type: "custom", parentId: repeatId },
+      ),
+    );
+    d.edges.push(edge("repeat-internal", internalInputId, internalLinearId));
+    d.edges.push(edge("repeat-external", inputId, repeatId));
+
+    const result = TypeEngine.infer(d);
+    expectTypeSuccess(result);
+    expectOutputShape(result, repeatId, ["$B", "256"]);
+  });
+
+  it("composes Repeat and rejects a second iteration incompatible with the first", () => {
+    const d = new Diagram();
+    const inputId = d.nodes[0].id;
+    d.updateModule(inputId, { params: { out_features: { value: "784" } } });
+
+    const repeatStereo = d.stereotypes.find((s) => s.name === "Repeat")!;
+    d.addModule(repeatStereo, 400, 0, {
+      params: { iterations: { value: "2" } },
+    });
+    const repeatId = d.nodes[1].id;
+    const internalInputId = "repeat_twice_input";
+    const internalLinearId = "repeat_twice_linear";
+    d.nodes.push(
+      node(internalInputId, "Input", "Input", {}, {
+        type: "custom",
+        isInput: true,
+        parentId: repeatId,
+      }),
+      node(
+        internalLinearId,
+        "Linear",
+        "Linear",
+        {
+          in_features: { value: "784" },
+          out_features: { value: "256" },
+        },
+        { type: "custom", parentId: repeatId },
+      ),
+    );
+    d.edges.push(edge("repeat-twice-internal", internalInputId, internalLinearId));
+    d.edges.push(edge("repeat-twice-external", inputId, repeatId));
+
+    const result = TypeEngine.infer(d);
+    expect(result.ok).toBe(false);
+    expect(result.errors.some(
+      (error) => error.nodeId === internalLinearId && error.severity === "error",
+    )).toBe(true);
+  });
+
+  it.each(["0", "1.5", "cazz"])(
+    "rejects invalid Repeat iterations=%s",
+    (iterations) => {
+      const d = new Diagram();
+      const inputId = d.nodes[0].id;
+      const repeatStereo = d.stereotypes.find((s) => s.name === "Repeat")!;
+      d.addModule(repeatStereo, 400, 0, {
+        params: { iterations: { value: iterations } },
+      });
+      const repeatId = d.nodes[1].id;
+      d.nodes.push(
+        node("repeat_invalid_input", "Input", "Input", {}, {
+          type: "custom",
+          isInput: true,
+          parentId: repeatId,
+        }),
+        node("repeat_invalid_relu", "ReLU", "ReLU", {}, {
+          type: "custom",
+          parentId: repeatId,
+        }),
+      );
+      d.edges.push(edge("repeat-invalid-internal", "repeat_invalid_input", "repeat_invalid_relu"));
+      d.edges.push(edge("repeat-invalid-external", inputId, repeatId));
+
+      const result = TypeEngine.infer(d);
+      expect(result.ok).toBe(false);
+      expect(result.errors.some((error) => error.nodeId === repeatId)).toBe(true);
+    },
+  );
+
+  it("rejects Concat inputs with different ranks", () => {
+    const d = new Diagram();
+    const concat = d.stereotypes.find((s) => s.name === "Concat")!;
+    const result = TypeEngine.inferNode(
+      undefined,
+      concat,
+      { dim: { value: "1" } },
+      new Map(),
+      [
+        {
+          shape: [
+            { kind: "symbolic", name: "B" },
+            { kind: "const", value: 4 },
+          ],
+          dtype: "float32",
+        },
+        {
+          shape: [
+            { kind: "symbolic", name: "B" },
+            { kind: "const", value: 2 },
+            { kind: "const", value: 2 },
+          ],
+          dtype: "float32",
+        },
+      ],
+    );
+
+    expect("message" in result).toBe(true);
+    expect((result as TypeError).message).toMatch(/rank mismatch/i);
+  });
+
+  it.each(["2", "-3", "0.5"])("rejects out-of-range or fractional Concat dim=%s", (dim) => {
+    const d = new Diagram();
+    const concat = d.stereotypes.find((s) => s.name === "Concat")!;
+    const result = TypeEngine.inferNode(
+      undefined,
+      concat,
+      { dim: { value: dim } },
+      new Map(),
+      [
+        {
+          shape: [
+            { kind: "symbolic", name: "B" },
+            { kind: "const", value: 4 },
+          ],
+          dtype: "float32",
+        },
+        {
+          shape: [
+            { kind: "symbolic", name: "B" },
+            { kind: "const", value: 5 },
+          ],
+          dtype: "float32",
+        },
+      ],
+    );
+
+    expect("message" in result).toBe(true);
+    expect((result as TypeError).message).toMatch(/integer|out of range/i);
+  });
+
+  it("rejects an invalid param_ref used only in the output pattern", () => {
+    const d = new Diagram();
+    const inputId = d.nodes[0].id;
+    const linear = d.stereotypes.find((s) => s.name === "Linear")!;
+    d.addModule(linear, 200, 0, {
+      params: {
+        in_features: { value: "784" },
+        out_features: { value: "cazz" },
+      },
+    });
+    const linearId = d.nodes[1].id;
+    d.edges.push(edge("invalid-output-param", inputId, linearId));
+
+    const result = TypeEngine.infer(d);
+    expect(result.ok).toBe(false);
+    expect(result.errors.some(
+      (error) => error.nodeId === linearId && /out_features.*invalid/i.test(error.message),
+    )).toBe(true);
+  });
+
+  it("orders double-digit join handles numerically", () => {
+    const handles = ["in-10", "in-2", "in-1", "in-11", "in-0"];
+    expect(handles.sort(TypeEngine.compareTargetHandles)).toEqual([
+      "in-0",
+      "in-1",
+      "in-2",
+      "in-10",
+      "in-11",
+    ]);
+  });
+
+  it("rejects a single-output subflow with multiple structural exits", () => {
+    const d = new Diagram();
+    const inputId = d.nodes[0].id;
+    const subflowId = "ambiguous_exit_subflow";
+    d.nodes.push(node(subflowId, "UnknownSF", "Subflow", {}, { type: "subflow" }));
+    d.nodes.push(
+      node("ambiguous_input", "Input", "Input", {}, {
+        type: "custom",
+        isInput: true,
+        parentId: subflowId,
+      }),
+      node("ambiguous_relu_a", "ReLU", "ReLUA", {}, {
+        type: "custom",
+        parentId: subflowId,
+      }),
+      node("ambiguous_relu_b", "ReLU", "ReLUB", {}, {
+        type: "custom",
+        parentId: subflowId,
+      }),
+    );
+    d.edges.push(edge("ambiguous-a", "ambiguous_input", "ambiguous_relu_a"));
+    d.edges.push(edge("ambiguous-b", "ambiguous_input", "ambiguous_relu_b"));
+    d.edges.push(edge("ambiguous-external", inputId, subflowId));
+
+    const result = TypeEngine.infer(d);
+    expect(result.ok).toBe(false);
+    expect(result.errors.some(
+      (error) => error.nodeId === subflowId && /exactly one exit/i.test(error.message),
+    )).toBe(true);
   });
 });
 

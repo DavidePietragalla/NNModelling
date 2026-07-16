@@ -8,7 +8,7 @@
   },
   "params": {
     "out_features": {
-      "type": "int",
+      "type": "int | tuple",
       "default": "784"
     }
   },
@@ -17,7 +17,7 @@
     "input": [],
     "output": [
       { "kind": "symbolic", "name": "$B" },
-      { "kind": "param_ref", "name": "out_features" }
+      { "kind": "param_spread", "param": "out_features" }
     ],
     "dtype": {
       "output": "float32"

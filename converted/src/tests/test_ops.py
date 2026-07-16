@@ -22,6 +22,7 @@ from ops.repeat import Repeat
 from ops.horizontal_repeat import HorizontalRepeat
 from ops.positional_encoding import PositionalEncoding
 from ops.sequence_pool import SequencePool
+from ops.unflatten import Unflatten
 
 
 # -- Addition -----------------------------------------------------------------------
@@ -73,6 +74,18 @@ class TestConcat:
         a, b = torch.randn(2, 3), torch.randn(2, 5)
         out = Concat()([a, b])
         assert out.shape == (2, 8)  # default dim=-1
+
+
+# -- Unflatten ----------------------------------------------------------------------
+
+class TestUnflatten:
+    def test_accepts_hydra_style_sequence(self):
+        tensor = torch.arange(16).reshape(2, 8)
+
+        output = Unflatten(dim=1, unflattened_size=[2, 2, 2])(tensor)
+
+        assert output.shape == (2, 2, 2, 2)
+        assert output.flatten(start_dim=1).equal(tensor)
 
 
 # -- Einsum -------------------------------------------------------------------------

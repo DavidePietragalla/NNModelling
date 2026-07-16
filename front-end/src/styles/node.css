@@ -81,6 +81,7 @@
 }
 :global(.node-indicator.error) { background-color: #dc2626; }
 :global(.node-indicator.warning) { background-color: #f59e0b; }
+:global(.node-indicator.suggestion) { background-color: #2563eb; }
 
 .output-handle-wrapper {
   position: relative;

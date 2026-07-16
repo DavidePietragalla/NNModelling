@@ -18,7 +18,8 @@
 import { type Node, type Edge } from "@xyflow/svelte";
 import { DiagramCore } from "./core/DiagramCore";
 import { Stereotype } from "./stereotype";
-import type { TypeResult } from './conversion/tensortypes';
+import { TypeEngine } from "./conversion/typeEngine";
+import type { TypeResult } from "./conversion/tensortypes";
 
 export const DIAGRAM_CONTEXT_KEY = Symbol("diagram-context");
 
@@ -44,6 +45,16 @@ export class Diagram extends DiagramCore {
     this.events.on("graph_changed", () => {
       this.nodes = [...this.nodes];
       this.edges = [...this.edges];
+      this.refreshTypes();
     });
+
+    this.refreshTypes();
+  }
+
+  /** Recompute tensor annotations and diagnostics for the current graph. */
+  public refreshTypes(): TypeResult {
+    const result = TypeEngine.infer(this);
+    this.typeResult = result;
+    return result;
   }
 }

@@ -128,7 +128,7 @@ the following categories:
 
 .. math::
 
-   d ::= c \mid x \mid p \mid *
+   d ::= c \mid x \mid p \mid * \mid e \mid p^*
 
 where:
 
@@ -144,6 +144,10 @@ where:
   dimensions. A wildcard in an input pattern consumes matching dimensions
   from the actual tensor; in an output pattern, it reproduces the dimensions
   consumed during input matching
+* :math:`e` is a **computed dimension**, evaluated by the expression language
+  from symbolic bindings and node parameters
+* :math:`p^*` is a **parameter spread**, expanding a tuple-valued parameter
+  into multiple output dimensions
 
 This representation allows the type system to express partially known shapes
 — containing symbolic variables and wildcards — rather than requiring every
@@ -321,6 +325,19 @@ The wildcard on both input and output means "I accept any shape, and the
 output shape equals the input shape." This single pattern covers ReLU, Tanh,
 Sigmoid, Softmax, Dropout, BatchNorm1d, BatchNorm2d, and LayerNorm.
 
+Loss as a Conceptual Layer
+~~~~~~~~~~~~~~~~~~~~~~~~~~
+
+Loss stereotypes are layers in the DSL type model. They accept the prediction
+tensor and expose a conceptual rank-1 result ``[B]``, where ``B`` is the batch
+dimension. The output handle is intentionally visible, so both a user and an
+MCP client can inspect this inferred type.
+
+The Python backend does not yet implement the same data-flow semantics: during
+conversion, a Loss is extracted as a terminal training objective. Propagating
+its rank-1 result through ``converted/`` is planned future work and must not be
+assumed by generated models today.
+
 The Notation Rule for ``$``
 ~~~~~~~~~~~~~~~~~~~~~~~~~~~
 
@@ -375,36 +392,28 @@ Pattern Matching
 The core pattern matching algorithm walks input dimensions and pattern
 elements with a two-pointer approach:
 
-+-------------+----------------------------------------------------------+
-| Kind        | Behaviour                                                |
-+=============+==========================================================+
-| ``const``   | The input dimension at this position must equal the      |
-|             | constant value. E.g.: pattern expects 3, input has 1 →   |
-|             | ``dimension mismatch: expected 3, got 1``                |
-+-------------+----------------------------------------------------------+
-| ``symbolic``| If the name is already bound in :math:`\Gamma`, the      |
-|             | input dimension must equal the bound value (unification). |
-|             | If unbound, a new binding is added. E.g.: ``symbolic $B  |
-|             | already bound to 784, cannot unify with 128``            |
-+-------------+----------------------------------------------------------+
-|``param_ref``| The parameter is resolved from the node's parameter map. |
-|             | The input dimension must equal the resolved value. If    |
-|             | the value is non-numeric (e.g. "cazz"), a type error is  |
-|             | reported rather than silently treating it as unset.      |
-+-------------+----------------------------------------------------------+
-| ``wildcard``| Consumes zero or more input dimensions, with lookahead   |
-|             | for subsequent required pattern elements. The consumed   |
-|             | dimensions are captured and substituted into the output.  |
-+-------------+----------------------------------------------------------+
-| ``computed``| Pass-through on the input side (exact value is not       |
-|             | validated); the formula is resolved on the output side.  |
-+-------------+----------------------------------------------------------+
-|``param_spread``| Reads a tuple parameter (e.g. ``(1, 100)``) and       |
-|             | expands it into multiple output dimensions. On the input |
-|             | side, it consumes exactly N dimensions where N is the    |
-|             | tuple length. On the output side, it produces N const   |
-|             | dimensions from the tuple values.                       |
-+-------------+----------------------------------------------------------+
+.. list-table:: Pattern matching behaviour
+   :header-rows: 1
+   :widths: 20 80
+
+   * - Kind
+     - Behaviour
+   * - ``const``
+     - The input dimension must equal the constant value.
+   * - ``symbolic``
+     - An existing :math:`\Gamma` binding is unified with the input;
+       otherwise a new binding is added.
+   * - ``param_ref``
+     - The node parameter is resolved and compared with the input dimension.
+       A non-numeric value is a type error, not an unset value.
+   * - ``wildcard``
+     - Consumes zero or more dimensions with lookahead and captures them for
+       substitution into the output.
+   * - ``computed``
+     - Passes through on input; its expression is resolved on output.
+   * - ``param_spread``
+     - Reads a tuple parameter, consumes or produces the corresponding number
+       of dimensions, and materializes its entries as constants.
 
 **Wildcard lookahead.** The wildcard does not blindly consume all remaining
 dimensions. It computes how many are needed for subsequent non-wildcard
@@ -710,61 +719,37 @@ with the inferred output shape:
 
 .. code-block:: text
 
-   Output: [B, 256]  float32
+   [B, 256]
 
 Implementation Phases
 ---------------------
 
 The type system was implemented incrementally over six phases:
 
-+-------------+----------------------------------------------------------+
-| Phase       | What Was Added                                           |
-+=============+==========================================================+
-| Phase 1     | Core type model (tensortypes.ts), pattern matching        |
-|             | engine, type signatures for Input/Linear/ReLU            |
-+-------------+----------------------------------------------------------+
-| Phase 2     | Computed dimensions and expression language (Conv2d,     |
-|             | MaxPool2d, AvgPool2d, Flatten, Unsample), 10 shape-     |
-|             | preserving modules, Embedding. All hardcoded formula     |
-|             | bodies (``resolveFormula``, ``resolveComputedArg``)      |
-|             | replaced by inline ``expr`` strings.                     |
-+-------------+----------------------------------------------------------+
-| Phase 3     | Join type checking (Addition, Concat, MatMul,            |
-|             | ScaledDotProduct, MaskedScaledDotProduct),               |
-|             | multi-input pattern matching, symbolic unification.      |
-|             | Concat dim resolution uses the expression language.      |
-+-------------+----------------------------------------------------------+
-| Phase 4     | Recursive subflow type inference, declarative subflow    |
-|             | transforms (``action: "identity"`` for Repeat,           |
-|             | ``action: "infer_then_transform"`` for HorizontalRepeat),|
-|             | type signatures for 7 complex modules (MultiheadAttention,|
-|             | Transformer, TransformerEncoderLayer, Transformer-       |
-|             | DecoderLayer, PositionalEncoding, SequencePool,          |
-|             | Unsample), 4 loss nodes (BCELoss, BCEWithLogitsLoss,     |
-|             | CrossEntropyLoss, MSELoss), Fork. All subflow/join       |
-|             | logic is declarative — no hardcoded name checks.         |
-|             | All 35 stereotypes have type signatures (Einsum was      |
-|             | intentionally gradual typing in this phase).             |
-+-------------+----------------------------------------------------------+
-| Phase 5     | Editor integration: reactive ``typeResult`` state,       |
-|             | error panel, node indicators, shape tooltips             |
-+-------------+----------------------------------------------------------+
-| Phase 6     | Dtype input validation on 7 stereotypes (Embedding,      |
-|             | BatchNorm1d, BatchNorm2d, LayerNorm, CrossEntropyLoss,  |
-|             | Softmax, Dropout) with warning-only enforcement.         |
-|             | Advisory warnings via declarative ``Advisory`` config    |
-|             | with ``evaluateAdvisory()`` (kernel_size-vs-spatial,     |
-|             | param-threshold). Shape suggestions for unset parameters |
-|             | matching const input dims. Join input labels (MatMul:    |
-|             | A/B, ScaledDotProduct: Q/K/V) for clearer error         |
-|             | messages. Einsum shape inference via 5-step label-      |
-|             | mapping algorithm in ``inferEinsumShape()`` — parses     |
-|             | Einstein notation, validates arity/ranks, computes       |
-|             | output shape dimension-by-dimension. Ellipsis ``...``   |
-|             | is explicitly rejected. All 36 stereotypes now have      |
-|             | type signatures, including Einsum (``join.action:        |
-|             | "einsum"``).                                             |
-+-------------+----------------------------------------------------------+
+.. list-table:: Implementation phases
+   :header-rows: 1
+   :widths: 15 85
+
+   * - Phase
+     - What was added
+   * - Phase 1
+     - Core type model, pattern matching, and Input/Linear/ReLU signatures.
+   * - Phase 2
+     - Computed dimensions, expression language, shape-preserving modules,
+       Embedding, and inline ``expr`` formulas.
+   * - Phase 3
+     - Multi-input join checking, symbolic unification, and declarative Concat
+       dimension resolution.
+   * - Phase 4
+     - Recursive subflow inference, ``repeat`` composition,
+       ``infer_then_transform``, complex module signatures, Loss signatures,
+       and Fork.
+   * - Phase 5
+     - Reactive editor integration, diagnostics panel, node indicators, and
+       shape tooltips.
+   * - Phase 6
+     - Dtype warnings, advisory diagnostics, shape suggestions, join input
+       labels, and complete Einsum label-mapping inference.
 
 Further Reading
 ---------------

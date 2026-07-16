@@ -16,7 +16,7 @@ MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.
   import type { Diagram } from "../Diagram.svelte";
   import type { Stereotype } from "../stereotype";
   import type { Node } from "@xyflow/svelte";
-  import { TypeEngine } from "../conversion/typeEngine";
+  import type { TypeSuggestion } from "../conversion/tensortypes";
 
   interface Props {
     diagram: Diagram;
@@ -75,7 +75,7 @@ MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.
   function scheduleTypeCheck() {
     clearTimeout(typeCheckTimer);
     typeCheckTimer = setTimeout(() => {
-      diagram.typeResult = TypeEngine.infer(diagram);
+      diagram.refreshTypes();
     }, 300);
   }
 
@@ -202,6 +202,36 @@ MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.
     return (n.data as Record<string, unknown>)?.name as string ?? (n.data as Record<string, unknown>)?.stereotype as string ?? nodeId;
   }
 
+  function selectDiagnosticNode(nodeId: string) {
+    if (!diagram.nodes.some((node) => node.id === nodeId)) return;
+    diagram.nodes = diagram.nodes.map((node) => ({
+      ...node,
+      selected: node.id === nodeId,
+    }));
+  }
+
+  function applySuggestion(suggestion: TypeSuggestion) {
+    const target = diagram.getNodeById(suggestion.nodeId);
+    if (!target) return;
+    const params = (target.data.params as Record<string, Record<string, unknown>>) ?? {};
+    const existing = params[suggestion.param] ?? {};
+    diagram.updateModule(suggestion.nodeId, {
+      params: {
+        ...params,
+        [suggestion.param]: {
+          ...existing,
+          value: String(suggestion.value),
+        },
+      },
+    });
+  }
+
+  let diagnosticCount = $derived(
+    (diagram.typeResult?.errors.length ?? 0) +
+      (diagram.typeResult?.warnings.length ?? 0) +
+      (diagram.typeResult?.suggestions.length ?? 0),
+  );
+
   function handleManualUpdate() {
     if (isEditing && selectedNode) {
       // Configuriamo il payload in base al tipo di nodo
@@ -323,23 +353,41 @@ MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.
     {#if diagram.typeResult}
       <div class="type-error-panel">
         <div class="type-error-panel-header">
-          Type Check ({diagram.typeResult.errors.length} issues)
+          Type Check ({diagnosticCount} issues)
         </div>
-        {#if diagram.typeResult.errors.length === 0}
+        {#if diagnosticCount === 0}
           <div class="type-errors-empty">No type errors or warnings.</div>
         {:else}
           {#each diagram.typeResult.errors as err}
             <!-- svelte-ignore a11y_no_static_element_interactions a11y_click_events_have_key_events -->
-            <div class="type-error-item {err.severity}" onclick={() => {
-              const found = diagram.nodes.find(n => n.id === err.nodeId);
-              if (found) {
-                diagram.nodes = diagram.nodes.map(n => ({ ...n, selected: n.id === found.id }));
-              }
-            }} onkeydown={(e) => { if (e.key === 'Enter' || e.key === ' ') { const found = diagram.nodes.find(n => n.id === err.nodeId); if (found) { diagram.nodes = diagram.nodes.map(n => ({ ...n, selected: n.id === found.id })); } } }} role="button" tabindex="0">
+            <div class="type-error-item {err.severity}" onclick={() => selectDiagnosticNode(err.nodeId)} onkeydown={(e) => { if (e.key === 'Enter' || e.key === ' ') selectDiagnosticNode(err.nodeId); }} role="button" tabindex="0">
               <span class="type-error-icon">{err.severity === 'error' ? '❌' : '⚠️'}</span>
               <div class="type-error-text">
                 <span class="type-error-node">{getNodeLabel(err.nodeId)}</span>
                 <span class="type-error-msg">{err.message}</span>
+              </div>
+            </div>
+          {/each}
+
+          {#each diagram.typeResult.warnings as warning}
+            <div class="type-error-item warning" onclick={() => selectDiagnosticNode(warning.nodeId)} onkeydown={(e) => { if (e.key === 'Enter' || e.key === ' ') selectDiagnosticNode(warning.nodeId); }} role="button" tabindex="0">
+              <span class="type-error-icon">⚠️</span>
+              <div class="type-error-text">
+                <span class="type-error-node">{getNodeLabel(warning.nodeId)} · {warning.kind}</span>
+                <span class="type-error-msg">{warning.message}</span>
+              </div>
+            </div>
+          {/each}
+
+          {#each diagram.typeResult.suggestions as suggestion}
+            <div class="type-error-item suggestion" onclick={() => selectDiagnosticNode(suggestion.nodeId)} onkeydown={(e) => { if (e.key === 'Enter' || e.key === ' ') selectDiagnosticNode(suggestion.nodeId); }} role="button" tabindex="0">
+              <span class="type-error-icon">💡</span>
+              <div class="type-error-text">
+                <span class="type-error-node">{getNodeLabel(suggestion.nodeId)} · {suggestion.param}</span>
+                <span class="type-error-msg">Set to {suggestion.value}: {suggestion.reason}</span>
+                <button class="apply-suggestion-btn" onclick={(event) => { event.stopPropagation(); applySuggestion(suggestion); }}>
+                  Applica
+                </button>
               </div>
             </div>
           {/each}
@@ -387,6 +435,9 @@ MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.
   .type-error-item.warning .type-error-msg {
     color: #f59e0b;
   }
+  .type-error-item.suggestion .type-error-msg {
+    color: #2563eb;
+  }
   .type-error-icon {
     flex-shrink: 0;
   }
@@ -396,5 +447,15 @@ MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.
   }
   .type-error-node {
     font-weight: 600;
+  }
+  .apply-suggestion-btn {
+    align-self: flex-start;
+    margin-top: 4px;
+    padding: 3px 8px;
+    border: 1px solid #2563eb;
+    border-radius: 4px;
+    background: #eff6ff;
+    color: #1d4ed8;
+    cursor: pointer;
   }
 </style>

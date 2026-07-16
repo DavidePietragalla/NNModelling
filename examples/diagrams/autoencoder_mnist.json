@@ -15,7 +15,7 @@
         "color": "#27b376",
         "params": {
           "out_features": {
-            "value": "784"
+            "value": "(1, 28, 28)"
           }
         },
         "isInput": true,
@@ -24,6 +24,33 @@
       "measured": {
         "width": 30,
         "height": 30
+      },
+      "selected": false,
+      "dragging": false
+    },
+    {
+      "id": "flatten_input",
+      "type": "custom",
+      "position": {
+        "x": 753,
+        "y": 15
+      },
+      "width": 100,
+      "height": 50,
+      "data": {
+        "stereotype": "Flatten",
+        "name": "Flatten_Input",
+        "color": "#a9a9a9",
+        "params": {
+          "start_dim": { "value": "1" },
+          "end_dim": { "value": "-1" }
+        },
+        "isInput": false,
+        "isLoss": false
+      },
+      "measured": {
+        "width": 100,
+        "height": 50
       },
       "selected": false,
       "dragging": false
@@ -316,6 +343,33 @@
       "dragging": false
     },
     {
+      "id": "unflatten_output",
+      "type": "custom",
+      "position": {
+        "x": 822,
+        "y": 1340
+      },
+      "width": 120,
+      "height": 50,
+      "data": {
+        "stereotype": "Unflatten",
+        "name": "Unflatten_Output",
+        "color": "#a9a9a9",
+        "params": {
+          "dim": { "value": "1" },
+          "unflattened_size": { "value": "(1, 28, 28)" }
+        },
+        "isInput": false,
+        "isLoss": false
+      },
+      "measured": {
+        "width": 120,
+        "height": 50
+      },
+      "selected": false,
+      "dragging": false
+    },
+    {
       "id": "loss",
       "type": "custom",
       "position": {
@@ -347,9 +401,14 @@
   "edges": [
     {
       "source": "input",
-      "target": "enc_linear",
-      "id": "e-input-enc_linear",
+      "target": "flatten_input",
+      "id": "e-input-flatten",
       "selected": false
+    },
+    {
+      "source": "flatten_input",
+      "target": "enc_linear",
+      "id": "e-flatten-enc_linear"
     },
     {
       "source": "enc_linear",
@@ -389,8 +448,13 @@
     },
     {
       "source": "sigmoid",
+      "target": "unflatten_output",
+      "id": "e-sigmoid-unflatten"
+    },
+    {
+      "source": "unflatten_output",
       "target": "loss",
-      "id": "e-sigmoid-loss"
+      "id": "e-unflatten-loss"
     },
     {
       "source": "bottleneck_tanh2",

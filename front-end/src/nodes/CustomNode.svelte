@@ -20,6 +20,7 @@ MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.
   } from "@xyflow/svelte";
   import { getContext } from "svelte";
   import { DIAGRAM_CONTEXT_KEY, type Diagram } from "../Diagram.svelte";
+  import { getNodeDiagnosticSummary } from "../conversion/typeDiagnostics";
 
   let { data, selected, isConnectable, id }: NodeProps = $props();
   const diagram = getContext<Diagram>(DIAGRAM_CONTEXT_KEY);
@@ -46,12 +47,9 @@ MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.
   }
 
   // --- Type error indicator ---
-  let nodeErrors = $derived.by(() => {
-    if (!diagram?.typeResult) return null;
-    const errs = diagram.typeResult.errors.filter(e => e.nodeId === id);
-    if (errs.length === 0) return null;
-    return { severity: errs.some(e => e.severity === 'error') ? 'error' : 'warning', message: errs[0].message };
-  });
+  let nodeDiagnostic = $derived(
+    getNodeDiagnosticSummary(diagram?.typeResult ?? null, id),
+  );
 
   // --- Shape tooltip on output handle ---
   let outputShape = $derived.by(() => {
@@ -109,21 +107,21 @@ MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.
   </div>
 {/if}
 
-{#if nodeErrors}
-  <div class="node-indicator {nodeErrors.severity}" title={nodeErrors.message}>!</div>
+{#if nodeDiagnostic}
+  <div class="node-indicator {nodeDiagnostic.severity}" title={nodeDiagnostic.message}>
+    {nodeDiagnostic.severity === "suggestion" ? "?" : "!"}
+  </div>
 {/if}
 
-{#if !data.isLoss}
-  <!-- svelte-ignore a11y_no_static_element_interactions -->
-  <div class="output-handle-wrapper" onmouseenter={() => isNodeHovered = true} onmouseleave={() => isNodeHovered = false}>
-    <Handle type="source" id="out" position={Position.Bottom} {isConnectable} />
-    {#if isNodeHovered && outputShape}
-      <div class="shape-tooltip">[{outputShape}]</div>
-    {/if}
-  </div>
-{:else}
-  <Handle type="source" position={Position.Bottom} {isConnectable} />
-{/if}
+<!-- Loss remains terminal for conversion/runtime, but its source handle and
+     rank-1 output expose the conceptual result in the visual type system. -->
+<!-- svelte-ignore a11y_no_static_element_interactions -->
+<div class="output-handle-wrapper" onmouseenter={() => isNodeHovered = true} onmouseleave={() => isNodeHovered = false}>
+  <Handle type="source" id="out" position={Position.Bottom} {isConnectable} />
+  {#if isNodeHovered && outputShape}
+    <div class="shape-tooltip">[{outputShape}]</div>
+  {/if}
+</div>
 <style>
   @import "../styles/node.css";
 </style>

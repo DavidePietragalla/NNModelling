@@ -177,11 +177,7 @@ if (shouldRun) {
     });
   });
 } else {
-  describe("Smoke", () => {
-    it("skipped — NNM_TIER is not 'smoke' or 'all'", () => {
-      // This test always passes; it's just a placeholder so vitest
-      // doesn't complain about an empty file.
-      expect(true).toBe(true);
-    });
+  describe.skip("Smoke tier disabled", () => {
+    it("runs only when NNM_TIER is smoke or all", () => {});
   });
 }

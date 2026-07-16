@@ -12,8 +12,8 @@
  */
 
 import type { Node, Edge } from "@xyflow/svelte";
-import { Diagram } from "../Diagram.svelte";
-import type { Stereotype } from "../stereotype";
+import type { DiagramCore } from "../core/DiagramCore";
+import type { StereotypeCore } from "../core/StereotypeCore";
 import type {
   TensorType,
   ShapeDimension,
@@ -56,7 +56,7 @@ export class TypeEngine {
    * 2. Traverse nodes in topological order, inferring types.
    * 3. Return all annotations, errors, and a summary `ok` flag.
    */
-  static infer(diagram: Diagram): TypeResult {
+  static infer(diagram: DiagramCore): TypeResult {
     const annotations = new Map<string, NodeTypeAnnotation>();
     const errors: TypeError[] = [];
     const warnings: TypeWarning[] = [];
@@ -128,7 +128,7 @@ export class TypeEngine {
               ...(subflowInputType !== undefined ? { inputType: subflowInputType } : {}),
             });
             for (const dim of result.shape) {
-              if (dim.kind === "symbolic" && !env.has(dim.name)) {
+              if (dim.kind === "symbolic" && !dim.name.startsWith("#") && !env.has(dim.name)) {
                 env.set(dim.name, dim);
               }
             }
@@ -177,7 +177,7 @@ export class TypeEngine {
         const sortedEdges = [...incomingEdges].sort((a, b) => {
           const ha = a.targetHandle ?? "in-0";
           const hb = b.targetHandle ?? "in-0";
-          return ha.localeCompare(hb);
+          return this.compareTargetHandles(ha, hb);
         });
         for (const e of sortedEdges) {
           const srcAnn = annotations.get(e.source);
@@ -268,7 +268,7 @@ export class TypeEngine {
 
         // Update environment with any new symbolic bindings from the output
         for (const dim of result.shape) {
-          if (dim.kind === "symbolic" && !env.has(dim.name)) {
+          if (dim.kind === "symbolic" && !dim.name.startsWith("#") && !env.has(dim.name)) {
             env.set(dim.name, dim);
           }
         }
@@ -299,11 +299,11 @@ export class TypeEngine {
    */
   static inferNode(
     inputType: TensorType | undefined,
-    stereotype: Stereotype,
+    stereotype: StereotypeCore,
     params: Record<string, unknown>,
     env: TypeEnvironment,
     inputTypes?: TensorType[],
-    diagram?: Diagram,
+    diagram?: DiagramCore,
     nodeId?: string,
     annotations?: Map<string, NodeTypeAnnotation>,
     errors?: TypeError[],
@@ -318,6 +318,21 @@ export class TypeEngine {
         message: `No type signature for "${stereotype.name}"`,
         severity: "warning",
       } satisfies TypeError;
+    }
+
+    // Validate parameters referenced only by the output pattern as well.
+    // Input-side param refs are checked by patternMatch, but output-only refs
+    // (for example Linear.out_features) would otherwise degrade to a symbol.
+    for (const outputDim of sig.output) {
+      if (outputDim.kind !== "param_ref") continue;
+      const resolution = this.resolveParamRef(outputDim.name, params);
+      if (resolution.status === "invalid") {
+        return {
+          nodeId: nodeId ?? "",
+          message: `parameter ${outputDim.name} has invalid value "${resolution.value}", expected a number`,
+          severity: "error",
+        } satisfies TypeError;
+      }
     }
 
     switch (sig.kind) {
@@ -615,6 +630,34 @@ export class TypeEngine {
             concatDim = inputTypes[0].shape.length + concatDim;
           }
 
+          if (!Number.isInteger(concatDim)) {
+            return {
+              nodeId: "",
+              message: `Concat dim must be an integer, got ${concatDim}`,
+              severity: "error",
+            } satisfies TypeError;
+          }
+
+          const expectedRank = inputTypes[0].shape.length;
+          if (concatDim < 0 || concatDim >= expectedRank) {
+            return {
+              nodeId: "",
+              message: `Concat dim ${concatDim} is out of range for rank ${expectedRank}`,
+              severity: "error",
+            } satisfies TypeError;
+          }
+
+          for (let idx = 1; idx < inputTypes.length; idx++) {
+            const actualRank = inputTypes[idx].shape.length;
+            if (actualRank !== expectedRank) {
+              return {
+                nodeId: "",
+                message: `Concat input ${idx} rank mismatch: expected ${expectedRank}, got ${actualRank}`,
+                severity: "error",
+              } satisfies TypeError;
+            }
+          }
+
           outputDims = this.resolveConcatOutput(inputTypes, concatDim);
 
           // Verify non-concat dims match across all inputs
@@ -713,6 +756,60 @@ export class TypeEngine {
               warnings,
               suggestions,
             );
+          }
+
+          // ── repeat: compose the internal transform N times ─────
+          case "repeat": {
+            if (!inputType) {
+              return {
+                nodeId: nodeId ?? "",
+                message: "Subflow has no input",
+                severity: "error",
+              } satisfies TypeError;
+            }
+            if (!diagram || !nodeId) {
+              return {
+                nodeId: nodeId ?? "",
+                message: "Cannot infer repeated subflow without diagram context",
+                severity: "error",
+              } satisfies TypeError;
+            }
+
+            const iterationsParam = subCfg?.iterations_param ?? "iterations";
+            const iterationsResult = this.resolveParamRef(iterationsParam, params);
+            if (iterationsResult.status !== "resolved") {
+              return {
+                nodeId,
+                message: `Repeat cannot resolve parameter "${iterationsParam}"`,
+                severity: "error",
+              } satisfies TypeError;
+            }
+            const iterations = iterationsResult.value;
+            if (!Number.isInteger(iterations) || iterations < 1) {
+              return {
+                nodeId,
+                message: `Repeat parameter "${iterationsParam}" must be an integer >= 1, got ${iterations}`,
+                severity: "error",
+              } satisfies TypeError;
+            }
+
+            let currentType = inputType;
+            for (let iteration = 0; iteration < iterations; iteration++) {
+              const iterationResult = this.inferSubflow(
+                nodeId,
+                currentType,
+                diagram,
+                params,
+                env,
+                subflowAnnotations,
+                subflowErrors,
+                warnings,
+                suggestions,
+              );
+              if (!isTensorType(iterationResult)) return iterationResult;
+              currentType = iterationResult;
+            }
+            return currentType;
           }
 
           // ── infer_then_transform: infer internal, then apply transform ──
@@ -822,7 +919,7 @@ export class TypeEngine {
   private static inferSubflow(
     subflowNodeId: string,
     externalInputType: TensorType | undefined,
-    diagram: Diagram,
+    diagram: DiagramCore,
     params: Record<string, unknown>,
     env: TypeEnvironment,
     annotations: Map<string, NodeTypeAnnotation>,
@@ -849,22 +946,37 @@ export class TypeEngine {
         internalNodeIds.has(e.source) && internalNodeIds.has(e.target),
     );
 
-    // 3. Find entry node (internal Input or topological source)
-    let entryNode: Node | undefined = internalNodes.find((n) => {
+    // 3. Find the single entry node (internal Input or topological source).
+    const declaredInputs = internalNodes.filter((n) => {
       const stereo = diagram.getStereotype(
         (n.data as Record<string, unknown>).stereotype as string,
       );
       return stereo?.isInput;
     });
 
+    if (declaredInputs.length > 1) {
+      return {
+        nodeId: subflowNodeId,
+        message: `Subflow must have exactly one entry, found ${declaredInputs.length} Input nodes`,
+        severity: "error",
+      } satisfies TypeError;
+    }
+
+    let entryNode: Node | undefined = declaredInputs[0];
+
     // Fallback: if no Input node, use node(s) with no internal incoming edges
     if (!entryNode) {
       const sources = internalNodes.filter(
         (n) => !internalEdges.some((e) => e.target === n.id),
       );
-      if (sources.length >= 1) {
-        entryNode = sources[0];
+      if (sources.length !== 1) {
+        return {
+          nodeId: subflowNodeId,
+          message: `Subflow must have exactly one entry, found ${sources.length}`,
+          severity: "error",
+        } satisfies TypeError;
       }
+      entryNode = sources[0];
     }
 
     if (!entryNode) {
@@ -884,6 +996,13 @@ export class TypeEngine {
       return {
         nodeId: subflowNodeId,
         message: "Could not determine subflow exit node",
+        severity: "error",
+      } satisfies TypeError;
+    }
+    if (exitNodes.length > 1) {
+      return {
+        nodeId: subflowNodeId,
+        message: `Subflow must have exactly one exit, found ${exitNodes.length}`,
         severity: "error",
       } satisfies TypeError;
     }
@@ -1013,7 +1132,7 @@ export class TypeEngine {
         const sortedEdges = [...localIncomingEdges].sort((a, b) => {
           const ha = a.targetHandle ?? "in-0";
           const hb = b.targetHandle ?? "in-0";
-          return ha.localeCompare(hb);
+          return this.compareTargetHandles(ha, hb);
         });
         for (const e of sortedEdges) {
           const srcAnn = annotations.get(e.source);
@@ -1049,7 +1168,7 @@ export class TypeEngine {
           outputType: result,
         });
         for (const dim of result.shape) {
-          if (dim.kind === "symbolic" && !localEnv.has(dim.name)) {
+          if (dim.kind === "symbolic" && !dim.name.startsWith("#") && !localEnv.has(dim.name)) {
             localEnv.set(dim.name, dim);
           }
         }
@@ -1068,9 +1187,9 @@ export class TypeEngine {
       }
     }
 
-    // 9. Return first exit node's output type
-    const firstExit = exitNodes[0];
-    const exitAnn = annotations.get(firstExit.id);
+    // 9. Return the single exit node's output type
+    const exitNode = exitNodes[0];
+    const exitAnn = annotations.get(exitNode.id);
     if (!exitAnn) {
       return {
         nodeId: subflowNodeId,
@@ -1696,40 +1815,47 @@ export class TypeEngine {
       outputLabelStr = onceLabels.join("");
     }
 
-    // ── Step 4: Map output labels to dimensions ─────────────────
-    const outputDims: ShapeDimension[] = [];
-    for (const outputLabel of outputLabelStr) {
-      const found: ShapeDimension[] = [];
-
-      for (let k = 0; k < inputLabelStrs.length; k++) {
-        const labelStr = inputLabelStrs[k];
-        for (let p = 0; p < labelStr.length; p++) {
-          if (labelStr[p] === outputLabel) {
-            found.push(inputTypes[k].shape[p]);
-          }
+    // ── Step 4: Unify every label occurrence ────────────────────
+    // Contracted labels and repeated labels within one operand are just as
+    // constrained as labels that survive in the output.
+    const labelDimensions = new Map<string, ShapeDimension>();
+    for (let k = 0; k < inputLabelStrs.length; k++) {
+      const labelStr = inputLabelStrs[k];
+      for (let p = 0; p < labelStr.length; p++) {
+        const label = labelStr[p];
+        const dimension = inputTypes[k].shape[p];
+        const existing = labelDimensions.get(label);
+        if (existing && !dimEqual(existing, dimension)) {
+          return {
+            nodeId: "",
+            message: `"${stereotypeName}" label "${label}" bound to conflicting dimensions: ${this.describeDim(existing)} vs ${this.describeDim(dimension)}`,
+            severity: "error",
+          } satisfies TypeError;
         }
+        if (!existing) labelDimensions.set(label, dimension);
       }
+    }
 
-      if (found.length === 0) {
+    const outputLabels = [...outputLabelStr];
+    if (new Set(outputLabels).size !== outputLabels.length) {
+      return {
+        nodeId: "",
+        message: `"${stereotypeName}" output labels must be unique`,
+        severity: "error",
+      } satisfies TypeError;
+    }
+
+    const outputDims: ShapeDimension[] = [];
+    for (const outputLabel of outputLabels) {
+      const dimension = labelDimensions.get(outputLabel);
+      if (!dimension) {
         return {
           nodeId: "",
           message: `"${stereotypeName}" label "${outputLabel}" in output not found in any input`,
           severity: "error",
         } satisfies TypeError;
       }
-
-      // If label appears in multiple inputs, all dims must be equal
-      for (let f = 1; f < found.length; f++) {
-        if (!dimEqual(found[0], found[f])) {
-          return {
-            nodeId: "",
-            message: `"${stereotypeName}" label "${outputLabel}" bound to conflicting dimensions: ${this.describeDim(found[0])} vs ${this.describeDim(found[f])}`,
-            severity: "error",
-          } satisfies TypeError;
-        }
-      }
-
-      outputDims.push(found[0]);
+      outputDims.push(dimension);
     }
 
     // ── Step 5: Return output shape ──────────────────────────────
@@ -1762,12 +1888,8 @@ export class TypeEngine {
 
     if (typeof val === "number") return { status: 'resolved', value: val };
     if (typeof val === "string") {
-      if (val === "None") {
+      if (val === "None" || val === "Undefined" || val === "") {
         return { status: 'unset' };
-      }
-      // "Undefined", "" (empty), and any other non-numeric string are invalid
-      if (val === "Undefined" || val === "") {
-        return { status: 'invalid', value: val };
       }
       const parsed = Number(val);
       if (isNaN(parsed)) {
@@ -1945,6 +2067,16 @@ export class TypeEngine {
       case "param_spread":
         return d.values ? `[${d.values.join(",")}]` : `spread(${d.param})`;
     }
+  }
+
+  /** Compare join input handles by numeric suffix (`in-2` before `in-10`). */
+  static compareTargetHandles(a: string, b: string): number {
+    const aMatch = /^in-(\d+)$/.exec(a);
+    const bMatch = /^in-(\d+)$/.exec(b);
+    if (aMatch && bMatch) return Number(aMatch[1]) - Number(bMatch[1]);
+    if (aMatch) return -1;
+    if (bMatch) return 1;
+    return a.localeCompare(b);
   }
 }
 

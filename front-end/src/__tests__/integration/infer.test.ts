@@ -16,7 +16,6 @@ import {
   readFileSync,
   writeFileSync,
   existsSync,
-  readdirSync,
 } from "node:fs";
 import { resolve, join } from "node:path";
 import { Diagram } from "../../Diagram.svelte";
@@ -68,21 +67,6 @@ function compileToTempFile(name: string, outDir: string): string {
   return jsonPath;
 }
 
-/**
- * Find first .ckpt file in a directory (searches recursively).
- * Returns the absolute path to the checkpoint, or null.
- */
-function findCkpt(dir: string): string | null {
-  if (!existsSync(dir)) return null;
-  try {
-    const files = readdirSync(dir, { recursive: true }) as string[];
-    const ckpt = files.find((f: string) => f.endsWith(".ckpt"));
-    return ckpt ? resolve(dir, ckpt) : null;
-  } catch {
-    return null;
-  }
-}
-
 // ---------------------------------------------------------------------------
 // Tests
 // ---------------------------------------------------------------------------
@@ -92,10 +76,8 @@ if (shouldRun) {
   const allTargets = getTargetDiagrams(manifest, "infer");
 
   if (!PYTHON_AVAILABLE) {
-    describe("Infer", () => {
-      it("skipped — Python environment (uv) not available", () => {
-        expect(true).toBe(true);
-      });
+    describe.skip("Infer — Python environment unavailable", () => {
+      it("requires uv and the converted Python environment", () => {});
     });
   } else {
     describe.each(allTargets)(
@@ -129,58 +111,40 @@ if (shouldRun) {
               fastDevRun: process.env.NNM_FAST_DEV_RUN === "true",
               device: process.env.NNM_DEVICE || "cpu",
             });
-            expect(trainResult.exitCode).toBe(0);
-
-            // 4. Find checkpoint
-            const ckptPath = findCkpt(trainResult.ckptDir);
-            if (!ckptPath) {
-              console.warn(
-                `No checkpoint found in ${trainResult.ckptDir} — ` +
-                  `skipping infer test (expected with fast_dev_run)`,
+            if (trainResult.exitCode !== 0) {
+              throw new Error(
+                `Training failed for ${name}:\n${trainResult.stderr}\n${trainResult.stdout}`,
               );
-              return;
             }
+            expect(existsSync(trainResult.weightsPath)).toBe(true);
 
-            // 5. Run inference
+            // 4. Run inference with the model artifact created by this test.
             const outputPath = join(workDir, "predictions.json");
-            const inferResult = runInference(cfgDir, ckptPath, {
+            const inferResult = runInference(cfgDir, trainResult.weightsPath, {
               outputPath,
             });
 
-            expect(inferResult.exitCode).toBe(0);
+            if (inferResult.exitCode !== 0) {
+              throw new Error(
+                `Inference failed for ${name}:\n${inferResult.stderr}\n${inferResult.stdout}`,
+              );
+            }
 
             // 6. Validate predictions JSON
             expect(existsSync(outputPath)).toBe(true);
             const predictionsRaw = readFileSync(outputPath, "utf-8");
             const predictions = JSON.parse(predictionsRaw);
 
-            expect(predictions).toBeTypeOf("object");
-            // The predictions key might be "predictions" or the output format
-            // varies by model type. Check for common keys.
-            const hasPredictions =
-              "predictions" in predictions ||
-              "output" in predictions ||
-              "reconstruction" in predictions;
-
-            expect(hasPredictions).toBe(true);
-
-            // Verify predictions is a non-empty array
-            const preds =
-              predictions.predictions ||
-              predictions.output ||
-              predictions.reconstruction ||
-              [];
-            expect(Array.isArray(preds)).toBe(true);
-            expect(preds.length).toBeGreaterThan(0);
+            expect(Array.isArray(predictions)).toBe(true);
+            expect(predictions.length).toBeGreaterThan(0);
+            expect(predictions[0]).toHaveProperty("prediction");
           },
         );
       },
     );
   }
 } else {
-  describe("Infer", () => {
-    it("skipped — NNM_TIER is not 'infer' or 'all'", () => {
-      expect(true).toBe(true);
-    });
+  describe.skip("Infer tier disabled", () => {
+    it("runs only when NNM_TIER is infer or all", () => {});
   });
 }

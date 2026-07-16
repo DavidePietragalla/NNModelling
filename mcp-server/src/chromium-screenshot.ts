@@ -51,10 +51,19 @@ interface ScreenshotResponse {
   data?: string;
 }
 
+interface RuntimeEvaluateResponse {
+  result?: { value?: unknown };
+  exceptionDetails?: {
+    text?: string;
+    exception?: { description?: string };
+  };
+}
+
 export interface CaptureScreenshotOptions {
   outputPath?: string;
   pageUrl?: string;
   fullPage?: boolean;
+  hoverNodeId?: string;
   devtoolsUrl?: string;
   timeoutMs?: number;
 }
@@ -266,6 +275,36 @@ export async function captureChromiumScreenshot(
 
   try {
     await client.call("Page.enable");
+    if (options.hoverNodeId) {
+      await client.call("Runtime.enable");
+      const nodeId = JSON.stringify(options.hoverNodeId);
+      const evaluation = await client.call<RuntimeEvaluateResponse>(
+        "Runtime.evaluate",
+        {
+          expression: `
+            (async () => {
+              const nodeId = ${nodeId};
+              const node = Array.from(document.querySelectorAll("[data-id]"))
+                .find((element) => element.getAttribute("data-id") === nodeId);
+              const handle = node?.querySelector(".output-handle-wrapper");
+              if (!handle) throw new Error("No output handle found for node " + nodeId);
+              handle.dispatchEvent(new MouseEvent("mouseenter"));
+              await new Promise((resolve) => requestAnimationFrame(() => requestAnimationFrame(resolve)));
+              return true;
+            })()
+          `,
+          awaitPromise: true,
+          returnByValue: true,
+        },
+      );
+      if (evaluation.exceptionDetails) {
+        throw new Error(
+          evaluation.exceptionDetails.exception?.description ??
+            evaluation.exceptionDetails.text ??
+            `Unable to hover node '${options.hoverNodeId}'`,
+        );
+      }
+    }
     const metrics = await client.call<LayoutMetrics>("Page.getLayoutMetrics");
     const screenshot = await client.call<ScreenshotResponse>(
       "Page.captureScreenshot",

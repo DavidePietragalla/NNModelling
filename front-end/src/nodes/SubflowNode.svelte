@@ -21,6 +21,7 @@ MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.
   import { type Node } from "@xyflow/svelte";
   import { getContext } from "svelte";
   import { DIAGRAM_CONTEXT_KEY, type Diagram } from "../Diagram.svelte";
+  import { getNodeDiagnosticSummary } from "../conversion/typeDiagnostics";
 
   type SubflowData = {
     label: string;
@@ -54,12 +55,9 @@ MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.
     }));
   }
 
-  let nodeErrors = $derived.by(() => {
-    if (!diagram?.typeResult) return null;
-    const errs = diagram.typeResult.errors.filter(e => e.nodeId === id);
-    if (errs.length === 0) return null;
-    return { severity: errs.some(e => e.severity === 'error') ? 'error' : 'warning', message: errs[0].message };
-  });
+  let nodeDiagnostic = $derived(
+    getNodeDiagnosticSummary(diagram?.typeResult ?? null, id),
+  );
 
 </script>
 
@@ -109,8 +107,10 @@ MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.
     </div>
   {/if}
 
-  {#if nodeErrors}
-    <div class="node-indicator {nodeErrors.severity}" title={nodeErrors.message}>!</div>
+  {#if nodeDiagnostic}
+    <div class="node-indicator {nodeDiagnostic.severity}" title={nodeDiagnostic.message}>
+      {nodeDiagnostic.severity === "suggestion" ? "?" : "!"}
+    </div>
   {/if}
 </div>
 

@@ -111,6 +111,7 @@ describe("captureChromiumScreenshot", () => {
         devtoolsUrl: `http://127.0.0.1:${port}`,
         pageUrl: "http://127.0.0.1:5174",
         outputPath,
+        hoverNodeId: "linear-1",
       });
 
       expect(result).toMatchObject({
@@ -126,6 +127,8 @@ describe("captureChromiumScreenshot", () => {
       expect(readFileSync(outputPath)).toEqual(png);
       expect(methods).toEqual([
         "Page.enable",
+        "Runtime.enable",
+        "Runtime.evaluate",
         "Page.getLayoutMetrics",
         "Page.captureScreenshot",
       ]);

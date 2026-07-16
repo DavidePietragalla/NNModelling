@@ -31,7 +31,9 @@
       { "kind": "symbolic", "name": "$B" },
       { "kind": "wildcard" }
     ],
-    "output": [],
+    "output": [
+      { "kind": "symbolic", "name": "$B" }
+    ],
     "dtype": { "output": "float32" }
   }
 }

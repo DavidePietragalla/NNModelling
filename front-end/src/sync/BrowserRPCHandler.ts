@@ -23,6 +23,10 @@
 
 import type { Diagram } from "../Diagram.svelte";
 import { NNTree } from "../conversion/nnTree";
+import {
+  getNodeTypeInfo,
+  serializeTypeResult,
+} from "../conversion/typeDiagnostics";
 import type { Node, Edge } from "@xyflow/svelte";
 
 // ── RPC Types ──────────────────────────────────────────────────────────
@@ -161,6 +165,9 @@ export class BrowserRPCHandler {
           break;
         case "get_node":
           result = this.handleGetNode(params);
+          break;
+        case "get_type_info":
+          result = this.handleGetTypeInfo(params);
           break;
         case "get_edges":
           result = this.handleGetEdges(params);
@@ -302,7 +309,12 @@ export class BrowserRPCHandler {
   // ── Inspection Handlers ─────────────────────────────────────────────
 
   private handleGetGraph(): Record<string, unknown> {
-    return { nodes: this.diagram.nodes, edges: this.diagram.edges };
+    const typeResult = this.diagram.refreshTypes();
+    return {
+      nodes: this.diagram.nodes,
+      edges: this.diagram.edges,
+      typeInfo: serializeTypeResult(typeResult),
+    };
   }
 
   private handleGetNode(params: Record<string, unknown>): Record<string, unknown> {
@@ -310,7 +322,24 @@ export class BrowserRPCHandler {
     if (!nodeId) throw new Error("Missing required parameter: nodeId");
     const node = this.diagram.getNodeById(nodeId);
     if (!node) throw new Error(`Node not found: ${nodeId}`);
-    return node;
+    const typeResult = this.diagram.refreshTypes();
+    return { ...node, typeInfo: getNodeTypeInfo(typeResult, nodeId) };
+  }
+
+  private handleGetTypeInfo(params: Record<string, unknown>): unknown {
+    const nodeId = params.nodeId as string | undefined;
+    if (nodeId && !this.diagram.getNodeById(nodeId)) {
+      throw new Error(`Node not found: ${nodeId}`);
+    }
+
+    const refresh = params.refresh !== false;
+    const typeResult = refresh || !this.diagram.typeResult
+      ? this.diagram.refreshTypes()
+      : this.diagram.typeResult;
+
+    return nodeId
+      ? getNodeTypeInfo(typeResult, nodeId)
+      : serializeTypeResult(typeResult);
   }
 
   private handleGetEdges(params: Record<string, unknown>): { edges: Edge[] } {
@@ -833,6 +862,20 @@ export class BrowserRPCHandler {
   // ── Compilation / Serialization Handlers ────────────────────────────
 
   private handleCompileNntree(): Record<string, unknown> {
+    const typeResult = this.diagram.refreshTypes();
+    const blockingErrors = typeResult.errors.filter(
+      (error) => error.severity === "error",
+    );
+    if (blockingErrors.length > 0) {
+      const summary = blockingErrors
+        .slice(0, 5)
+        .map((error) => `${error.nodeId || "graph"}: ${error.message}`)
+        .join("; ");
+      throw new Error(
+        `NNTree compilation blocked by ${blockingErrors.length} type error(s): ${summary}`,
+      );
+    }
+
     const nnTree = new NNTree(this.diagram as any);
     const json = nnTree.toJson();
 

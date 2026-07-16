@@ -30,6 +30,7 @@ describe("BrowserRPCHandler", () => {
     // Reset to known state (Diagram auto-spawns an Input node, which we clear)
     diagram.nodes = [];
     diagram.edges = [];
+    diagram.refreshTypes();
 
     const handler = new BrowserRPCHandler(diagram, "ws://localhost:0");
 
@@ -86,6 +87,101 @@ describe("BrowserRPCHandler", () => {
     expect(response.id).toBe("req-2");
     expect(response.result).toBeDefined();
     expect(response.result.id).toBe("n42");
+  });
+
+  it("recomputes types after RPC mutations and exposes JSON-safe type information", () => {
+    const { handler, diagram, mockSend } = createHandler();
+
+    const dispatch = (id: string, method: string, params: Record<string, unknown> = {}) => {
+      mockSend.mockClear();
+      (handler as any).handleMessage({
+        data: JSON.stringify({ id, method, params }),
+      });
+      expect(mockSend).toHaveBeenCalledTimes(1);
+      return JSON.parse(mockSend.mock.calls[0][0]);
+    };
+
+    const inputResponse = dispatch("create-input", "create_node", {
+      stereotype: "Input",
+      config: { params: { out_features: "784" } },
+    });
+    const inputId = inputResponse.result.nodeId as string;
+
+    const linearResponse = dispatch("create-linear", "create_node", {
+      stereotype: "Linear",
+      config: { params: { in_features: "784", out_features: "10" } },
+    });
+    const linearId = linearResponse.result.nodeId as string;
+
+    dispatch("connect", "connect_nodes", { source: inputId, target: linearId });
+
+    // graph_changed is synchronous, so the hover state is ready as soon as
+    // the remote mutation completes.
+    const liveAnnotation = diagram.typeResult?.annotations.get(linearId);
+    expect(liveAnnotation?.outputType.shape).toEqual([
+      { kind: "symbolic", name: "B" },
+      { kind: "const", value: 10 },
+    ]);
+
+    const typeResponse = dispatch("types", "get_type_info", { nodeId: linearId });
+    expect(typeResponse.result.annotation.nodeId).toBe(linearId);
+    expect(typeResponse.result.annotation.outputType.shape).toEqual([
+      { kind: "symbolic", name: "B" },
+      { kind: "const", value: 10 },
+    ]);
+    expect(typeResponse.result.errors).toEqual([]);
+
+    const graphResponse = dispatch("graph", "get_graph");
+    expect(graphResponse.result.typeInfo.ok).toBe(true);
+    expect(graphResponse.result.typeInfo.annotations[linearId].outputType.shape[1]).toEqual({
+      kind: "const",
+      value: 10,
+    });
+
+    const nodeResponse = dispatch("node", "get_node", { nodeId: linearId });
+    expect(nodeResponse.result.typeInfo.annotation.outputType.shape[1]).toEqual({
+      kind: "const",
+      value: 10,
+    });
+  });
+
+  it("returns an error when type information is requested for an unknown node", () => {
+    const { handler, mockSend } = createHandler();
+
+    (handler as any).handleMessage({
+      data: JSON.stringify({
+        id: "req-missing-type",
+        method: "get_type_info",
+        params: { nodeId: "ghost" },
+      }),
+    });
+
+    const response = JSON.parse(mockSend.mock.calls[0][0]);
+    expect(response.error.message).toContain("Node not found");
+  });
+
+  it("blocks MCP NNTree compilation when the graph has hard type errors", () => {
+    const { handler, diagram, mockSend } = createHandler();
+    const input = diagram.getStereotype("Input")!;
+    const linear = diagram.getStereotype("Linear")!;
+    diagram.addModule(input, 0, 0, {
+      params: { out_features: { value: "784" } },
+    });
+    diagram.addModule(linear, 100, 0, {
+      params: {
+        in_features: { value: "128" },
+        out_features: { value: "10" },
+      },
+    });
+    diagram.addEdge(diagram.nodes[0].id, diagram.nodes[1].id);
+    mockSend.mockClear();
+
+    (handler as any).handleMessage({
+      data: JSON.stringify({ id: "compile-invalid", method: "compile_nntree" }),
+    });
+
+    const response = JSON.parse(mockSend.mock.calls[0][0]);
+    expect(response.error.message).toMatch(/compilation blocked.*type error/i);
   });
 
   it("dispatches ping and returns status ok", () => {

@@ -1,6 +1,6 @@
 {
   "category": "Layer",
-  "pythonClassName": "nn.Unflatten",
+  "pythonClassName": "ops.Unflatten",
   "view": {
     "color": "#a9a9a9",
     "width": 120,

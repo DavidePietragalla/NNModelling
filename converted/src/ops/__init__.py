@@ -19,7 +19,19 @@ from ops.sequence_pool import SequencePool
 from ops.subflow import Subflow
 from ops.repeat import Repeat
 from ops.horizontal_repeat import HorizontalRepeat
+from ops.unflatten import Unflatten
 
-__all__ = ["Addition", "Concat", "Einsum", "MaskedScaledDotProduct",
-           "MatMul", "PositionalEncoding", "ScaledDotProduct",
-           "SequencePool", "Subflow", "Repeat", "HorizontalRepeat"]
+__all__ = [
+    "Addition",
+    "Concat",
+    "Einsum",
+    "HorizontalRepeat",
+    "MaskedScaledDotProduct",
+    "MatMul",
+    "PositionalEncoding",
+    "Repeat",
+    "ScaledDotProduct",
+    "SequencePool",
+    "Subflow",
+    "Unflatten",
+]

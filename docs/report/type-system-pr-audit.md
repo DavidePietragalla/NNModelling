@@ -7,7 +7,24 @@ Base di confronto locale: `origin/master`
 
 ## Esito
 
-**Changes requested: la pull request non e ancora pronta per il merge.**
+**Aggiornamento dopo le correzioni: i cinque problemi bloccanti descritti in
+questo audit sono stati risolti e coperti da test.** Le sezioni successive
+mantengono l'analisi originale come motivazione delle modifiche; non descrivono
+piu lo stato corrente del working tree.
+
+In particolare sono stati corretti l'unificazione completa di Einsum, la
+composizione tipata di Repeat, la validazione di Concat e dei parametri, il
+blocco della conversione sugli errori hard, la visualizzazione unificata di
+errori/warning/suggerimenti e l'harness d'integrazione Hydra. Il server MCP ora
+espone tipi e diagnostica tramite `get_type_info`; la sua cattura Chrome puo
+anche attivare l'hover di un nodo per verificare il tooltip.
+
+La Loss e ora modellata coerentemente nella DSL come layer concettuale con
+output rank-1 `[B]` e source handle visibile. Il backend `converted/` continua
+intenzionalmente a estrarla come obiettivo terminale: l'esecuzione e propagazione
+del suo output concettuale e documentata come lavoro futuro.
+
+**Esito originale dell'audit: changes requested.**
 
 La PR contiene, rispetto al riferimento locale `origin/master`, 62 commit e 98
 file modificati, per circa 15.626 righe aggiunte e 97 rimosse. Lo scope comprende
@@ -405,7 +422,7 @@ Conviene separare esplicitamente:
 
 ### Frontend
 
-- test unitari Vitest: 270 passati, 5 skipped;
+- test unitari Vitest: 291 passati, 5 skipped;
 - `svelte-check`: completato con 0 errori e 11 warning;
 - build Vite: completata, con warning Svelte/accessibilita e warning per
   l'externalizzazione browser di `fs`/`path` usati dal loader duale;
@@ -421,21 +438,22 @@ Sono stati eseguiti i test non-training di:
 - `test_base.py`;
 - `test_integration.py`.
 
-Risultato: 103 test passati. Sono comparsi due warning relativi alla scelta
+Risultato corrente: 104 test passati. Sono comparsi due warning relativi alla scelta
 implicita della dimensione di Softmax in due forward test del transformer. Non
 si trattava di training.
 
 ### MCP server
 
-- 38 test passati;
+- 42 test passati;
 - build TypeScript completata con successo.
 
 ### Documentazione
 
-- Sphinx con warning trattati come errori: fallito;
-- pdfLaTeX: fallito per il carattere Unicode non configurato;
-- `git diff --check`: whitespace finale rilevato in vari file nuovi o
-  modificati.
+- Sphinx con warning trattati come errori: completato con successo dopo la
+  conversione delle due tabelle malformate a `list-table`;
+- pdfLaTeX: completato, PDF di 23 pagine generato; rimangono solo warning di
+  impaginazione non bloccanti;
+- `git diff --check`: completato senza errori.
 
 ### Training controllato
 
@@ -454,12 +472,13 @@ Le Hydra config sono state generate dal vero script del repository. Per
 Gli YAML non sono stati creati o modificati manualmente. Prima del training la
 config composta e stata controllata per verificare dataset, nodi e modello.
 
-Sono stati eseguiti due training piccoli, per una epoca:
+Nella verifica finale sono stati eseguiti tre training piccoli, per una epoca:
 
 | Modello | Risultato | Test metric |
 |---|---:|---:|
-| `mninst` | riuscito | circa 0,9173 |
-| `mnist_skips` | riuscito | circa 0,9370 |
+| `mninst` | riuscito | validato dal Tier 3 |
+| `mnist_skips` | riuscito | validato dal Tier 3 |
+| `skip_connections_with_repetition` | riuscito | validato dal Tier 3 |
 
 Non e stato completato alcun training di transformer o autoencoder. Durante la
 diagnosi, il comando errato dell'helper ha inizialmente selezionato la config
@@ -482,7 +501,7 @@ training.
 - tutti i 37 stereotype JSON validi e dotati di `type_signature`;
 - pipeline Python non-training e MCP attualmente verdi.
 
-## Ordine di implementazione consigliato
+## Stato dell'ordine di implementazione consigliato
 
 1. Correggere la solidita dell'inferenza: Einsum, Repeat, Concat e parametri
    output-only.
@@ -498,14 +517,18 @@ training.
 8. Rendere obbligatori in CI build documentazione, `git diff --check` e test
    d'integrazione piccoli ma reali.
 
+I punti 1, 2, 3, 5, 6 e 7 sono implementati in questo branch. Il punto 4 e
+stato corretto per Input tuple/Unflatten e per la semantica concettuale delle
+Loss, ma resta un tema evolutivo per le interfacce multi-input dei moduli
+PyTorch complessi. Il punto 8 e una raccomandazione di configurazione CI, non
+una modifica funzionale della PR.
+
 ## Conclusione
 
-La PR ha implementato una parte consistente dell'infrastruttura necessaria per
-un type system utile nel DSL. Tuttavia, le garanzie centrali non sono ancora
-complete: alcuni programmi incompatibili possono essere accettati, alcuni
-warning non raggiungono l'utente, la conversione ignora gli errori e il test di
-training puo esercitare una configurazione diversa da quella dichiarata.
-
-Prima del merge sono quindi necessarie almeno le correzioni ai cinque problemi
-bloccanti e il riallineamento della documentazione alle funzionalita realmente
-supportate.
+La PR dispone ora delle garanzie centrali richieste dall'audit: i mismatch
+individuati non vengono piu accettati, le diagnostiche raggiungono UI e MCP, la
+conversione rifiuta errori hard e il training usa e valida la config Hydra
+generata nello stesso caso di test. Rimangono limiti esplicitamente documentati,
+in particolare la semantica terminale delle Loss nel backend e la modellazione
+semplificata di alcune API PyTorch complesse; non sono regressioni introdotte
+dalle correzioni e costituiscono lavoro futuro circoscritto.

@@ -39,11 +39,10 @@ MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.
   } from "./utils";
 
   import { NNTree } from "./conversion/nnTree";
-  import { TypeEngine } from "./conversion/typeEngine";
 
   // 1. Importiamo la classe Diagram
   import { Diagram, DIAGRAM_CONTEXT_KEY } from "./Diagram.svelte";
-  import { setContext, onMount } from "svelte";
+  import { setContext } from "svelte";
   import { toPng } from "html-to-image";
 
   // Context per SubflowNode — gli permette di chiamare diagram.toggleSubflow
@@ -91,11 +90,6 @@ MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.
     }
   });
 
-  // Initial type check on mount
-  onMount(() => {
-    diagram.typeResult = TypeEngine.infer(diagram);
-  });
-
   // Connessione WebSocket per gestire richieste RPC dal MCP server
   let syncClient: BrowserRPCHandler;
 
@@ -108,7 +102,7 @@ MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.
   // Forziamo il ricalcolo della vista su ogni cambiamento strutturale
   $effect(() => {
     const unsubscribe = diagram.events.on("graph_changed", () => {
-      fitView();
+      fitView({ maxZoom: 1, padding: 0.2 });
     });
     return unsubscribe;
   });
@@ -178,6 +172,19 @@ MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.
   }
 
   async function handleConversion() {
+    const typeResult = diagram.refreshTypes();
+    const blockingErrors = typeResult.errors.filter(
+      (error) => error.severity === "error",
+    );
+    if (blockingErrors.length > 0) {
+      const summary = blockingErrors
+        .slice(0, 5)
+        .map((error) => `${error.nodeId || "graph"}: ${error.message}`)
+        .join("\n");
+      alert(`Conversione bloccata da ${blockingErrors.length} errori di tipo:\n${summary}`);
+      return;
+    }
+
     const nnTree = new NNTree(diagram);
     const data = nnTree.toJson();
 
@@ -230,15 +237,16 @@ MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.
           getInternalNode,
         );
         if (newNodes !== undefined) diagram.nodes = newNodes;
-        diagram.typeResult = TypeEngine.infer(diagram);
+        diagram.refreshTypes();
       }}
       onconnect={() => {
-        diagram.typeResult = TypeEngine.infer(diagram);
+        diagram.refreshTypes();
       }}
       ondelete={() => {
-        diagram.typeResult = TypeEngine.infer(diagram);
+        diagram.refreshTypes();
       }}
       fitView
+      fitViewOptions={{ maxZoom: 1, padding: 0.2 }}
     >
       <Background />
       <Controls />
@@ -249,7 +257,7 @@ MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.
         <button
           onclick={() => {
             handleLoadModel(diagram, () => {
-              diagram.typeResult = TypeEngine.infer(diagram);
+              diagram.refreshTypes();
             });
             isSidebarOpen = false;
           }}

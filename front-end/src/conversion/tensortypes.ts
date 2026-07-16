@@ -99,16 +99,19 @@ export type ShapePattern = ShapeDimPattern[];
  * Declarative subflow configuration embedded in a stereotype's type_signature.
  *
  * Controls how the type engine handles subflow inference:
- * - `'identity'`: output shape = input shape (no recursive inference needed).
- *   Equivalent to the old hardcoded Repeat behavior.
+ * - `'identity'`: output shape = input shape.
  * - `'infer'`: run recursive inference on the subflow's internal graph.
  *   Default when no `subflow` is specified.
+ * - `'repeat'`: compose the internal subflow transform a declared number of
+ *   times. This models sequential repetition rather than assuming identity.
  * - `'infer_then_transform'`: run recursive inference, then apply a
  *   transform (e.g. multiply last dim by `n`).
  *   Equivalent to the old hardcoded HorizontalRepeat behavior.
  */
 export interface SubflowConfig {
-  action: 'identity' | 'infer' | 'infer_then_transform';
+  action: 'identity' | 'infer' | 'repeat' | 'infer_then_transform';
+  /** Parameter holding the repeat count when action is `repeat`. */
+  iterations_param?: string;
   transform?: SubflowTransform;
 }
 

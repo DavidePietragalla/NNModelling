@@ -16,6 +16,11 @@ export const capture_screenshot = {
     outputPath: z.string().min(1).optional(),
     pageUrl: z.string().url().optional(),
     fullPage: z.boolean().optional(),
+    hoverNodeId: z
+      .string()
+      .min(1)
+      .optional()
+      .describe("Show the output tensor tooltip for this node before capture"),
   }),
 
   async handler(
