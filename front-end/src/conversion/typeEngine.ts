@@ -553,9 +553,12 @@ export class TypeEngine {
           }
         }
 
-        // Merge mergedEnv into env for downstream use
+        // Merge mergedEnv into env for downstream use.
+        // Only propagate non-# bindings (same as module path).
         for (const [key, value] of mergedEnv) {
-          env.set(key, value);
+          if (!key.startsWith("#")) {
+            env.set(key, value);
+          }
         }
 
         // Step 3: Compute output shape
@@ -1238,6 +1241,26 @@ export class TypeEngine {
               message: `expected dim at position ${j}, got end of shape`,
               severity: "error",
             } satisfies TypeError;
+          }
+          // #-prefixed: always fresh binding, never look up in global env.
+          // These unify only within the current stereotype's scope
+          // (cross-input for joins, via bindings accumulated in this match).
+          if (p.name.startsWith("#")) {
+            const prev = bindings.get(p.name);
+            if (prev !== undefined) {
+              if (!dimEqual(prev, inputDims[i])) {
+                return {
+                  nodeId: "",
+                  message: `symbolic ${p.name} already bound to ${this.describeDim(prev)}, cannot unify with ${this.describeDim(inputDims[i])}`,
+                  severity: "error",
+                } satisfies TypeError;
+              }
+            } else {
+              bindings.set(p.name, inputDims[i]);
+            }
+            i++;
+            j++;
+            break;
           }
           const existing = bindings.get(p.name);
           if (existing !== undefined) {
