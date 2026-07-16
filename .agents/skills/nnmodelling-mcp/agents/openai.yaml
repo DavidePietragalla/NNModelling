@@ -1,0 +1,4 @@
+interface:
+  display_name: "NNModelling MCP"
+  short_description: "Operate NNModelling through browser-backed MCP"
+  default_prompt: "Use $nnmodelling-mcp to start the NNModelling browser stack and manipulate or train a diagram through MCP."

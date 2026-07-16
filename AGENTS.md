@@ -12,6 +12,20 @@ Three main packages (pnpm workspace):
 2. **converted/** — Python codegen target (PyTorch + Lightning + Hydra)
 3. **mcp-server/** — MCP server — thin proxy that queries browser diagram state via WebSocket RPC
 
+## NNModelling MCP Skill
+
+The repository provides the project skill
+`.agents/skills/nnmodelling-mcp/SKILL.md`. **Whenever the user asks an agent to
+use NNModelling**—including opening the editor, manipulating a diagram,
+inspecting tensor types, taking screenshots, converting, training, inference,
+or diagnosing the browser/MCP connection—the agent must load and follow
+`$nnmodelling-mcp` before acting.
+
+The skill documents the required browser-backed architecture, safe startup
+order, Chromium DevTools configuration, raw stdio fallback, MCP tools, type and
+screenshot inspection, training workflow, and port-leak diagnostics. Reuse its
+`scripts/nnm-stack.sh` helper instead of reconstructing lifecycle commands.
+
 ### Tech Stack
 
 - **Frontend**: Svelte 5, Svelte Flow (@xyflow/svelte), Vite 8, TypeScript
