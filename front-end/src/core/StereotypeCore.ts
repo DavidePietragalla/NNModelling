@@ -170,7 +170,7 @@ export class StereotypeCore {
   }
 
   private static stripDollar(dim: ShapeDimPattern): ShapeDimPattern {
-    if (dim.kind === "symbolic" && (dim.name.startsWith("$") || dim.name.startsWith("#"))) {
+    if (dim.kind === "symbolic" && dim.name.startsWith("$")) {
       return { ...dim, name: dim.name.slice(1) };
     }
     if (dim.kind === "computed") {

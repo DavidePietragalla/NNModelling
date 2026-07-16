@@ -11,15 +11,18 @@
     "kind": "join",
     "input": [
       [
+        { "kind": "wildcard" },
         { "kind": "symbolic", "name": "#M" },
         { "kind": "symbolic", "name": "#K" }
       ],
       [
+        { "kind": "wildcard" },
         { "kind": "symbolic", "name": "#K" },
         { "kind": "symbolic", "name": "#N" }
       ]
     ],
     "output": [
+      { "kind": "wildcard" },
       { "kind": "symbolic", "name": "#M" },
       { "kind": "symbolic", "name": "#N" }
     ],

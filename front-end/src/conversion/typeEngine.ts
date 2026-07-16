@@ -384,9 +384,14 @@ export class TypeEngine {
           }
         }
 
-        // Merge new bindings into env for downstream use
+        // Merge new bindings into env for downstream use.
+        // Only propagate global ($-prefixed) bindings —
+        // #-local bindings are scoped to the current stereotype's
+        // inputs/outputs only and must not leak into the global env.
         for (const [key, value] of matchResult.bindings) {
-          env.set(key, value);
+          if (!key.startsWith("#")) {
+            env.set(key, value);
+          }
         }
 
         // ── Dtype input validation (Phase A) ─────────────────────
@@ -400,10 +405,20 @@ export class TypeEngine {
           });
         }
 
+        // Create augmented env for output resolution: include #-local bindings
+        // so that #L → 50 gets resolved to const 50 in the output shape,
+        // while downstream nodes don't see #-local variables.
+        const outputEnv = new Map(env);
+        for (const [key, value] of matchResult.bindings) {
+          if (key.startsWith("#")) {
+            outputEnv.set(key, value);
+          }
+        }
+
         const outputDims = this.resolvePattern(
           sig.output,
           params,
-          env,
+          outputEnv,
           matchResult.captured,
         );
         const dtype = sig.dtype?.output ?? inputType.dtype;
@@ -413,7 +428,7 @@ export class TypeEngine {
           for (const advisory of sig.advisories) {
             const warning = this.evaluateAdvisory(
               advisory,
-              env,
+              outputEnv,
               params,
               nodeId,
             );
@@ -1453,8 +1468,15 @@ export class TypeEngine {
           // New path: expression-based computed dims
           if (p.expr) {
             try {
+              // Build expression-friendly env: strip $/# prefixes so
+              // $L resolves as "L" matching a #L binding from pattern match.
+              const exprEnv = new Map<string, ShapeDimension>();
+              for (const [key, dim] of env) {
+                const bareName = key.replace(/^[#$]/, '');
+                exprEnv.set(bareName, dim);
+              }
               const context: EvalContext = {
-                env,
+                env: exprEnv,
                 captured,
                 params,
                 resolveParam: (name: string) => {
@@ -1820,9 +1842,11 @@ export class TypeEngine {
     // ── Strategy 1: kernel_size vs spatial dimension check ──────────
     const ksize = TypeEngine.resolveParamRefTuple("kernel_size", params);
     if (ksize) {
-      const hDim = env.get("H");
-      const wDim = env.get("W");
-      const lDim = env.get("L");
+      // Try multiple key variants: bare name (unit tests), #-prefixed (after rename),
+      // $-prefixed (legacy). The env may use any of these depending on context.
+      const hDim = env.get("H") ?? env.get("#H") ?? env.get("$H");
+      const wDim = env.get("W") ?? env.get("#W") ?? env.get("$W");
+      const lDim = env.get("L") ?? env.get("#L") ?? env.get("$L");
       const h = hDim?.kind === "const" ? hDim.value : undefined;
       const w = wDim?.kind === "const" ? wDim.value : undefined;
       const l = lDim?.kind === "const" ? lDim.value : undefined;
