@@ -14,13 +14,13 @@
     "kind": "module",
     "input": [
       { "kind": "symbolic", "name": "$B" },
-      { "kind": "symbolic", "name": "$L" },
-      { "kind": "symbolic", "name": "$D" }
+      { "kind": "symbolic", "name": "#L" },
+      { "kind": "symbolic", "name": "#D" }
     ],
     "output": [
       { "kind": "symbolic", "name": "$B" },
-      { "kind": "symbolic", "name": "$L" },
-      { "kind": "symbolic", "name": "$D" }
+      { "kind": "symbolic", "name": "#L" },
+      { "kind": "symbolic", "name": "#D" }
     ]
   }
 }

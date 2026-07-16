@@ -28,13 +28,13 @@
     "kind": "module",
     "input": [
       { "kind": "symbolic", "name": "$B" },
-      { "kind": "symbolic", "name": "$C" },
-      { "kind": "symbolic", "name": "$H" },
-      { "kind": "symbolic", "name": "$W" }
+      { "kind": "symbolic", "name": "#C" },
+      { "kind": "symbolic", "name": "#H" },
+      { "kind": "symbolic", "name": "#W" }
     ],
     "output": [
       { "kind": "symbolic", "name": "$B" },
-      { "kind": "symbolic", "name": "$C" },
+      { "kind": "symbolic", "name": "#C" },
       { "kind": "computed", "expr": "$H * scale_factor" },
       { "kind": "computed", "expr": "$W * scale_factor" }
     ]

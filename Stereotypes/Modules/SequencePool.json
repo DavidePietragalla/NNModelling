@@ -14,11 +14,11 @@
     "input": [
       { "kind": "symbolic", "name": "$B" },
       { "kind": "wildcard" },
-      { "kind": "symbolic", "name": "$D" }
+      { "kind": "symbolic", "name": "#D" }
     ],
     "output": [
       { "kind": "symbolic", "name": "$B" },
-      { "kind": "symbolic", "name": "$D" }
+      { "kind": "symbolic", "name": "#D" }
     ]
   }
 }

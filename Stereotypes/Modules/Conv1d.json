@@ -59,7 +59,7 @@
     "input": [
       { "kind": "symbolic", "name": "$B" },
       { "kind": "param_ref", "name": "in_channels" },
-      { "kind": "symbolic", "name": "$L" }
+      { "kind": "symbolic", "name": "#L" }
     ],
     "output": [
       { "kind": "symbolic", "name": "$B" },

@@ -56,12 +56,12 @@
     "kind": "module",
     "input": [
       { "kind": "symbolic", "name": "$B" },
-      { "kind": "symbolic", "name": "$L" },
+      { "kind": "symbolic", "name": "#L" },
       { "kind": "param_ref", "name": "embed_dim" }
     ],
     "output": [
       { "kind": "symbolic", "name": "$B" },
-      { "kind": "symbolic", "name": "$L" },
+      { "kind": "symbolic", "name": "#L" },
       { "kind": "param_ref", "name": "embed_dim" }
     ]
   }

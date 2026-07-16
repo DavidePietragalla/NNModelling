@@ -14,19 +14,19 @@
     "input": [
       [
         { "kind": "symbolic", "name": "$B" },
-        { "kind": "symbolic", "name": "$L" },
-        { "kind": "symbolic", "name": "$D" }
+        { "kind": "symbolic", "name": "#L" },
+        { "kind": "symbolic", "name": "#D" }
       ],
       [
         { "kind": "symbolic", "name": "$B" },
-        { "kind": "symbolic", "name": "$S" },
-        { "kind": "symbolic", "name": "$D" }
+        { "kind": "symbolic", "name": "#S" },
+        { "kind": "symbolic", "name": "#D" }
       ]
     ],
     "output": [
       { "kind": "symbolic", "name": "$B" },
-      { "kind": "symbolic", "name": "$L" },
-      { "kind": "symbolic", "name": "$S" }
+      { "kind": "symbolic", "name": "#L" },
+      { "kind": "symbolic", "name": "#S" }
     ],
     "join": {
       "action": "element_wise",

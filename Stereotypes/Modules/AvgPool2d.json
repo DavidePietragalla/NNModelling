@@ -36,13 +36,13 @@
     "kind": "module",
     "input": [
       { "kind": "symbolic", "name": "$B" },
-      { "kind": "symbolic", "name": "$C" },
-      { "kind": "symbolic", "name": "$H" },
-      { "kind": "symbolic", "name": "$W" }
+      { "kind": "symbolic", "name": "#C" },
+      { "kind": "symbolic", "name": "#H" },
+      { "kind": "symbolic", "name": "#W" }
     ],
     "output": [
       { "kind": "symbolic", "name": "$B" },
-      { "kind": "symbolic", "name": "$C" },
+      { "kind": "symbolic", "name": "#C" },
       { "kind": "computed", "expr": "floor(($H + 2*padding - kernel_size)/stride + 1)" },
       { "kind": "computed", "expr": "floor(($W + 2*padding - kernel_size)/stride + 1)" }
     ]

@@ -37,7 +37,7 @@
     "kind": "module",
     "input": [
       { "kind": "symbolic", "name": "$B" },
-      { "kind": "symbolic", "name": "$C" }
+      { "kind": "symbolic", "name": "#C" }
     ],
     "output": [],
     "dtype": { "input": "float32", "output": "float32" }

@@ -11,17 +11,17 @@
     "kind": "join",
     "input": [
       [
-        { "kind": "symbolic", "name": "$M" },
-        { "kind": "symbolic", "name": "$K" }
+        { "kind": "symbolic", "name": "#M" },
+        { "kind": "symbolic", "name": "#K" }
       ],
       [
-        { "kind": "symbolic", "name": "$K" },
-        { "kind": "symbolic", "name": "$N" }
+        { "kind": "symbolic", "name": "#K" },
+        { "kind": "symbolic", "name": "#N" }
       ]
     ],
     "output": [
-      { "kind": "symbolic", "name": "$M" },
-      { "kind": "symbolic", "name": "$N" }
+      { "kind": "symbolic", "name": "#M" },
+      { "kind": "symbolic", "name": "#N" }
     ],
     "join": {
       "action": "matmul",
