@@ -23,6 +23,8 @@
  * Environment variables:
  *   NNM_WS_PORT    — WebSocket server port (default: 9339)
  *   NNM_STEREOTYPES — Override path to Stereotypes directory
+ *   NNM_CDP_URL     — Chromium DevTools HTTP URL (default: http://127.0.0.1:9223)
+ *   NNM_FRONTEND_URL — Preferred frontend page URL for screenshots
  */
 
 import { StdioServerTransport } from "@modelcontextprotocol/sdk/server/stdio.js";

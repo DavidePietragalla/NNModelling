@@ -50,6 +50,7 @@ import * as conversionTools from "./tools/conversion.js";
 import * as inspectionTools from "./tools/inspection.js";
 import * as lifecycleTools from "./tools/lifecycle.js";
 import * as connectionTools from "./tools/connection.js";
+import * as screenshotTools from "./tools/screenshot.js";
 
 // ── ServerContext ───────────────────────────────────────────────────────
 
@@ -195,6 +196,7 @@ export async function createServer(
     inspectionTools,
     lifecycleTools,
     connectionTools,
+    screenshotTools,
   ] as Record<string, unknown>[];
 
   for (const module of allToolModules) {
