@@ -1,4 +1,5 @@
 outputs
+jobs/
 *.pyc
 multirun
 data/

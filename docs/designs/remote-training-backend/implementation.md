@@ -169,6 +169,13 @@ cd converted/backend
 docker compose up --build
 ```
 
+For a source checkout or a backend installed directly on a machine, the
+default artifact root is `converted/jobs/`; each job gets its own directory.
+`NNM_BACKEND_ARTIFACT_ROOT` overrides this path for a mounted persistent
+volume, Docker, or a shared Slurm filesystem. The earlier browser smoke test
+used `/tmp/nnm-backend-jobs-8000` explicitly and therefore does not represent
+the default installation layout.
+
 ## Integration tests and model selection
 
 The integration model test always reads a non-converted Svelte Flow diagram,

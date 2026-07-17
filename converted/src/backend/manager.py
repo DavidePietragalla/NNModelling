@@ -48,8 +48,13 @@ class JobManager:
     def from_environment(cls) -> "JobManager":
         """Build a production manager from backend environment variables."""
 
-        converted_dir = Path(os.getenv("NNM_CONVERTED_DIR", Path(__file__).parents[2]))
-        artifact_root = Path(os.getenv("NNM_BACKEND_ARTIFACT_ROOT", converted_dir / "jobs"))
+        converted_dir = Path(
+            os.getenv("NNM_CONVERTED_DIR", Path(__file__).resolve().parents[2])
+        ).expanduser().resolve()
+        default_artifact_root = converted_dir / "jobs"
+        artifact_root = Path(
+            os.getenv("NNM_BACKEND_ARTIFACT_ROOT", str(default_artifact_root))
+        ).expanduser().resolve()
         store = ValkeyJobStore(os.getenv("NNM_VALKEY_URL", "valkey://127.0.0.1:6379/0"))
         executors: list[Executor] = [LocalExecutor(converted_dir)]
         if os.getenv("NNM_ENABLE_SLURM", "0").lower() in {"1", "true", "yes"}:

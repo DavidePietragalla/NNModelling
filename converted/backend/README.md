@@ -16,7 +16,10 @@ PYTHONPATH=src NNM_VALKEY_URL=valkey://127.0.0.1:6379/0 \
 ```
 
 The API is available at `http://127.0.0.1:8000`. The frontend Vite server
-proxies `/api` to this address.
+proxies `/api` to this address. Without `NNM_BACKEND_ARTIFACT_ROOT`, job
+artifacts are stored in `converted/jobs/<job-id>/`, next to the installed
+backend. Set that variable only when the artifacts must live on another
+mounted filesystem, such as a Docker volume or shared Slurm filesystem.
 
 ## Docker
 
