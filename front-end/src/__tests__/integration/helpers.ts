@@ -46,6 +46,26 @@ export const DIAGRAMS_DIR = resolve(EXAMPLES_DIR, "diagrams");
 /** examples/nntrees/ — pre-compiled NNTree JSON files */
 export const NNTREES_DIR = resolve(EXAMPLES_DIR, "nntrees");
 
+/**
+ * Source model selected for model-validation integration tests.
+ *
+ * NNM_MODEL_PATH may be absolute or relative to the repository root. It must
+ * point to a Svelte Flow source diagram, not an already compiled NNTree.
+ */
+export function getModelPath(): string {
+  const configured = process.env.NNM_MODEL_PATH;
+  const modelPath = configured
+    ? resolve(PROJECT_ROOT, configured)
+    : resolve(DIAGRAMS_DIR, `${process.env.NNM_DIAGRAM || "mninst"}.json`);
+  if (!existsSync(modelPath)) {
+    throw new Error(`Model path does not exist: ${modelPath}`);
+  }
+  if (modelPath.startsWith(`${NNTREES_DIR}/`)) {
+    throw new Error(`NNM_MODEL_PATH must point to a source diagram, not an NNTree: ${modelPath}`);
+  }
+  return modelPath;
+}
+
 /** Manifest path */
 export const MANIFEST_PATH = resolve(EXAMPLES_DIR, "manifest.json");
 

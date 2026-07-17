@@ -43,6 +43,7 @@
     "test:integration:train": "NNM_TIER=train vitest run --config vitest.integration.config.ts",
     "test:integration:infer": "NNM_TIER=infer vitest run --config vitest.integration.config.ts",
     "test:integration:all": "NNM_TIER=all vitest run --config vitest.integration.config.ts",
+    "test:integration:model": "vitest run --config vitest.integration.config.ts src/__tests__/integration/model-validation.test.ts",
     "test:example": "vitest run --config vitest.integration.config.ts"
   },
   "devDependencies": {

@@ -1,6 +1,6 @@
 # Remote Training Backend and Training Configuration
 
-**Status**: Design plan  
+**Status**: Implemented (initial single-job scheduler)
 **Related issue**: [#14](https://github.com/LucaSforza/NNModelling/issues/14)  
 **Date**: 2026-07-17
 
@@ -208,7 +208,6 @@ environment:
 
 ```text
 GET /datasets
-GET /datasets/{target}/schema
 ```
 
 Discovery scans the trusted `dataset` package and identifies subclasses of

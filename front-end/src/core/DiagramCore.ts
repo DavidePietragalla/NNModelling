@@ -659,12 +659,13 @@ export class DiagramCore {
     return JSON.stringify(exportData, null, 2);
   }
 
-  public importFromJson(jsonString: string) {
-    this._captureUndoState();
+  public importFromJson(jsonString: string): boolean {
     try {
       const parsedData = JSON.parse(jsonString);
 
       if (Array.isArray(parsedData.nodes) && Array.isArray(parsedData.edges)) {
+        this._captureUndoState();
+
         // No callbacks needed — SubflowNode uses getContext to access diagram.
         this.nodes = parsedData.nodes;
         this.edges = parsedData.edges;
@@ -683,6 +684,7 @@ export class DiagramCore {
       }
     } catch (error) {
       console.error("Errore durante l'importazione del modello:", error);
+      return false;
     }
 
     this.events.emit("diagram_imported", { nodes: this.nodes, edges: this.edges });
@@ -690,5 +692,6 @@ export class DiagramCore {
       nodeCount: this.nodes.length,
       edgeCount: this.edges.length,
     });
+    return true;
   }
 }

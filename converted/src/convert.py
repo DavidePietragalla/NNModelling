@@ -96,12 +96,40 @@ def _build_nested_subflow_config(data: dict[str, Any]) -> dict[str, Any]:
     return config
 
 
-def build_hydra_configs(json_path: str, output_dir: str = "cfg", num_classes: int | None = None,
+def build_hydra_configs(json_path: str | dict[str, Any], output_dir: str = "cfg", num_classes: int | None = None,
                         dataset: str = "dataset.mnist.MNISTDataset",
                         early_stop_patience: int = 3, early_stop_min_delta: float = 0.0,
-                        max_epochs: int = 20):
-    with open(json_path, "r") as f:
-        diagram: dict[str, Any] = json.load(f)
+                        max_epochs: int = 20,
+                        training_config: dict[str, Any] | None = None):
+    if isinstance(json_path, dict):
+        diagram = json_path
+    else:
+        with open(json_path, "r") as f:
+            diagram = json.load(f)
+
+    training_config = training_config or {}
+    optimizer_config = training_config.get(
+        "optimizer", {"_target_": "torch.optim.Adam", "lr": 0.001}
+    )
+    trainer_config = training_config.get(
+        "trainer", {"max_epochs": max_epochs, "accelerator": "auto"}
+    )
+    wandb_config = training_config.get(
+        "wandb", {"project": "NeuralNetworks", "name": "Dynamic_Model"}
+    )
+    dataset_config = training_config.get(
+        "dataset",
+        {
+            "_target_": dataset,
+            "batch_size": 1024,
+            "train_size": 0.8,
+            "num_workers": 4,
+        },
+    )
+    early_stopping_config = training_config.get(
+        "early_stopping",
+        {"patience": early_stop_patience, "min_delta": early_stop_min_delta},
+    )
 
     for d in ["net", "optimizer", "trainer", "wandb", "dataset", "early_stopping"]:
         os.makedirs(os.path.join(output_dir, d), exist_ok=True)
@@ -172,35 +200,12 @@ def build_hydra_configs(json_path: str, output_dir: str = "cfg", num_classes: in
         config=net_config, f=os.path.join(output_dir, "net", "custom_sequence.yaml")
     )
 
+    OmegaConf.save(config=OmegaConf.create(optimizer_config), f=os.path.join(output_dir, "optimizer", "adam.yaml"))
+    OmegaConf.save(config=OmegaConf.create(trainer_config), f=os.path.join(output_dir, "trainer", "default.yaml"))
+    OmegaConf.save(config=OmegaConf.create(wandb_config), f=os.path.join(output_dir, "wandb", "wandb.yaml"))
+    OmegaConf.save(config=OmegaConf.create(dataset_config), f=os.path.join(output_dir, "dataset", "dataset.yaml"))
     OmegaConf.save(
-        config=OmegaConf.create({"_target_": "torch.optim.Adam", "lr": 0.001}),
-        f=os.path.join(output_dir, "optimizer", "adam.yaml"),
-    )
-    OmegaConf.save(
-        config=OmegaConf.create({"max_epochs": max_epochs, "accelerator": "auto"}),
-        f=os.path.join(output_dir, "trainer", "default.yaml"),
-    )
-    OmegaConf.save(
-        config=OmegaConf.create({"project": "NeuralNetworks", "name": "Dynamic_Model"}),
-        f=os.path.join(output_dir, "wandb", "wandb.yaml"),
-    )
-    dataset_config = OmegaConf.create({
-        "_target_": dataset,
-        "batch_size": 1024,
-        "train_size": 0.8,
-        "num_workers": 4,
-    })
-    OmegaConf.save(
-        config=dataset_config,
-        f=os.path.join(output_dir, "dataset", "dataset.yaml"),
-    )
-
-    early_stopping_config = OmegaConf.create({
-        "patience": early_stop_patience,
-        "min_delta": early_stop_min_delta,
-    })
-    OmegaConf.save(
-        config=early_stopping_config,
+        config=OmegaConf.create(early_stopping_config),
         f=os.path.join(output_dir, "early_stopping", "default.yaml"),
     )
 
@@ -215,7 +220,7 @@ def build_hydra_configs(json_path: str, output_dir: str = "cfg", num_classes: in
                 {"early_stopping": "default"},
                 "_self_",
             ],
-            "seed": 42,
+            "seed": training_config.get("seed", 42),
         }
     )
     OmegaConf.save(config=base_config, f=os.path.join(output_dir, "base.yaml"))

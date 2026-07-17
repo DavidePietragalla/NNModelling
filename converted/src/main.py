@@ -50,6 +50,11 @@ def main(cfg: DictConfig):
 
     lit.seed_everything(cfg.seed)
     wandb_logger = WandbLogger(**cfg.wandb)
+    try:
+        print(f"W&B URL: {wandb_logger.experiment.url}", flush=True)
+    except (AttributeError, RuntimeError):
+        # Disabled/offline W&B modes may not expose a public run URL.
+        pass
 
     model = Net(cfg)
 
