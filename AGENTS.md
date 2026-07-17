@@ -1,4 +1,4 @@
-# CLAUDE.md
+# AGENTS.md
 
 This file provides guidance to Claude Code when working with this repository.
 
@@ -12,14 +12,21 @@ Three main packages (pnpm workspace):
 2. **converted/** — Python codegen target (PyTorch + Lightning + Hydra)
 3. **mcp-server/** — MCP server — thin proxy that queries browser diagram state via WebSocket RPC
 
-## NNModelling MCP Skill
+## Browser and NNModelling skills
 
-The repository provides the project skill
-`.agents/skills/nnmodelling-mcp/SKILL.md`. **Whenever the user asks an agent to
-use NNModelling**—including opening the editor, manipulating a diagram,
+The repository provides local skills for browser-backed work:
+
+- `.agents/skills/chrome-direct/SKILL.md` for direct Chrome/Chromium control
+  through CDP. Use this when the user asks to use Chrome directly or says not
+  to use MCP. It includes DOM inspection, file upload, screenshots, and
+  network/runtime diagnostics.
+- `.agents/skills/nnmodelling-mcp/SKILL.md` for the optional NNModelling MCP
+  workflow when the user explicitly requests MCP or the browser-backed MCP
+  server.
+
+Load the applicable skill before opening the editor, manipulating a diagram,
 inspecting tensor types, taking screenshots, converting, training, inference,
-or diagnosing the browser/MCP connection—the agent must load and follow
-`$nnmodelling-mcp` before acting.
+or diagnosing the browser connection.
 
 The skill documents the required browser-backed architecture, safe startup
 order, Chromium DevTools configuration, raw stdio fallback, MCP tools, type and
@@ -68,6 +75,14 @@ cd docs2 && uv run make html  # Build Sphinx HTML docs
 # Or from root:
 pnpm run docs               # Full build: TypeDoc + Sphinx
 bash gendocs.sh             # Sphinx-only build (auto-creates uv venv)
+
+# Remote training backend (from converted/)
+mkdir -p valkey-data
+valkey-server backend/valkey.conf --dir valkey-data
+PYTHONPATH=src NNM_VALKEY_URL=valkey://127.0.0.1:6379/0 \
+  uv run uvicorn backend.app:app --host 127.0.0.1 --port 8000
+# Default job artifacts: converted/jobs/<job-id>/
+# Override with NNM_BACKEND_ARTIFACT_ROOT for Docker/Slurm volumes.
 ```
 
 ```bash
@@ -137,7 +152,9 @@ NNModelling/
 │   ├── styles/                 # CSS (flowcanvas, node, sidebar, join, subflow, dropdown)
 │   ├── components/
 │   │   ├── Sidebar.svelte      # Node create/edit form
+│   │   ├── TrainingSidebar.svelte # Dataset, Hydra, resources, and jobs
 │   │   └── SDropdown.svelte    # Custom dropdown widget
+│   ├── training/api.ts          # FastAPI REST/SSE client
 │   ├── Diagram.svelte.ts       # Central reactive state manager
 │   ├── FlowCanvas.svelte       # Main editor canvas + toolbar
 │   ├── stereotype.ts           # Stereotype loader (import.meta.glob)
@@ -153,6 +170,7 @@ NNModelling/
 │   ├── diagrams/               # Svelte Flow format source diagrams
 │   └── nntrees/                # Pre-compiled NNTree JSON files
 ├── converted/src/              # Python codegen target
+│   ├── backend/                 # FastAPI, Valkey store, scheduler, executors
 │   ├── net/base.py             # LightningModule: dynamic ModuleDict + topo sort
 │   ├── ops/                    # Custom operations
 │   │   ├── addition.py         # Add join operation
@@ -179,7 +197,9 @@ NNModelling/
 │       ├── test_base.py        # 21 Net/base unit tests
 │       ├── test_integration.py # 11 end-to-end integration tests
 │       ├── test_main.py        # 2 training smoke tests
-│       └── test_infer.py       # 4 inference validation tests
+│       ├── test_infer.py       # 4 inference validation tests
+│       └── test_remote_backend.py # Backend API, queue, and executor tests
+├── converted/backend/          # Valkey config and Docker deployment
 ├── mcp-server/                        # MCP server package (Node.js ESM)
 │   ├── package.json
 │   ├── tsconfig.json
@@ -203,7 +223,7 @@ NNModelling/
 │           └── lifecycle.ts           # reset_diagram, ping
 ├── docs/
 │   ├── report/                 # Bug reports (mcp_issues.md, etc.)
-│   └── designs/                # Design plans (mcp-sync-fixes/plan.md, etc.)
+│   └── designs/                # Design plans and implementation notes
 ├── analysis/
 │   ├── requirements/reqs.md    # DSL requirements specification
 │   └── uml/nn.vpp              # UML model (Visual Paradigm)
@@ -226,6 +246,7 @@ NNModelling/
 │   │   ├── index.rst           # Root toctree
 │   │   ├── user_guide.rst      # Educational user guide
 │   │   ├── architecture.rst    # System architecture explanation
+│   │   ├── remote_training.rst  # Implemented backend and training workflow
 │   │   ├── stereotypes.rst     # All 35 stereotypes with params and examples
 │   │   ├── python_api.rst      # Auto-generated Python API docs
 │   │   ├── typescript_api.rst  # TypeDoc integration page
@@ -245,7 +266,7 @@ NNModelling/
 - **Pattern**: Pure TS unit tests, no DOM/browser
 - **Real Diagram**: Tests use real `Diagram` class (Svelte `$state.raw` compiled by Vite plugin). Stub `globalThis.window` before construction.
 - **Helpers**: `node(id, stereo, name, params, overrides?)` and `edge(id, source, target, handles?)` for concise fixtures.
-- **Coverage**: **291 tests passed, 5 skipped** — sequential chain, skip/joins, autoencoder, subflow compilation, nested subflows, hidden nodes, error handling, connection validation, Fork node, type inference (Input, Linear, ReLU, Conv1d, Conv2d, Flatten, Unflatten, MaxPool2d, wildcards, mismatches, edge cases, computed dimensions, param_spread, join type checking, Repeat/HorizontalRepeat subflows, generic subflow recursion, nested subflows, loss nodes, complex modules), BrowserRPCHandler, MCP type serialization, undo/redo, param merging, edge handle defaults, viewport injection, invalid parameter validation, parentId placement, fuzz testing, expression evaluator, dtype validation, advisory warnings, shape suggestions, join input labels, and Einsum shape inference
+- **Coverage**: **293 tests passed, 5 skipped** — sequential chain, skip/joins, autoencoder, subflow compilation, nested subflows, hidden nodes, error handling, connection validation, Fork node, type inference (Input, Linear, ReLU, Conv1d, Conv2d, Flatten, Unflatten, MaxPool2d, wildcards, mismatches, edge cases, computed dimensions, param_spread, join type checking, Repeat/HorizontalRepeat subflows, generic subflow recursion, nested subflows, loss nodes, complex modules), BrowserRPCHandler, MCP type serialization, undo/redo, param merging, edge handle defaults, viewport injection, invalid parameter validation, parentId placement, fuzz testing, expression evaluator, dtype validation, advisory warnings, shape suggestions, join input labels, Einsum shape inference, model loading validation, and training API helpers
 
 ### Testing — Integration (Vitest + Python Pipeline)
 
@@ -268,7 +289,7 @@ NNModelling/
 
 - **Framework**: pytest (via `uv run pytest`)
 - **Files**: `converted/src/tests/` — pure Python tests (no TS/Vitest dependency)
-- **Coverage**: **104 non-training Python tests** currently pass across `test_ops.py`, `test_convert.py`, `test_base.py`, and `test_integration.py`; training/inference pipeline tests remain separate because they are slow and may download data.
+- **Coverage**: **112 fast non-training Python tests** currently pass across the conversion, runtime, integration, and remote-backend suites; full training/inference pipeline tests remain separate because they are slow and may download data.
 - **Fixtures**: NNTree JSON files from `examples/nntrees/` — shared between Python and Vitest integration tests
 
 ### Front-end Data Flow
@@ -724,3 +745,35 @@ Five new type system capabilities (Phases A–E from the design plan):
 **Historical test count for this phase**: 225 → 269 (+44); the current suite has grown further to 291 passing tests.
 
 **Files changed**: `tensortypes.ts` (TypeWarning, TypeSuggestion, Advisory, JoinConfig.input_labels/einsum_param, TypeResult.warnings/suggestions), `typeEngine.ts` (dtype validation, evaluateAdvisory, inferEinsumShape, patternMatch suggestions out-param), `typeEngine.test.ts` (44 new tests), 7 stereotype JSONs (dtype), 4 JSONs (advisories), 4 JSONs (input_labels + Einsum type_signature)
+
+### Phase 19 — Remote Training Backend and Source Model Loading
+
+Implemented the initial issue #14 training workflow:
+
+- Added `converted/src/backend/` with FastAPI endpoints, Pydantic job models,
+  dataset discovery, Valkey persistence, priority/FIFO scheduling, heartbeats,
+  cancellation, artifact management, and startup recovery.
+- Added `LocalExecutor` and `SlurmExecutor`. Slurm jobs use generated batch
+  scripts and support local `sbatch` or `ssh <host> sbatch` submission.
+- Added persistent Valkey configuration and Docker deployment under
+  `converted/backend/`. The default artifact directory is
+  `converted/jobs/<job-id>/`; `NNM_BACKEND_ARTIFACT_ROOT` is the deployment
+  override for mounted filesystems.
+- Added `front-end/src/components/TrainingSidebar.svelte` and
+  `front-end/src/training/api.ts`. The frontend sends the compiled NNTree and
+  Hydra configuration as one JSON request, displays jobs through REST/SSE, and
+  exposes dataset, resources, priority, W&B, and arbitrary Hydra overrides.
+- Added optional MCP HTTP proxy tools that reuse FastAPI job state.
+- Fixed source JSON loading so file inputs remain in the DOM during Chrome file
+  selection, invalid files produce a visible error, and failed imports do not
+  replace the current diagram. Editable diagrams are under
+  `examples/diagrams/`; `examples/nntrees/` contains converted artifacts.
+- Added `NNM_MODEL_PATH` source-model integration validation and the direct
+  Chrome skill at `.agents/skills/chrome-direct/` for CDP interaction,
+  uploads, DOM checks, and screenshots.
+- Added `docs2/source/remote_training.rst` and the design implementation notes
+  under `docs/designs/remote-training-backend/`.
+
+Remote training verification includes 293 frontend unit tests (5 skipped),
+source-model validation for the transformer fixture, backend tests, and a
+completed local MNIST training job through the browser UI.

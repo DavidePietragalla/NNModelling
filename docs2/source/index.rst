@@ -23,6 +23,7 @@ The project consists of three main packages:
    :caption: Reference
 
    architecture
+   remote_training
    stereotypes
    python_api
    typescript_api

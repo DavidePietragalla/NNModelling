@@ -1,5 +1,6 @@
 outputs
 jobs/
+valkey-data/
 *.pyc
 multirun
 data/
