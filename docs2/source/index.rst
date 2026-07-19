@@ -17,13 +17,19 @@ The project consists of three main packages:
    :caption: User Guide
 
    user_guide
+   training_user_guide
+
+.. toctree::
+   :maxdepth: 2
+   :caption: Administration
+
+   training_admin_guide
 
 .. toctree::
    :maxdepth: 2
    :caption: Reference
 
    architecture
-   remote_training
    stereotypes
    python_api
    typescript_api
