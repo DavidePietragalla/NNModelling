@@ -171,46 +171,58 @@ class JobManager:
         ]
 
     def run_once(self) -> bool:
-        """Claim and start the next compatible job, if any."""
+        """Claim and start the highest-priority compatible job, if any."""
 
         with self._lock:
             if len(self._active) >= self.max_running_jobs:
                 return False
-            job_id = self.store.claim_next()
-            if job_id is None:
-                return False
-            job = self.store.get_job(job_id)
-            if job is None or job.get("status") != "queued":
-                return False
-            executor = self._select_executor(job["resources"])
-            if executor is None:
-                self.store.enqueue(job_id, int(job["priority"]), job["created_at"])
-                return False
-            self._set_status(
-                job_id,
-                "running",
-                started_at=utc_now(),
-                executor=executor.kind,
-                compute_unit=executor.name,
-            )
+            deferred_job_ids: list[str] = []
             try:
-                handle = executor.submit(
-                    job,
-                    job["artifact_dir"],
-                    lambda details: self._heartbeat(job_id, details),
-                    lambda return_code, details: self._finished(job_id, return_code, details),
-                )
-            except Exception as exc:
-                self._set_status(job_id, "failed", finished_at=utc_now(), error=str(exc))
-                self._event(job_id, "failed", {"error": str(exc)})
-                return False
-            current = self.store.get_job(job_id) or job
-            current["executor_details"] = handle
-            self.store.save_job(job_id, current)
-            if current.get("status") not in TERMINAL_STATES:
-                self._active[job_id] = (executor, handle)
-            self._event(job_id, "running", {"executor": executor.name, **handle})
-            return True
+                while True:
+                    job_id = self.store.claim_next()
+                    if job_id is None:
+                        return False
+                    job = self.store.get_job(job_id)
+                    if job is None or job.get("status") != "queued":
+                        continue
+                    executor = self._select_executor(job["resources"])
+                    if executor is None:
+                        deferred_job_ids.append(job_id)
+                        continue
+                    self._set_status(
+                        job_id,
+                        "running",
+                        started_at=utc_now(),
+                        executor=executor.kind,
+                        compute_unit=executor.name,
+                    )
+                    try:
+                        handle = executor.submit(
+                            job,
+                            job["artifact_dir"],
+                            lambda details: self._heartbeat(job_id, details),
+                            lambda return_code, details: self._finished(job_id, return_code, details),
+                        )
+                    except Exception as exc:
+                        self._set_status(job_id, "failed", finished_at=utc_now(), error=str(exc))
+                        self._event(job_id, "failed", {"error": str(exc)})
+                        return False
+                    current = self.store.get_job(job_id) or job
+                    current["executor_details"] = handle
+                    self.store.save_job(job_id, current)
+                    if current.get("status") not in TERMINAL_STATES:
+                        self._active[job_id] = (executor, handle)
+                    self._event(job_id, "running", {"executor": executor.name, **handle})
+                    return True
+            finally:
+                for deferred_job_id in deferred_job_ids:
+                    deferred_job = self.store.get_job(deferred_job_id)
+                    if deferred_job is not None and deferred_job.get("status") == "queued":
+                        self.store.enqueue(
+                            deferred_job_id,
+                            int(deferred_job["priority"]),
+                            deferred_job["created_at"],
+                        )
 
     def _select_executor(self, resources: dict[str, Any]) -> Executor | None:
         """Select a compatible executor with a round-robin cursor."""

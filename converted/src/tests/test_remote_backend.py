@@ -110,6 +110,30 @@ def test_manager_builds_job_artifacts_and_finishes(tmp_path):
     assert manager.logs(queued.id)["stdout"] == "ok\n"
 
 
+def test_manager_skips_incompatible_high_priority_job(tmp_path):
+    """A blocked high-priority job must not starve a runnable lower-priority job."""
+
+    class CpuOnlyExecutor(ImmediateExecutor):
+        def can_run(self, resources: dict[str, Any]) -> bool:
+            return ResourceRequest.model_validate(resources).gpu == 0
+
+    manager = JobManager(InMemoryJobStore(), tmp_path, [CpuOnlyExecutor()])
+    blocked = manager.submit(
+        submission().model_copy(
+            update={"priority": 10, "resources": ResourceRequest(cpu=1, memory_gb=1, gpu=1)}
+        )
+    )
+    runnable = manager.submit(
+        submission().model_copy(
+            update={"priority": 1, "resources": ResourceRequest(cpu=1, memory_gb=1, gpu=0)}
+        )
+    )
+
+    assert manager.run_once() is True
+    assert manager.status(blocked.id).status == "queued"
+    assert manager.status(runnable.id).status == "succeeded"
+
+
 def test_failed_job_keeps_complete_executor_logs(tmp_path):
     class FailingExecutor(ImmediateExecutor):
         name = "failing"
