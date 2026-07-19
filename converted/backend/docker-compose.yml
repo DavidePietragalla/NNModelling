@@ -19,6 +19,8 @@ services:
       NNM_VALKEY_URL: valkey://valkey:6379/0
       NNM_BACKEND_ARTIFACT_ROOT: /app/jobs
       NNM_ADMIN_TOKEN_FILE: /run/secrets/nnm-admin-token
+      NNM_ALLOWED_ORIGINS: ${NNM_ALLOWED_ORIGINS:-http://127.0.0.1:5174}
+      NNM_SESSION_TTL: ${NNM_SESSION_TTL:-24h}
     ports:
       - "8000:8000"
     volumes:
