@@ -35,7 +35,7 @@ jobs:
 
 # Run the backend test suite.
 test:
-    cd "{{converted_dir}}" && UV_CACHE_DIR="{{uv_cache_dir}}" PYTHONPATH=src uv run pytest src/tests/test_remote_backend.py -q
+    cd "{{converted_dir}}" && UV_CACHE_DIR="{{uv_cache_dir}}" PYTHONPATH=src uv run pytest src/tests/test_remote_backend.py src/tests/test_backend_auth.py -q
 
 # Build and start the persistent Docker deployment.
 docker-up:
