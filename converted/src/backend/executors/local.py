@@ -147,5 +147,12 @@ class LocalExecutor:
             os.killpg(process.pid, signal.SIGTERM)
         except ProcessLookupError:
             return False
+        try:
+            process.wait(timeout=5)
+        except subprocess.TimeoutExpired:
+            try:
+                os.killpg(process.pid, signal.SIGKILL)
+            except ProcessLookupError:
+                return False
+            process.wait(timeout=5)
         return True
-

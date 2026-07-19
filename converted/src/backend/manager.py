@@ -89,11 +89,25 @@ class JobManager:
             self._thread.start()
 
     def stop(self) -> None:
-        """Stop scheduling new jobs."""
+        """Stop scheduling and terminate executions owned by this manager."""
 
         self._stop_event.set()
         if self._thread:
             self._thread.join(timeout=2)
+        with self._lock:
+            active_jobs = list(self._active.items())
+            self._active.clear()
+        for job_id, (executor, _handle) in active_jobs:
+            job = self.store.get_job(job_id)
+            if job is None or job.get("status") in TERMINAL_STATES:
+                continue
+            try:
+                executor.cancel(job_id)
+                error = "Backend stopped and cancelled the active execution; job must be resubmitted."
+            except Exception as exc:
+                error = f"Backend stopped before active execution could be cancelled: {exc}"
+            self._set_status(job_id, "failed", finished_at=utc_now(), error=error)
+            self._event(job_id, "failed", {"error": error})
 
     def _run(self) -> None:
         while not self._stop_event.is_set():
@@ -113,11 +127,14 @@ class JobManager:
             if status == "queued":
                 self.store.enqueue(job["id"], int(job["priority"]), job["created_at"])
             elif status == "running":
+                error = "Backend restarted while the execution was running; job must be resubmitted."
                 self._set_status(
                     job["id"],
                     "failed",
-                    error="Backend restarted while the execution was running; job must be resubmitted.",
+                    finished_at=utc_now(),
+                    error=error,
                 )
+                self._event(job["id"], "failed", {"error": error})
 
     def submit(self, submission: JobSubmission) -> JobStatus:
         """Validate, materialize and enqueue a complete job document."""
@@ -250,7 +267,7 @@ class JobManager:
         with self._lock:
             self._active.pop(job_id, None)
         job = self.store.get_job(job_id)
-        if job is None or job.get("status") == "cancelled":
+        if job is None or job.get("status") in TERMINAL_STATES:
             return
         if return_code == 0:
             self._set_status(

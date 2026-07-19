@@ -172,6 +172,54 @@ def test_manager_skips_incompatible_high_priority_job(tmp_path):
     assert manager.status(runnable.id).status == "succeeded"
 
 
+def test_manager_stop_cancels_active_job_and_marks_it_failed(tmp_path):
+    """Graceful shutdown must not leave an executor process orphaned."""
+
+    class BlockingExecutor(ImmediateExecutor):
+        def __init__(self) -> None:
+            self.cancelled_job_ids: list[str] = []
+
+        def submit(self, job, artifact_dir, on_heartbeat, on_finished):
+            del artifact_dir, on_heartbeat, on_finished
+            return {"job_id": job["id"]}
+
+        def cancel(self, job_id: str) -> bool:
+            self.cancelled_job_ids.append(job_id)
+            return True
+
+    executor = BlockingExecutor()
+    manager = JobManager(InMemoryJobStore(), tmp_path, [executor])
+    queued = manager.submit(submission())
+    assert manager.run_once() is True
+    assert manager.status(queued.id).status == "running"
+
+    manager.stop()
+
+    stopped = manager.status(queued.id)
+    assert executor.cancelled_job_ids == [queued.id]
+    assert stopped.status == "failed"
+    assert stopped.finished_at is not None
+
+
+def test_manager_recovery_records_terminal_event_for_interrupted_job(tmp_path):
+    """Restart recovery must leave a complete terminal audit trail."""
+
+    store = InMemoryJobStore()
+    manager = JobManager(store, tmp_path, [ImmediateExecutor()])
+    queued = manager.submit(submission())
+    record = store.get_job(queued.id)
+    assert record is not None
+    record["status"] = "running"
+    store.save_job(queued.id, record)
+
+    manager._recover()
+
+    recovered = manager.status(queued.id)
+    assert recovered.status == "failed"
+    assert recovered.finished_at is not None
+    assert manager.events(queued.id)[-1]["type"] == "failed"
+
+
 def test_failed_job_keeps_complete_executor_logs(tmp_path):
     class FailingExecutor(ImmediateExecutor):
         name = "failing"
