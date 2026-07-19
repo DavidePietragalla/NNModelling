@@ -308,6 +308,7 @@ class JobManager:
         if job["status"] == "queued":
             self.store.remove_from_queue(job_id, int(job["priority"]))
             self._set_status(job_id, "cancelled", finished_at=utc_now())
+            self._event(job_id, "cancelled", {})
         elif job["status"] == "running":
             with self._lock:
                 active = self._active.get(job_id)

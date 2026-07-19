@@ -3,7 +3,9 @@
   import type { Diagram } from "../Diagram.svelte";
   import { NNTree } from "../conversion/nnTree";
   import {
+    canCancelTrainingJob,
     cancelTrainingJob,
+    getTrainingJobLogs,
     listDatasets,
     listTrainingJobs,
     submitTrainingJob,
@@ -11,6 +13,7 @@
     type DatasetInfo,
     type DatasetParameter,
     type TrainingJobRequest,
+    type TrainingJobLogs,
     type TrainingJobStatus,
   } from "../training/api";
 
@@ -46,8 +49,10 @@
   let node = $state("");
   let priority = $state("0");
   let selectedJobId = $state<string | null>(null);
+  let selectedJobLogs = $state<TrainingJobLogs | null>(null);
   let loading = $state(false);
   let loadingJobs = $state(false);
+  let loadingLogs = $state(false);
   let errorMessage = $state("");
   let successMessage = $state("");
   let eventSource: EventSource | null = null;
@@ -155,6 +160,7 @@
       successMessage = `Job ${job.id} accodato.`;
       selectedJobId = job.id;
       startEvents(job.id);
+      await loadJobLogs(job.id);
       await refreshJobs();
     } catch (error) {
       errorMessage = error instanceof Error ? error.message : String(error);
@@ -168,6 +174,24 @@
     eventSource = new EventSource(trainingEventsUrl(jobId));
     eventSource.onmessage = () => void refreshJobs();
     eventSource.onerror = () => eventSource?.close();
+  }
+
+  async function loadJobLogs(jobId: string) {
+    loadingLogs = true;
+    try {
+      selectedJobLogs = await getTrainingJobLogs(jobId);
+    } catch (error) {
+      errorMessage = error instanceof Error ? error.message : String(error);
+    } finally {
+      loadingLogs = false;
+    }
+  }
+
+  function selectJob(jobId: string) {
+    selectedJobId = jobId;
+    selectedJobLogs = null;
+    startEvents(jobId);
+    void loadJobLogs(jobId);
   }
 
   async function cancel(jobId: string) {
@@ -261,13 +285,26 @@
     <h3>Job {#if loadingJobs}…{/if}</h3>
     {#each jobs as job (job.id)}
       <article class:selected={selectedJobId === job.id}>
-        <button class="job-title" onclick={() => { selectedJobId = job.id; startEvents(job.id); }}>
+        <button class="job-title" onclick={() => selectJob(job.id)}>
           <span>{job.id.slice(0, 8)}</span><strong>{job.status}</strong>
         </button>
         <small>priorità {job.priority} · {job.executor ?? "in coda"}</small>
         {#if job.error}<pre>{job.error}</pre>{/if}
-        {#if job.status === "running"}<button onclick={() => cancel(job.id)}>Annulla</button>{/if}
+        {#if canCancelTrainingJob(job.status)}<button onclick={() => cancel(job.id)}>Annulla</button>{/if}
         {#if job.wandb_url}<button onclick={() => openWandb(job)}>Apri W&B</button>{/if}
+        {#if selectedJobId === job.id}
+          <button onclick={() => void loadJobLogs(job.id)} disabled={loadingLogs}>
+            {loadingLogs ? "Caricamento log..." : "Aggiorna log"}
+          </button>
+          {#if selectedJobLogs}
+            <details open>
+              <summary>Log job</summary>
+              {#if selectedJobLogs.stdout}<pre>{selectedJobLogs.stdout}</pre>{/if}
+              {#if selectedJobLogs.stderr}<pre>{selectedJobLogs.stderr}</pre>{/if}
+              {#if !selectedJobLogs.stdout && !selectedJobLogs.stderr}<small>Nessun log disponibile.</small>{/if}
+            </details>
+          {/if}
+        {/if}
       </article>
     {:else}
       <p>Nessun job.</p>

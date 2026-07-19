@@ -220,6 +220,18 @@ def test_manager_recovery_records_terminal_event_for_interrupted_job(tmp_path):
     assert manager.events(queued.id)[-1]["type"] == "failed"
 
 
+def test_manager_cancel_queued_job_emits_cancelled_event(tmp_path):
+    """Queued and running cancellations must have the same observable transition."""
+
+    manager = JobManager(InMemoryJobStore(), tmp_path, [ImmediateExecutor()])
+    queued = manager.submit(submission())
+
+    cancelled = manager.cancel(queued.id)
+
+    assert cancelled.status == "cancelled"
+    assert manager.events(queued.id)[-1]["type"] == "cancelled"
+
+
 def test_failed_job_keeps_complete_executor_logs(tmp_path):
     class FailingExecutor(ImmediateExecutor):
         name = "failing"

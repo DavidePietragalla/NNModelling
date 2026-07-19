@@ -27,6 +27,11 @@ export interface TrainingJobStatus {
   artifact_dir: string;
 }
 
+export interface TrainingJobLogs {
+  stdout: string;
+  stderr: string;
+}
+
 export interface TrainingJobRequest {
   schema_version: number;
   network: { format: "nntree"; value: Record<string, unknown> };
@@ -76,7 +81,14 @@ export function cancelTrainingJob(jobId: string): Promise<TrainingJobStatus> {
   });
 }
 
+export function getTrainingJobLogs(jobId: string): Promise<TrainingJobLogs> {
+  return request<TrainingJobLogs>(`/jobs/${encodeURIComponent(jobId)}/logs`);
+}
+
+export function canCancelTrainingJob(status: TrainingJobStatus["status"]): boolean {
+  return status === "queued" || status === "running";
+}
+
 export function trainingEventsUrl(jobId: string): string {
   return trainingApiUrl(`/jobs/${encodeURIComponent(jobId)}/events`);
 }
-
