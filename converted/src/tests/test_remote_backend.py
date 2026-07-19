@@ -160,6 +160,20 @@ def test_slurm_script_maps_resources_without_client_commands(tmp_path):
     assert "network" not in script
 
 
+@pytest.mark.parametrize(
+    ("field", "value"),
+    [
+        ("gpu_type", "A100\nid > /tmp/owned"),
+        ("node", "node-01\nid > /tmp/owned"),
+    ],
+)
+def test_resource_request_rejects_unsafe_slurm_selectors(field, value):
+    """Resource selectors must not inject a second line into a batch script."""
+
+    with pytest.raises(ValueError, match="selector"):
+        ResourceRequest(**{field: value})
+
+
 def test_api_exposes_health_datasets_and_jobs(tmp_path):
     manager = JobManager(InMemoryJobStore(), tmp_path, [ImmediateExecutor()])
     app = create_app(manager)

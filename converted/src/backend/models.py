@@ -2,9 +2,14 @@
 
 from __future__ import annotations
 
+import re
 from typing import Any, Literal
 
 from pydantic import BaseModel, ConfigDict, Field, field_validator
+
+
+GPU_TYPE_SELECTOR = re.compile(r"[A-Za-z0-9][A-Za-z0-9_.-]*")
+NODE_SELECTOR = re.compile(r"[A-Za-z0-9][A-Za-z0-9_.\-,\[\]]*")
 
 
 class NetworkPayload(BaseModel):
@@ -27,9 +32,24 @@ class ResourceRequest(BaseModel):
     @field_validator("gpu_type")
     @classmethod
     def empty_gpu_type_is_none(cls, value: str | None) -> str | None:
-        """Normalize an empty GPU type to an omitted selector."""
+        """Normalize and validate a GPU selector used in ``#SBATCH``."""
 
-        return value or None
+        if not value:
+            return None
+        if not GPU_TYPE_SELECTOR.fullmatch(value):
+            raise ValueError("gpu_type selector contains unsupported characters")
+        return value
+
+    @field_validator("node")
+    @classmethod
+    def empty_node_is_none(cls, value: str | None) -> str | None:
+        """Normalize and validate a Slurm node-list selector."""
+
+        if not value:
+            return None
+        if not NODE_SELECTOR.fullmatch(value):
+            raise ValueError("node selector contains unsupported characters")
+        return value
 
 
 class JobSubmission(BaseModel):
@@ -86,4 +106,3 @@ class JobStatus(BaseModel):
     heartbeat_at: str | None = None
     wandb_url: str | None = None
     artifact_dir: str
-
