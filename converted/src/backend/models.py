@@ -148,3 +148,11 @@ class SessionInfo(BaseModel):
     expires_at: str | None = None
     last_seen_at: str | None = None
     revoked_at: str | None = None
+
+
+class PairingApprovalInput(BaseModel):
+    """Optional lifetime override supplied by a backend administrator."""
+
+    model_config = ConfigDict(extra="forbid")
+
+    ttl: str | None = None

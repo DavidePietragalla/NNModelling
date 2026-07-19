@@ -18,10 +18,12 @@ services:
     environment:
       NNM_VALKEY_URL: valkey://valkey:6379/0
       NNM_BACKEND_ARTIFACT_ROOT: /app/jobs
+      NNM_ADMIN_TOKEN_FILE: /run/secrets/nnm-admin-token
     ports:
       - "8000:8000"
     volumes:
       - backend-jobs:/app/jobs
+      - ../valkey-data/admin.token:/run/secrets/nnm-admin-token:ro
     depends_on:
       valkey:
         condition: service_healthy

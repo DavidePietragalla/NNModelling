@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import json
+import hmac
 import os
 import time
 from collections.abc import Iterator
@@ -28,6 +29,7 @@ from backend.models import (
     JobStatus,
     JobSubmission,
     PairingGrantResponse,
+    PairingApprovalInput,
     PairingRequestInput,
     PairingStatusResponse,
     SessionInfo,
@@ -91,6 +93,21 @@ def create_app(
             return app.state.auth.authenticate(token)
         except AuthError as exc:
             raise _auth_http_error(exc) from exc
+
+    async def administrator(
+        x_nnm_admin_token: str | None = Header(default=None),
+    ) -> None:
+        expected = app.state.admin_token
+        if expected is None:
+            raise HTTPException(
+                status_code=503,
+                detail={"code": "admin_not_configured", "message": "administrator token is not configured"},
+            )
+        if x_nnm_admin_token is None or not hmac.compare_digest(x_nnm_admin_token, expected):
+            raise HTTPException(
+                status_code=401,
+                detail={"code": "invalid_admin_token", "message": "invalid administrator token"},
+            )
 
     @app.get("/health")
     async def health() -> dict[str, str]:
@@ -247,6 +264,118 @@ def create_app(
     ) -> JobStatus:
         try:
             return app.state.manager.cancel(job_id, owner_connection_id=connection["id"])
+        except KeyError as exc:
+            raise HTTPException(status_code=404, detail="Unknown job") from exc
+
+    admin_dependency = [Depends(administrator)]
+
+    @app.get(
+        "/admin/pairing/requests",
+        dependencies=admin_dependency,
+        include_in_schema=False,
+    )
+    async def admin_pairing_requests() -> list[dict[str, Any]]:
+        return app.state.auth.list_requests(pending_only=True)
+
+    @app.post(
+        "/admin/pairing/requests/{request_id}/approve",
+        dependencies=admin_dependency,
+        include_in_schema=False,
+    )
+    async def admin_approve_pairing(
+        request_id: str,
+        body: PairingApprovalInput,
+    ) -> dict[str, Any]:
+        try:
+            ttl = parse_duration(body.ttl) if body.ttl else None
+            return app.state.auth.approve(request_id, ttl)
+        except AuthError as exc:
+            raise _auth_http_error(exc, not_found_codes={"pairing_not_found"}) from exc
+        except ValueError as exc:
+            raise HTTPException(status_code=422, detail=str(exc)) from exc
+
+    @app.post(
+        "/admin/pairing/requests/{request_id}/reject",
+        dependencies=admin_dependency,
+        include_in_schema=False,
+    )
+    async def admin_reject_pairing(request_id: str) -> dict[str, Any]:
+        try:
+            return app.state.auth.reject(request_id)
+        except AuthError as exc:
+            raise _auth_http_error(exc, not_found_codes={"pairing_not_found"}) from exc
+
+    @app.get(
+        "/admin/sessions",
+        dependencies=admin_dependency,
+        include_in_schema=False,
+    )
+    async def admin_sessions() -> list[dict[str, Any]]:
+        return app.state.auth.list_sessions()
+
+    @app.delete(
+        "/admin/sessions/{connection_id}",
+        dependencies=admin_dependency,
+        include_in_schema=False,
+    )
+    async def admin_revoke_session(connection_id: str) -> dict[str, Any]:
+        try:
+            return app.state.auth.revoke(connection_id)
+        except AuthError as exc:
+            raise _auth_http_error(exc, not_found_codes={"session_not_found"}) from exc
+
+    @app.get(
+        "/admin/jobs",
+        response_model=list[JobStatus],
+        dependencies=admin_dependency,
+        include_in_schema=False,
+    )
+    async def admin_jobs() -> list[JobStatus]:
+        return app.state.manager.admin_list_status()
+
+    @app.get(
+        "/admin/jobs/{job_id}",
+        response_model=JobStatus,
+        dependencies=admin_dependency,
+        include_in_schema=False,
+    )
+    async def admin_job(job_id: str) -> JobStatus:
+        try:
+            return app.state.manager.admin_status(job_id)
+        except KeyError as exc:
+            raise HTTPException(status_code=404, detail="Unknown job") from exc
+
+    @app.get(
+        "/admin/jobs/{job_id}/logs",
+        dependencies=admin_dependency,
+        include_in_schema=False,
+    )
+    async def admin_job_logs(job_id: str) -> dict[str, str]:
+        try:
+            return app.state.manager.admin_logs(job_id)
+        except KeyError as exc:
+            raise HTTPException(status_code=404, detail="Unknown job") from exc
+
+    @app.get(
+        "/admin/jobs/{job_id}/events",
+        dependencies=admin_dependency,
+        include_in_schema=False,
+    )
+    async def admin_job_events(job_id: str, after: str | None = None) -> list[dict[str, Any]]:
+        try:
+            return app.state.manager.admin_events(job_id, after)
+        except KeyError as exc:
+            raise HTTPException(status_code=404, detail="Unknown job") from exc
+
+    @app.delete(
+        "/admin/jobs/{job_id}",
+        response_model=JobStatus,
+        dependencies=admin_dependency,
+        include_in_schema=False,
+    )
+    async def admin_cancel_job(job_id: str) -> JobStatus:
+        try:
+            return app.state.manager.admin_cancel(job_id)
         except KeyError as exc:
             raise HTTPException(status_code=404, detail="Unknown job") from exc
 

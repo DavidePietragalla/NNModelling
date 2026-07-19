@@ -359,6 +359,55 @@ def test_public_pairing_flow_waits_for_administrator_approval(tmp_path):
     asyncio.run(exercise_api())
 
 
+def test_admin_api_approves_sessions_and_manages_all_jobs(tmp_path):
+    store = InMemoryJobStore()
+    manager = JobManager(store, tmp_path, [ImmediateExecutor()])
+    auth = AuthService(InMemoryAuthStore())
+    pairing = auth.create_pairing("Admin test", client_host="127.0.0.1")
+    app = create_app(manager, auth_service=auth, admin_token="admin-secret")
+
+    async def exercise_api() -> None:
+        transport = httpx.ASGITransport(app=app)
+        async with app.router.lifespan_context(app):
+            async with httpx.AsyncClient(transport=transport, base_url="http://test") as client:
+                assert (await client.get("/admin/pairing/requests")).status_code == 401
+                wrong = {"x-nnm-admin-token": "wrong"}
+                assert (await client.get("/admin/pairing/requests", headers=wrong)).status_code == 401
+                admin = {"x-nnm-admin-token": "admin-secret"}
+                pending = await client.get("/admin/pairing/requests", headers=admin)
+                assert [item["id"] for item in pending.json()] == [pairing.request_id]
+
+                approved = await client.post(
+                    f"/admin/pairing/requests/{pairing.request_id}/approve",
+                    headers=admin,
+                    json={"ttl": "8h"},
+                )
+                assert approved.status_code == 200
+                assert approved.json()["status"] == "active"
+                session_headers = {"authorization": f"Bearer {pairing.token}"}
+                submitted = await client.post(
+                    "/jobs",
+                    headers=session_headers,
+                    json=submission().model_dump(mode="json"),
+                )
+                assert submitted.status_code == 202
+                job_id = submitted.json()["id"]
+                assert any(item["id"] == job_id for item in (await client.get("/admin/jobs", headers=admin)).json())
+                assert (await client.delete(f"/admin/jobs/{job_id}", headers=admin)).status_code == 200
+
+                sessions = await client.get("/admin/sessions", headers=admin)
+                assert sessions.json()[0]["id"] == pairing.connection_id
+                assert "token_hash" not in sessions.text
+                revoked = await client.delete(
+                    f"/admin/sessions/{pairing.connection_id}",
+                    headers=admin,
+                )
+                assert revoked.json()["status"] == "revoked"
+                assert (await client.get("/jobs", headers=session_headers)).status_code == 401
+
+    asyncio.run(exercise_api())
+
+
 def test_job_submission_rejects_missing_dataset():
     with pytest.raises(ValueError, match="training.dataset"):
         normalize_training_config({"trainer": {"max_epochs": 1}})
