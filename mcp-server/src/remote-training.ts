@@ -68,9 +68,10 @@ export class RemoteTrainingClient {
     return this.request(`/jobs/${encodeURIComponent(jobId)}`, { method: "DELETE" });
   }
 
-  async getEvents(jobId: string, after = 0): Promise<unknown[]> {
+  async getEvents(jobId: string, after?: string): Promise<unknown[]> {
+    const cursor = after ? `?after=${encodeURIComponent(after)}` : "";
     const response = await fetch(
-      `${this.baseUrl}/jobs/${encodeURIComponent(jobId)}/events?after=${after}`,
+      `${this.baseUrl}/jobs/${encodeURIComponent(jobId)}/events${cursor}`,
       { headers: { accept: "text/event-stream" } },
     );
     if (!response.ok) {
@@ -84,4 +85,3 @@ export class RemoteTrainingClient {
       .map((value) => JSON.parse(value) as unknown);
   }
 }
-

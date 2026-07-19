@@ -66,10 +66,10 @@ export const get_training_job_logs = {
 };
 
 export const get_training_job_events = {
-  schema: z.object({ jobId: z.string().min(1), after: z.number().int().nonnegative().optional() }),
+  schema: z.object({ jobId: z.string().min(1), after: z.string().min(1).optional() }),
 
-  async handler(ctx: ServerContext, input: { jobId: string; after?: number }) {
-    return client(ctx).getEvents(input.jobId, input.after ?? 0);
+  async handler(ctx: ServerContext, input: { jobId: string; after?: string }) {
+    return client(ctx).getEvents(input.jobId, input.after);
   },
 };
 
@@ -80,4 +80,3 @@ export const cancel_training_job = {
     return client(ctx).cancelJob(input.jobId);
   },
 };
-

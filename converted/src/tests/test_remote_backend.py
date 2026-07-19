@@ -16,7 +16,7 @@ from backend.dataset_registry import discover_datasets
 from backend.executors import SlurmExecutor
 from backend.manager import JobManager
 from backend.models import JobSubmission, ResourceRequest
-from backend.store import InMemoryJobStore
+from backend.store import InMemoryJobStore, ValkeyJobStore
 
 
 TRANSFORMER_NNTREE_PATH = Path(__file__).resolve().parents[3] / "examples" / "nntrees" / "transformer_classifier.json"
@@ -93,6 +93,44 @@ def test_in_memory_store_orders_priority_then_fifo():
     assert store.claim_next() == "high-early"
     assert store.claim_next() == "high-late"
     assert store.claim_next() == "low"
+
+
+def test_valkey_event_cursor_continues_after_retention_limit():
+    """A stream cursor must keep its native identity after 1,000 events."""
+
+    class FakeStreamClient:
+        def __init__(self) -> None:
+            self.events: list[tuple[str, dict[str, str]]] = []
+
+        def xadd(self, _key, fields, maxlen):
+            event_id = f"{len(self.events) + 1}-0"
+            self.events.append((event_id, fields))
+            self.events = self.events[-maxlen:]
+            return event_id
+
+        def xrange(self, _key, min="-", max="+", count=None):
+            del max
+            events = self.events
+            if min.startswith("("):
+                after = tuple(int(part) for part in min[1:].split("-"))
+                events = [
+                    event
+                    for event in events
+                    if tuple(int(part) for part in event[0].split("-")) > after
+                ]
+            return events[:count]
+
+    store = object.__new__(ValkeyJobStore)
+    store.client = FakeStreamClient()
+    for sequence in range(1_000):
+        store.append_event("job-1", {"sequence": sequence})
+
+    first_batch = store.get_events("job-1")
+    assert first_batch[-1]["id"] == "1000-0"
+
+    store.append_event("job-1", {"sequence": 1_000})
+    following_batch = store.get_events("job-1", after=first_batch[-1]["id"])
+    assert [event["sequence"] for event in following_batch] == [1_000]
 
 
 def test_manager_builds_job_artifacts_and_finishes(tmp_path):

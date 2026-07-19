@@ -37,7 +37,7 @@ describe("remote training MCP tools", () => {
     await remoteTools.list_training_jobs.handler(ctx);
     await remoteTools.get_training_job.handler(ctx, { jobId: "job-1" });
     await remoteTools.get_training_job_logs.handler(ctx, { jobId: "job-1" });
-    await remoteTools.get_training_job_events.handler(ctx, { jobId: "job-1", after: 2 });
+    await remoteTools.get_training_job_events.handler(ctx, { jobId: "job-1", after: "2-0" });
     await remoteTools.cancel_training_job.handler(ctx, { jobId: "job-1" });
 
     expect(client.listDatasets).toHaveBeenCalledOnce();
@@ -45,8 +45,7 @@ describe("remote training MCP tools", () => {
     expect(client.listJobs).toHaveBeenCalledOnce();
     expect(client.getJob).toHaveBeenCalledWith("job-1");
     expect(client.getLogs).toHaveBeenCalledWith("job-1");
-    expect(client.getEvents).toHaveBeenCalledWith("job-1", 2);
+    expect(client.getEvents).toHaveBeenCalledWith("job-1", "2-0");
     expect(client.cancelJob).toHaveBeenCalledWith("job-1");
   });
 });
-

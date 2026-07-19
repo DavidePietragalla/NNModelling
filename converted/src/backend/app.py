@@ -8,7 +8,7 @@ from collections.abc import Iterator
 from contextlib import asynccontextmanager
 from typing import Any
 
-from fastapi import FastAPI, HTTPException
+from fastapi import FastAPI, Header, HTTPException
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import StreamingResponse
 
@@ -80,21 +80,25 @@ def create_app(manager: JobManager | None = None) -> FastAPI:
             raise HTTPException(status_code=404, detail="Unknown job") from exc
 
     @app.get("/jobs/{job_id}/events")
-    def get_events(job_id: str, after: int = 0) -> StreamingResponse:
+    def get_events(
+        job_id: str,
+        after: str | None = None,
+        last_event_id: str | None = Header(default=None),
+    ) -> StreamingResponse:
         try:
             app.state.manager.status(job_id)
         except KeyError as exc:
             raise HTTPException(status_code=404, detail="Unknown job") from exc
 
         def stream() -> Iterator[str]:
-            cursor = after
+            cursor = after or last_event_id
             idle_cycles = 0
             while idle_cycles < 120:
                 events = app.state.manager.events(job_id, cursor)
                 if events:
                     idle_cycles = 0
                     for event in events:
-                        cursor = int(event["id"])
+                        cursor = str(event["id"])
                         yield f"id: {cursor}\ndata: {json.dumps(event)}\n\n"
                 else:
                     idle_cycles += 1

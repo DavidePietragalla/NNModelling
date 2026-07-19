@@ -312,7 +312,7 @@ class JobManager:
             "stderr": _read_text(root / "stderr.log"),
         }
 
-    def events(self, job_id: str, after: int = 0) -> list[dict[str, Any]]:
+    def events(self, job_id: str, after: str | None = None) -> list[dict[str, Any]]:
         """Return events after a stream sequence number."""
 
         if self.store.get_job(job_id) is None:

@@ -8,6 +8,9 @@ from datetime import UTC, datetime
 from typing import Any, Protocol
 
 
+EventCursor = str | None
+
+
 def utc_now() -> str:
     """Return an ISO-8601 UTC timestamp."""
 
@@ -31,7 +34,7 @@ class JobStore(Protocol):
 
     def append_event(self, job_id: str, event: dict[str, Any]) -> None: ...
 
-    def get_events(self, job_id: str, after: int = 0) -> list[dict[str, Any]]: ...
+    def get_events(self, job_id: str, after: EventCursor = None) -> list[dict[str, Any]]: ...
 
 
 class InMemoryJobStore:
@@ -75,11 +78,15 @@ class InMemoryJobStore:
     def append_event(self, job_id: str, event: dict[str, Any]) -> None:
         with self._lock:
             stream = self.events.setdefault(job_id, [])
-            stream.append({"id": len(stream) + 1, **json.loads(json.dumps(event))})
+            stream.append({"id": f"{len(stream) + 1}-0", **json.loads(json.dumps(event))})
 
-    def get_events(self, job_id: str, after: int = 0) -> list[dict[str, Any]]:
+    def get_events(self, job_id: str, after: EventCursor = None) -> list[dict[str, Any]]:
         with self._lock:
-            return [json.loads(json.dumps(event)) for event in self.events.get(job_id, []) if event["id"] > after]
+            return [
+                json.loads(json.dumps(event))
+                for event in self.events.get(job_id, [])
+                if after is None or _stream_id_key(event["id"]) > _stream_id_key(after)
+            ]
 
 
 class ValkeyJobStore:
@@ -163,13 +170,20 @@ class ValkeyJobStore:
     def append_event(self, job_id: str, event: dict[str, Any]) -> None:
         self.client.xadd(f"job:{job_id}:events", {"event": json.dumps(event)}, maxlen=1000)
 
-    def get_events(self, job_id: str, after: int = 0) -> list[dict[str, Any]]:
-        events = self.client.xrange(f"job:{job_id}:events", count=1000)
-        result: list[dict[str, Any]] = []
-        for index, (_event_id, fields) in enumerate(events, start=1):
-            if index > after:
-                result.append({"id": index, **json.loads(fields["event"])})
-        return result
+    def get_events(self, job_id: str, after: EventCursor = None) -> list[dict[str, Any]]:
+        minimum = f"({after}" if after else "-"
+        events = self.client.xrange(f"job:{job_id}:events", min=minimum, max="+", count=1000)
+        return [
+            {"id": str(event_id), **json.loads(fields["event"])}
+            for event_id, fields in events
+        ]
+
+
+def _stream_id_key(value: str) -> tuple[int, int]:
+    """Return a comparable pair for Valkey stream IDs and the in-memory double."""
+
+    milliseconds, separator, sequence = value.partition("-")
+    return int(milliseconds), int(sequence) if separator else 0
 
 
 def datetime_from_iso(value: str) -> float:
