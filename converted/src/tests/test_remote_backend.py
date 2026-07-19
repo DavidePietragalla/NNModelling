@@ -11,6 +11,7 @@ import httpx
 import pytest
 
 from backend.app import create_app
+from backend.auth import AuthService, InMemoryAuthStore
 from backend.config_service import normalize_training_config
 from backend.dataset_registry import discover_datasets
 from backend.executors import SlurmExecutor
@@ -20,6 +21,7 @@ from backend.store import InMemoryJobStore, ValkeyJobStore
 
 
 TRANSFORMER_NNTREE_PATH = Path(__file__).resolve().parents[3] / "examples" / "nntrees" / "transformer_classifier.json"
+OWNER = "test-connection"
 
 
 def transformer_nntree() -> dict[str, Any]:
@@ -135,17 +137,17 @@ def test_valkey_event_cursor_continues_after_retention_limit():
 
 def test_manager_builds_job_artifacts_and_finishes(tmp_path):
     manager = JobManager(InMemoryJobStore(), tmp_path, [ImmediateExecutor()])
-    queued = manager.submit(submission())
+    queued = manager.submit(submission(), owner_connection_id=OWNER)
     assert queued.status == "queued"
     assert manager.run_once() is True
-    finished = manager.status(queued.id)
+    finished = manager.status(queued.id, owner_connection_id=OWNER)
     assert finished.status == "succeeded"
     assert Path(finished.artifact_dir, "requested_config.json").exists()
     assert Path(finished.artifact_dir, "resolved_config.yaml").exists()
     resolved = Path(finished.artifact_dir, "resolved_config.yaml").read_text(encoding="utf-8")
     assert "max_epochs: 2" in resolved
     assert "dataset.enron_spam.EnronSpamDataset" in resolved
-    assert manager.logs(queued.id)["stdout"] == "ok\n"
+    assert manager.logs(queued.id, owner_connection_id=OWNER)["stdout"] == "ok\n"
 
 
 def test_manager_skips_incompatible_high_priority_job(tmp_path):
@@ -159,17 +161,19 @@ def test_manager_skips_incompatible_high_priority_job(tmp_path):
     blocked = manager.submit(
         submission().model_copy(
             update={"priority": 10, "resources": ResourceRequest(cpu=1, memory_gb=1, gpu=1)}
-        )
+        ),
+        owner_connection_id=OWNER,
     )
     runnable = manager.submit(
         submission().model_copy(
             update={"priority": 1, "resources": ResourceRequest(cpu=1, memory_gb=1, gpu=0)}
-        )
+        ),
+        owner_connection_id=OWNER,
     )
 
     assert manager.run_once() is True
-    assert manager.status(blocked.id).status == "queued"
-    assert manager.status(runnable.id).status == "succeeded"
+    assert manager.status(blocked.id, owner_connection_id=OWNER).status == "queued"
+    assert manager.status(runnable.id, owner_connection_id=OWNER).status == "succeeded"
 
 
 def test_manager_stop_cancels_active_job_and_marks_it_failed(tmp_path):
@@ -189,13 +193,13 @@ def test_manager_stop_cancels_active_job_and_marks_it_failed(tmp_path):
 
     executor = BlockingExecutor()
     manager = JobManager(InMemoryJobStore(), tmp_path, [executor])
-    queued = manager.submit(submission())
+    queued = manager.submit(submission(), owner_connection_id=OWNER)
     assert manager.run_once() is True
-    assert manager.status(queued.id).status == "running"
+    assert manager.status(queued.id, owner_connection_id=OWNER).status == "running"
 
     manager.stop()
 
-    stopped = manager.status(queued.id)
+    stopped = manager.status(queued.id, owner_connection_id=OWNER)
     assert executor.cancelled_job_ids == [queued.id]
     assert stopped.status == "failed"
     assert stopped.finished_at is not None
@@ -206,7 +210,7 @@ def test_manager_recovery_records_terminal_event_for_interrupted_job(tmp_path):
 
     store = InMemoryJobStore()
     manager = JobManager(store, tmp_path, [ImmediateExecutor()])
-    queued = manager.submit(submission())
+    queued = manager.submit(submission(), owner_connection_id=OWNER)
     record = store.get_job(queued.id)
     assert record is not None
     record["status"] = "running"
@@ -214,22 +218,22 @@ def test_manager_recovery_records_terminal_event_for_interrupted_job(tmp_path):
 
     manager._recover()
 
-    recovered = manager.status(queued.id)
+    recovered = manager.status(queued.id, owner_connection_id=OWNER)
     assert recovered.status == "failed"
     assert recovered.finished_at is not None
-    assert manager.events(queued.id)[-1]["type"] == "failed"
+    assert manager.events(queued.id, owner_connection_id=OWNER)[-1]["type"] == "failed"
 
 
 def test_manager_cancel_queued_job_emits_cancelled_event(tmp_path):
     """Queued and running cancellations must have the same observable transition."""
 
     manager = JobManager(InMemoryJobStore(), tmp_path, [ImmediateExecutor()])
-    queued = manager.submit(submission())
+    queued = manager.submit(submission(), owner_connection_id=OWNER)
 
-    cancelled = manager.cancel(queued.id)
+    cancelled = manager.cancel(queued.id, owner_connection_id=OWNER)
 
     assert cancelled.status == "cancelled"
-    assert manager.events(queued.id)[-1]["type"] == "cancelled"
+    assert manager.events(queued.id, owner_connection_id=OWNER)[-1]["type"] == "cancelled"
 
 
 def test_failed_job_keeps_complete_executor_logs(tmp_path):
@@ -245,13 +249,13 @@ def test_failed_job_keeps_complete_executor_logs(tmp_path):
             return {"stdout": str(stdout), "stderr": str(stderr)}
 
     manager = JobManager(InMemoryJobStore(), tmp_path, [FailingExecutor()])
-    queued = manager.submit(submission())
+    queued = manager.submit(submission(), owner_connection_id=OWNER)
     manager.run_once()
 
-    failed = manager.status(queued.id)
+    failed = manager.status(queued.id, owner_connection_id=OWNER)
     assert failed.status == "failed"
     assert "all details" in (failed.error or "")
-    assert manager.logs(queued.id) == {
+    assert manager.logs(queued.id, owner_connection_id=OWNER) == {
         "stdout": "started\n",
         "stderr": "Traceback\nall details\n",
     }
@@ -296,22 +300,61 @@ def test_resource_request_rejects_unsafe_slurm_selectors(field, value):
         ResourceRequest(**{field: value})
 
 
-def test_api_exposes_health_datasets_and_jobs(tmp_path):
+def test_api_requires_pairing_and_scopes_jobs_to_their_connection(tmp_path):
     manager = JobManager(InMemoryJobStore(), tmp_path, [ImmediateExecutor()])
-    app = create_app(manager)
+    auth = AuthService(InMemoryAuthStore())
+    first = auth.create_pairing("First", client_host="127.0.0.1")
+    second = auth.create_pairing("Second", client_host="127.0.0.2")
+    auth.approve(first.request_id)
+    auth.approve(second.request_id)
+    app = create_app(manager, auth_service=auth, admin_token="admin-secret")
 
     async def exercise_api() -> None:
         transport = httpx.ASGITransport(app=app)
         async with app.router.lifespan_context(app):
             async with httpx.AsyncClient(transport=transport, base_url="http://test") as client:
                 assert (await client.get("/health")).json() == {"status": "ok"}
-                datasets = await client.get("/datasets")
+                assert (await client.get("/datasets")).status_code == 401
+                first_headers = {"authorization": f"Bearer {first.token}"}
+                second_headers = {"authorization": f"Bearer {second.token}"}
+                datasets = await client.get("/datasets", headers=first_headers)
                 assert datasets.status_code == 200
                 assert any(item["name"] == "MNISTDataset" for item in datasets.json())
-                response = await client.post("/jobs", json=submission().model_dump(mode="json"))
+                response = await client.post(
+                    "/jobs",
+                    headers=first_headers,
+                    json=submission().model_dump(mode="json"),
+                )
                 assert response.status_code == 202
                 assert response.json()["status"] == "queued"
-                assert (await client.get("/jobs")).json()[0]["status"] == "queued"
+                job_id = response.json()["id"]
+                assert len((await client.get("/jobs", headers=first_headers)).json()) == 1
+                assert (await client.get("/jobs", headers=second_headers)).json() == []
+                assert (await client.get(f"/jobs/{job_id}", headers=second_headers)).status_code == 404
+
+    asyncio.run(exercise_api())
+
+
+def test_public_pairing_flow_waits_for_administrator_approval(tmp_path):
+    manager = JobManager(InMemoryJobStore(), tmp_path, [ImmediateExecutor()])
+    auth = AuthService(InMemoryAuthStore())
+    app = create_app(manager, auth_service=auth, admin_token="admin-secret")
+
+    async def exercise_api() -> None:
+        transport = httpx.ASGITransport(app=app)
+        async with app.router.lifespan_context(app):
+            async with httpx.AsyncClient(transport=transport, base_url="http://test") as client:
+                created = await client.post("/pairing/requests", json={"device_name": "Lab browser"})
+                assert created.status_code == 201
+                body = created.json()
+                headers = {"authorization": f"Bearer {body['token']}"}
+                pending = await client.get(f"/pairing/requests/{body['request_id']}", headers=headers)
+                assert pending.json()["status"] == "pending"
+                assert (await client.get("/session", headers=headers)).status_code == 401
+
+                auth.approve(body["request_id"])
+
+                assert (await client.get("/session", headers=headers)).status_code == 200
 
     asyncio.run(exercise_api())
 

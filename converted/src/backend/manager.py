@@ -136,7 +136,7 @@ class JobManager:
                 )
                 self._event(job["id"], "failed", {"error": error})
 
-    def submit(self, submission: JobSubmission) -> JobStatus:
+    def submit(self, submission: JobSubmission, *, owner_connection_id: str) -> JobStatus:
         """Validate, materialize and enqueue a complete job document."""
 
         job_id = str(uuid.uuid4())
@@ -163,29 +163,41 @@ class JobManager:
             "heartbeat_at": None,
             "wandb_url": None,
             "artifact_dir": str(artifact_dir),
+            "owner_connection_id": owner_connection_id,
             "resources": submission.resources.model_dump(mode="json"),
             "submission": payload,
         }
         self.store.save_job(job_id, record)
         self.store.enqueue(job_id, submission.priority, created_at)
         self._event(job_id, "queued", {"priority": submission.priority})
-        return self.status(job_id)
+        return self.status(job_id, owner_connection_id=owner_connection_id)
 
-    def status(self, job_id: str) -> JobStatus:
-        """Return public job metadata."""
+    def status(self, job_id: str, *, owner_connection_id: str) -> JobStatus:
+        """Return public metadata for a job owned by one connection."""
+
+        return self._public_status(self._owned_job(job_id, owner_connection_id))
+
+    def admin_status(self, job_id: str) -> JobStatus:
+        """Return job metadata without applying a browser ownership filter."""
 
         job = self.store.get_job(job_id)
         if job is None:
             raise KeyError(job_id)
-        return JobStatus.model_validate({key: job.get(key) for key in JobStatus.model_fields})
+        return self._public_status(job)
 
-    def list_status(self) -> list[JobStatus]:
-        """Return jobs newest first."""
+    def list_status(self, *, owner_connection_id: str) -> list[JobStatus]:
+        """Return one connection's jobs newest first."""
 
         return [
-            JobStatus.model_validate({key: job.get(key) for key in JobStatus.model_fields})
-            for job in sorted(self.store.list_jobs(), key=lambda item: item["created_at"], reverse=True)
+            self._public_status(job)
+            for job in self._sorted_jobs()
+            if job.get("owner_connection_id") == owner_connection_id
         ]
+
+    def admin_list_status(self) -> list[JobStatus]:
+        """Return every job, including records created before ownership existed."""
+
+        return [self._public_status(job) for job in self._sorted_jobs()]
 
     def run_once(self) -> bool:
         """Claim and start the highest-priority compatible job, if any."""
@@ -299,8 +311,14 @@ class JobManager:
                 return content[-4000:]
         return f"Training executor failed: {details}"
 
-    def cancel(self, job_id: str) -> JobStatus:
-        """Cancel a queued or active job."""
+    def cancel(self, job_id: str, *, owner_connection_id: str) -> JobStatus:
+        """Cancel a queued or active job owned by one connection."""
+
+        self._owned_job(job_id, owner_connection_id)
+        return self.admin_cancel(job_id)
+
+    def admin_cancel(self, job_id: str) -> JobStatus:
+        """Cancel any queued or active job as the backend administrator."""
 
         job = self.store.get_job(job_id)
         if job is None:
@@ -316,10 +334,16 @@ class JobManager:
                 active[0].cancel(job_id)
             self._set_status(job_id, "cancelled", finished_at=utc_now())
             self._event(job_id, "cancelled", {})
-        return self.status(job_id)
+        return self.admin_status(job_id)
 
-    def logs(self, job_id: str) -> dict[str, str]:
-        """Read complete stdout/stderr logs from the job artifact directory."""
+    def logs(self, job_id: str, *, owner_connection_id: str) -> dict[str, str]:
+        """Read logs from a job owned by one connection."""
+
+        self._owned_job(job_id, owner_connection_id)
+        return self.admin_logs(job_id)
+
+    def admin_logs(self, job_id: str) -> dict[str, str]:
+        """Read complete stdout/stderr logs for any job."""
 
         job = self.store.get_job(job_id)
         if job is None:
@@ -330,12 +354,39 @@ class JobManager:
             "stderr": _read_text(root / "stderr.log"),
         }
 
-    def events(self, job_id: str, after: str | None = None) -> list[dict[str, Any]]:
-        """Return events after a stream sequence number."""
+    def events(
+        self,
+        job_id: str,
+        after: str | None = None,
+        *,
+        owner_connection_id: str,
+    ) -> list[dict[str, Any]]:
+        """Return events for a job owned by one connection."""
+
+        self._owned_job(job_id, owner_connection_id)
+        return self.admin_events(job_id, after)
+
+    def admin_events(self, job_id: str, after: str | None = None) -> list[dict[str, Any]]:
+        """Return events for any job after a stream sequence number."""
 
         if self.store.get_job(job_id) is None:
             raise KeyError(job_id)
         return self.store.get_events(job_id, after)
+
+    def _owned_job(self, job_id: str, owner_connection_id: str) -> dict[str, Any]:
+        """Load a job only when its persisted owner matches exactly."""
+
+        job = self.store.get_job(job_id)
+        if job is None or job.get("owner_connection_id") != owner_connection_id:
+            raise KeyError(job_id)
+        return job
+
+    def _sorted_jobs(self) -> list[dict[str, Any]]:
+        return sorted(self.store.list_jobs(), key=lambda item: item["created_at"], reverse=True)
+
+    @staticmethod
+    def _public_status(job: dict[str, Any]) -> JobStatus:
+        return JobStatus.model_validate({key: job.get(key) for key in JobStatus.model_fields})
 
     def _set_status(self, job_id: str, status: str, **changes: Any) -> None:
         job = self.store.get_job(job_id)

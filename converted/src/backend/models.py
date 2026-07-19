@@ -106,3 +106,45 @@ class JobStatus(BaseModel):
     heartbeat_at: str | None = None
     wandb_url: str | None = None
     artifact_dir: str
+
+
+class PairingRequestInput(BaseModel):
+    """Optional browser metadata supplied when requesting a connection."""
+
+    model_config = ConfigDict(extra="forbid")
+
+    device_name: str | None = Field(default=None, max_length=80)
+
+
+class PairingGrantResponse(BaseModel):
+    """One-time connection credentials returned to the browser."""
+
+    request_id: str
+    connection_id: str
+    token: str
+    verification_code: str
+    expires_at: str
+
+
+class PairingStatusResponse(BaseModel):
+    """Observable state of a browser pairing request."""
+
+    request_id: str
+    connection_id: str
+    status: Literal["pending", "approved", "rejected", "expired"]
+    verification_code: str
+    expires_at: str
+    session_expires_at: str | None = None
+
+
+class SessionInfo(BaseModel):
+    """Public metadata for the authenticated browser connection."""
+
+    id: str
+    device_name: str | None = None
+    status: str
+    created_at: str
+    approved_at: str | None = None
+    expires_at: str | None = None
+    last_seen_at: str | None = None
+    revoked_at: str | None = None
