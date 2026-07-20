@@ -3342,4 +3342,20 @@ describe("TypeEngine — Real-world diagrams", () => {
       (error) => error.nodeId === "attn_proj" && /got 512/.test(error.message),
     )).toBe(true);
   });
+
+  it("transformer_classifier.json: reports only the primary downstream type error", () => {
+    const filePath = resolve(DIAGRAMS_DIR, "transformer_classifier.json");
+    const d = new Diagram();
+    d.importFromJson(readFileSync(filePath, "utf-8"));
+    d.updateModule("mha", { params: { n: { value: "16" } } });
+
+    const result = TypeEngine.infer(d);
+    const hardErrors = result.errors.filter((error) => error.severity === "error");
+
+    expect(hardErrors).toHaveLength(1);
+    expect(hardErrors[0].nodeId).toBe("attn_proj");
+    expect(hardErrors[0].message).toContain("got 512");
+    expect(result.annotations.get("add1_join")?.blockedBy).toEqual(["attn_proj"]);
+    expect(result.annotations.get("pool")?.blockedBy).toEqual(["attn_proj"]);
+  });
 });

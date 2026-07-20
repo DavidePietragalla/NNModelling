@@ -101,6 +101,11 @@ export class TypeEngine {
           ).params as Record<string, unknown>;
           // Compute input type inline (inputType not yet declared at this point)
           const incEdges = diagram.edges.filter((e) => e.target === nodeId);
+          const blockedBy = this.blockedByFromEdges(incEdges, annotations);
+          if (blockedBy.length > 0) {
+            annotations.set(nodeId, this.blockedAnnotation(nodeId, blockedBy));
+            continue;
+          }
           let subflowInputType: TensorType | undefined;
           if (incEdges.length === 1) {
             const srcAnn = annotations.get(incEdges[0].source);
@@ -135,6 +140,7 @@ export class TypeEngine {
           } else {
             if (!result.nodeId) result.nodeId = nodeId;
             errors.push(result);
+            annotations.set(nodeId, this.blockedAnnotation(nodeId, [nodeId]));
           }
           continue;
         }
@@ -162,6 +168,11 @@ export class TypeEngine {
 
       // ── Step d: Determine input type(s) ──────────────────────────
       const incomingEdges = diagram.edges.filter((e) => e.target === nodeId);
+      const blockedBy = this.blockedByFromEdges(incomingEdges, annotations);
+      if (blockedBy.length > 0) {
+        annotations.set(nodeId, this.blockedAnnotation(nodeId, blockedBy));
+        continue;
+      }
 
       let inputType: TensorType | undefined;
       let inputTypes: TensorType[] | undefined;
@@ -238,6 +249,7 @@ export class TypeEngine {
       }
 
       // ── Step e: Call inferNode ───────────────────────────────────
+      const errorStart = errors.length;
       const result = this.inferNode(
         inputType,
         stereotype,
@@ -254,10 +266,15 @@ export class TypeEngine {
 
       // ── Steps f/g: Handle result ─────────────────────────────────
       if (isTensorType(result)) {
+        const derivedBlockedBy =
+          result.shape.length === 0
+            ? this.primaryErrorIds(errors.slice(errorStart))
+            : [];
         const annotation: NodeTypeAnnotation = {
           nodeId,
           outputType: result,
         };
+        if (derivedBlockedBy.length > 0) annotation.blockedBy = derivedBlockedBy;
         if (inputType !== undefined) {
           annotation.inputType = inputType;
         }
@@ -278,13 +295,15 @@ export class TypeEngine {
           result.nodeId = nodeId;
         }
         errors.push(result);
+        annotations.set(nodeId, this.blockedAnnotation(nodeId, [nodeId]));
       }
     }
 
+    const uniqueErrors = this.dedupeErrors(errors);
     return {
-      ok: errors.every((e) => e.severity !== "error"),
+      ok: uniqueErrors.every((e) => e.severity !== "error"),
       annotations,
-      errors,
+      errors: uniqueErrors,
       warnings,
       suggestions,
     };
@@ -795,6 +814,7 @@ export class TypeEngine {
 
             let currentType = inputType;
             for (let iteration = 0; iteration < iterations; iteration++) {
+              const iterationErrorStart = subflowErrors.length;
               const iterationResult = this.inferSubflow(
                 nodeId,
                 currentType,
@@ -808,6 +828,13 @@ export class TypeEngine {
               );
               if (!isTensorType(iterationResult)) return iterationResult;
               currentType = iterationResult;
+              if (
+                currentType.shape.length === 0 &&
+                currentType.dtype === "unknown" &&
+                subflowErrors.length > iterationErrorStart
+              ) {
+                break;
+              }
             }
             return currentType;
           }
@@ -1057,6 +1084,17 @@ export class TypeEngine {
           // Compute input type: entry node gets externalInputType,
           // other nodes get it from internal predecessor annotations
           let nestedInputType: TensorType | undefined;
+          const nestedIncomingEdges = internalEdges.filter(
+            (e) => e.target === internalNodeId,
+          );
+          const blockedBy = this.blockedByFromEdges(nestedIncomingEdges, annotations);
+          if (blockedBy.length > 0) {
+            annotations.set(
+              internalNodeId,
+              this.blockedAnnotation(internalNodeId, blockedBy),
+            );
+            continue;
+          }
           if (isEntry && externalInputType) {
             nestedInputType = externalInputType;
           } else {
@@ -1118,6 +1156,14 @@ export class TypeEngine {
       const localIncomingEdges = internalEdges.filter(
         (e) => e.target === internalNodeId,
       );
+      const blockedBy = this.blockedByFromEdges(localIncomingEdges, annotations);
+      if (blockedBy.length > 0) {
+        annotations.set(
+          internalNodeId,
+          this.blockedAnnotation(internalNodeId, blockedBy),
+        );
+        continue;
+      }
 
       let localInputType: TensorType | undefined;
       let localInputTypes: TensorType[] | undefined;
@@ -1148,6 +1194,7 @@ export class TypeEngine {
       }
 
       // 8e. Call inferNode on the internal node (handles Repeat, HorizontalRepeat, module, join)
+      const errorStart = errors.length;
       const result = this.inferNode(
         localInputType,
         stereotype,
@@ -1183,6 +1230,9 @@ export class TypeEngine {
           annotations.set(internalNodeId, {
             nodeId: internalNodeId,
             outputType: result,
+            ...(result.shape.length === 0
+              ? { blockedBy: this.primaryErrorIds(errors.slice(errorStart)) }
+              : {}),
           });
         }
         for (const dim of result.shape) {
@@ -1197,24 +1247,10 @@ export class TypeEngine {
           result.nodeId = internalNodeId;
         }
         errors.push(result);
-        // Set fallback annotation so downstream internal nodes can continue
-        const previousAnnotation = annotations.get(internalNodeId);
-        const hasUnknownInput =
-          (localInputType?.shape.length === 0 && localInputType.dtype === "unknown") ||
-          (localInputTypes !== undefined &&
-            localInputTypes.length > 0 &&
-            localInputTypes.every(
-              (input) => input.shape.length === 0 && input.dtype === "unknown",
-            ));
-        if (
-          !hasUnknownInput ||
-          (previousAnnotation?.outputType.shape.length ?? 0) === 0
-        ) {
-          annotations.set(internalNodeId, {
-            nodeId: internalNodeId,
-            outputType: { shape: [], dtype: "unknown" },
-          });
-        }
+        annotations.set(
+          internalNodeId,
+          this.blockedAnnotation(internalNodeId, [internalNodeId]),
+        );
       }
     }
 
@@ -2108,6 +2144,44 @@ export class TypeEngine {
     if (aMatch) return -1;
     if (bMatch) return 1;
     return a.localeCompare(b);
+  }
+
+  private static blockedByFromEdges(
+    edges: Edge[],
+    annotations: Map<string, NodeTypeAnnotation>,
+  ): string[] {
+    return [...new Set(
+      edges.flatMap((edge) => annotations.get(edge.source)?.blockedBy ?? []),
+    )];
+  }
+
+  private static blockedAnnotation(
+    nodeId: string,
+    blockedBy: string[],
+  ): NodeTypeAnnotation {
+    return {
+      nodeId,
+      outputType: { shape: [], dtype: "unknown" },
+      blockedBy: [...new Set(blockedBy)],
+    };
+  }
+
+  private static primaryErrorIds(errors: TypeError[]): string[] {
+    return [...new Set(
+      errors
+        .filter((error) => error.severity === "error" && error.nodeId)
+        .map((error) => error.nodeId),
+    )];
+  }
+
+  private static dedupeErrors(errors: TypeError[]): TypeError[] {
+    const seen = new Set<string>();
+    return errors.filter((error) => {
+      const key = `${error.nodeId}|${error.severity}|${error.message}`;
+      if (seen.has(key)) return false;
+      seen.add(key);
+      return true;
+    });
   }
 }
 
