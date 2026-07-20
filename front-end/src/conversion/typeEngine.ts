@@ -1163,10 +1163,28 @@ export class TypeEngine {
       );
 
       if (isTensorType(result)) {
-        annotations.set(internalNodeId, {
-          nodeId: internalNodeId,
-          outputType: result,
-        });
+        // Repeated subflows reuse the same node IDs for every iteration. If a
+        // previous iteration hit an error downstream, the next iteration can
+        // receive the unknown fallback and produce an empty shape. Do not let
+        // that fallback erase a useful annotation produced by an earlier
+        // iteration; the original error is already recorded separately.
+        const previousAnnotation = annotations.get(internalNodeId);
+        const hasUnknownInput =
+          (localInputType?.shape.length === 0 && localInputType.dtype === "unknown") ||
+          (localInputTypes !== undefined &&
+            localInputTypes.length > 0 &&
+            localInputTypes.every(
+              (input) => input.shape.length === 0 && input.dtype === "unknown",
+            ));
+        const preservesUsefulType =
+          hasUnknownInput &&
+          (previousAnnotation?.outputType.shape.length ?? 0) > 0;
+        if (!preservesUsefulType) {
+          annotations.set(internalNodeId, {
+            nodeId: internalNodeId,
+            outputType: result,
+          });
+        }
         for (const dim of result.shape) {
           if (dim.kind === "symbolic" && !dim.name.startsWith("#") && !localEnv.has(dim.name)) {
             localEnv.set(dim.name, dim);
@@ -1180,10 +1198,23 @@ export class TypeEngine {
         }
         errors.push(result);
         // Set fallback annotation so downstream internal nodes can continue
-        annotations.set(internalNodeId, {
-          nodeId: internalNodeId,
-          outputType: { shape: [], dtype: "unknown" },
-        });
+        const previousAnnotation = annotations.get(internalNodeId);
+        const hasUnknownInput =
+          (localInputType?.shape.length === 0 && localInputType.dtype === "unknown") ||
+          (localInputTypes !== undefined &&
+            localInputTypes.length > 0 &&
+            localInputTypes.every(
+              (input) => input.shape.length === 0 && input.dtype === "unknown",
+            ));
+        if (
+          !hasUnknownInput ||
+          (previousAnnotation?.outputType.shape.length ?? 0) === 0
+        ) {
+          annotations.set(internalNodeId, {
+            nodeId: internalNodeId,
+            outputType: { shape: [], dtype: "unknown" },
+          });
+        }
       }
     }
 

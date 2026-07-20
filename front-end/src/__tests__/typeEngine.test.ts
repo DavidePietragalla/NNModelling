@@ -3326,4 +3326,20 @@ describe("TypeEngine — Real-world diagrams", () => {
     }
     expect(hardErrors).toHaveLength(0);
   });
+
+  it("transformer_classifier.json: keeps internal types when MultiHeadAttn.n is 16", () => {
+    const filePath = resolve(DIAGRAMS_DIR, "transformer_classifier.json");
+    const d = new Diagram();
+    d.importFromJson(readFileSync(filePath, "utf-8"));
+    d.updateModule("mha", { params: { n: { value: "16" } } });
+
+    const result = TypeEngine.infer(d);
+
+    expectOutputShape(result, "fork_input", ["$B", "128", "128"]);
+    expectOutputShape(result, "layer_norm", ["$B", "128", "128"]);
+    expectOutputShape(result, "q_proj", ["$B", "128", "32"]);
+    expect(result.errors.some(
+      (error) => error.nodeId === "attn_proj" && /got 512/.test(error.message),
+    )).toBe(true);
+  });
 });
