@@ -267,7 +267,7 @@ MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.
 
 {#if isOpen}
   <aside class="sidebar" style="width: {sidebarWidth}px; user-select: {isDragging ? 'none' : 'auto'};">
-    
+
     <div class="resizer" onmousedown={startResize} role="separator" aria-orientation="vertical" tabindex="0"></div>
 
     <div class="sidebar-header">
@@ -347,11 +347,9 @@ MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.
       {:else}
         <button class="update-btn" onclick={handleManualUpdate}>💾 Salva Modifiche</button>
       {/if}
-      
-    </div>
 
-    {#if diagram.typeResult}
-      <div class="type-error-panel">
+      {#if diagram.typeResult}
+        <div class="type-error-panel">
         <div class="type-error-panel-header">
           Type Check ({diagnosticCount} issues)
         </div>
@@ -392,8 +390,9 @@ MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.
             </div>
           {/each}
         {/if}
-      </div>
-    {/if}
+        </div>
+      {/if}
+    </div>
 
   </aside>
 {/if}
