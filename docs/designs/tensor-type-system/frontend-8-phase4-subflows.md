@@ -1,5 +1,11 @@
 # Task frontend-8 — Phase 4: Subflow Type Inference
 
+> Historical design note. The implementation has since evolved: subflow
+> inference uses declarative `SubflowConfig`, shares the main annotation and
+> diagnostic collections, and records `blockedBy` provenance when downstream
+> inference is skipped. Treat the current `typeEngine.ts` and
+> `docs2/source/type_system.rst` as authoritative for runtime behavior.
+
 **Delegate to**: `@frontend`
 **Depends on**: Phase 1 + Phase 2 + Phase 3 complete
 

@@ -1,5 +1,11 @@
 # Type System Gaps — Analysis and Implementation Roadmap
 
+> Historical backlog and design notes. Several examples and unchecked items
+> below predate the current implementation. In particular, `TypeResult` now
+> already includes warnings and suggestions, and node annotations may carry
+> `blockedBy` upstream error provenance. Consult `docs2/source/type_system.rst`
+> and `front-end/src/conversion/tensortypes.ts` for the current contract.
+
 **Status**: Analysis  
 **Date**: 2026-07-15  
 **Author**: opencode (auto-generated)

@@ -352,14 +352,14 @@ MCP Server (thin proxy, no DiagramCore)
 
   **Phase 4 (subflows + complex modules)**: Subflow containers have recursive type inference via `SubflowConfig`. Declarative actions include `identity`, `infer`, `repeat` (compose the internal transform `iterations` times), and `infer_then_transform` (infer then multiply the last dim for HorizontalRepeat). All stereotypes have `type_signature` or are explicitly handled. Complex module signatures are pure JSON. Loss nodes are conceptual layers and produce a rank-1 batch tensor `[B]`. Fork has wildcard pass-through.
 
-  **Phase 5 (editor integration)**: The TypeEngine is wired into the visual editor. Edge connections, parameter changes, and diagram loads trigger real-time type inference. Errors appear as red badges on nodes and in a panel at the bottom of the Sidebar. Hovering an output handle shows the inferred output shape via tooltip.
+  **Phase 5 (editor integration)**: The TypeEngine is wired into the visual editor. Edge connections, parameter changes, and diagram loads trigger real-time type inference. Primary errors appear as red badges on the offending nodes and in the type-check panel inside the vertically scrollable Sidebar. Downstream nodes whose inputs depend on a primary error are annotated with `blockedBy` and do not receive duplicate red diagnostics. Hovering an output handle shows the inferred output shape via tooltip.
 
   **Phase 6 (expression language + declarative configs)**: Added `front-end/src/expr/` — a mini arithmetic expression language for computed dimensions (`parseExpr` tokenizer → parser → evaluator pipeline) with `$-`prefixed symbolic variables, `$*` wildcard product, 5 built-in functions (`floor`, `ceil`, `abs`, `max`, `min`). All `computed` dims migrated from `formula`+`args` to `expr` across 5 stereotypes (Conv2d, MaxPool2d, AvgPool2d, Flatten, Unsample). Subflow name checks replaced by declarative `SubflowConfig` (`identity`/`infer`/`infer_then_transform`) in Repeat.json and HorizontalRepeat.json. Join constraint checks replaced by declarative `JoinConfig` (`action` + `dim_expr`) in Concat.json. 54 expression tests covering tokenizer, parser, evaluator, round-trip, and errors.
 
   **Phase 7 (type system improvements)**: Dtype input validation on 7 stereotypes (warnings, not errors), advisory warnings via `Advisory` interface (kernel_size-vs-spatial, param-threshold checks on 4 stereotypes), shape suggestions for unset `param_ref` dimensions matching const input dims, join input labels for clearer error messages (MatMul: A/B, ScaledDotProduct: Q/K/V), and Einsum shape inference via 5-step label-mapping algorithm with 14 test cases. Einsum.json now has a full `type_signature`.
 
   **Parameter validation**: `resolveParamRef` returns a `ParamResolution` discriminated union (`unset` | `invalid` | `resolved`). Invalid parameter values (e.g. "cazz" for an int param) generate type errors instead of being silently treated as unset.
-- **Tensor Types** (conversion/tensortypes.ts) — Type model: ShapeDimension (const/symbolic/param_ref/wildcard discriminated union), TensorType (shape + dtype), TypeSignature (declarative input/output patterns), TypeEnvironment (symbolic bindings), TypeResult (annotations + errors), ParamResolution (unset/invalid/resolved for parameter validation).
+- **Tensor Types** (conversion/tensortypes.ts) — Type model: ShapeDimension (const/symbolic/param_ref/wildcard discriminated union), TensorType (shape + dtype), TypeSignature (declarative input/output patterns), TypeEnvironment (symbolic bindings), TypeResult (annotations + errors/warnings/suggestions), NodeTypeAnnotation (`blockedBy` records upstream errors whose consequences were suppressed), ParamResolution (unset/invalid/resolved for parameter validation).
 - **FlowCanvas.svelte** — Main editor component. Renders SvelteFlow canvas, toolbar (Save/Load/Convert), and Sidebar. Three node types: `custom`, `subflow`, `join`.
 - **Sidebar.svelte** — Node create/edit form. Resizable. Updates Diagram state reactively.
 
@@ -726,7 +726,7 @@ Replaced all hardcoded logic in the TypeEngine with a mini expression language a
 - **Declarative JoinConfig**: Concat.json now uses `join.action: "concat"` with `join.dim_expr` instead of the old hardcoded `constraints.concat` check. Removed `resolveConcatDim()` and `resolveConcatOutput()`.
 - **TypeScript interfaces**: Added `SubflowConfig`, `SubflowTransform`, `JoinConfig` to `tensortypes.ts`. Updated `ShapeDimPattern` to support optional `expr` field alongside legacy `formula`+`args`.
 - **54 expression tests**: Covering tokenizer (numbers, identifiers, dollar-prefixed tokens, whitespace, errors), parser (precedence, grouping, function calls, unary minus, error handling), evaluator (symbolic env, params, wildcard product, unresolved vars), and round-trip parse→evaluate.
-- **All current unit tests pass** (291 passed, 5 skipped), including the later soundness and MCP diagnostic regressions.
+- **All current unit tests pass** (307 passed, 5 skipped), including the later soundness, subflow annotation, and cascading-diagnostic regressions.
 
 ### Phase 18 — Type System Improvements II: Dtype, Advisories, Suggestions, Labels, Einsum
 
@@ -774,6 +774,6 @@ Implemented the initial issue #14 training workflow:
 - Added `docs2/source/remote_training.rst` and the design implementation notes
   under `docs/designs/remote-training-backend/`.
 
-Remote training verification includes 293 frontend unit tests (5 skipped),
+Remote training verification includes 307 frontend unit tests (5 skipped),
 source-model validation for the transformer fixture, backend tests, and a
 completed local MNIST training job through the browser UI.
