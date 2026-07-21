@@ -470,7 +470,7 @@ NNTree JSON → convert.py → Hydra YAML configs (net/, optimizer/, trainer/, w
 ```
 
 - **convert.py** — Reads NNTree JSON, generates Hydra-compatible config directory. Parses param strings via `ast.literal_eval`. Builds `_target_` paths for Hydra instantiation. Handles `type:"subflow"` nodes with `_recursive_: false` config. Supports `--num-classes` and `--dataset` CLI flags.
-- **net/base.py** — `Net` class (LightningModule). Dynamically builds `ModuleDict` from config nodes. Topological sort for forward pass (BFS with in-degree tracking). Handles sequential chains, joins, subflows. Flatten is explicit via Flatten stereotype (no auto-flatten heuristic). Detects taskType (classification/regression) for metric selection.
+- **net/base.py** — `Net` class (LightningModule). Dynamically builds `ModuleDict` from config nodes. Topological sort for forward pass (BFS with in-degree tracking). Handles sequential chains, joins, subflows. Flatten is explicit via Flatten stereotype (no auto-flatten heuristic). Detects taskType (classification/regression) for metric selection. At test-epoch end, classification models log whole-test-set accuracy, macro/per-class precision/recall/F1, confusion matrix, ROC, and precision-recall charts to W&B; regression and autoencoder paths skip this reporting.
   - **Join input ordering**: Join nodes receive inputs ordered by `targetHandle` ("in-0", "in-1", ...) preserved from diagram edges, not BFS traversal order. The `inputs` field lists parent node IDs in handle order. Non-commutative joins (MatMul, ScaledDotProduct) depend on this for correct behavior.
 - **ops/addition.py**, **ops/einsum.py**, **ops/concat.py** — Custom join operations for forward pass.
 - **dataset/** — MNIST, AutoencoderMNIST, and EnronSpam text classification dataset classes. Selectable via `--dataset` flag.
@@ -551,6 +551,10 @@ New stereotypes and refactoring:
   loading data. The remote training registry returns it to the sidebar and the
   backend uses it when generating classification configs (MNIST: 10; Enron
   Spam: 2; autoencoders: none).
+- **Class labels**: datasets may expose ``class_names(config)`` in class-index
+  order. The backend writes them into the generated network config so W&B
+  classification reports label their per-class metrics and charts correctly
+  (Enron Spam: ``ham``, ``spam``); otherwise ``class_<index>`` is used.
 - **EnronSpamDataset**: text classification dataset via HF datasets + transformers.
   Its exported model wheel has a ``text`` input adapter which tokenizes one raw
   email using the configured BERT tokenizer and max length; the tokenizer is
@@ -782,6 +786,10 @@ Implemented the initial issue #14 training workflow:
   now declares two classes and exports a BERT-backed `text` adapter, allowing
   `model.predict(raw_email)` from an exported wheel (with `transformers` and
   tokenizer availability at inference time).
+- Classification tests now publish whole-test-set W&B diagnostics: accuracy,
+  macro and per-class precision/recall/F1, confusion matrix, ROC, and
+  precision-recall curves. The report is guarded by `taskType ==
+  "classification"`, so regression and autoencoder jobs remain unchanged.
 - Added optional MCP HTTP proxy tools that reuse FastAPI job state.
 - Fixed source JSON loading so file inputs remain in the DOM during Chrome file
   selection, invalid files produce a visible error, and failed imports do not

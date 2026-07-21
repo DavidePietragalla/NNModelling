@@ -95,6 +95,20 @@ redirected to the live W&B run as soon as the remote training process reports
 its public run URL. If the browser blocks a popup, the job row still exposes
 **Apri W&B** once that URL is available.
 
+Classification reports in W&B
+-----------------------------
+
+At the end of each test phase, classification models log a whole-test-set
+report to W&B. It includes accuracy, macro precision/recall/F1, and
+precision/recall/F1 for every class. W&B also receives a confusion matrix, a
+ROC curve, and a precision-recall curve. These visualizations use the class
+names declared by the selected dataset (for example ``ham`` and ``spam`` for
+Enron Spam); datasets without names use stable labels such as ``class_0``.
+
+The report is emitted once after testing, so the scalar charts show one point
+at the final training step. Regression and autoencoder tasks do not collect
+classification predictions or emit these charts.
+
 Install and use an exported model
 ---------------------------------
 
