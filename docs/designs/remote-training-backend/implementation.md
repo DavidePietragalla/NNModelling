@@ -176,6 +176,21 @@ volume, Docker, or a shared Slurm filesystem. The earlier browser smoke test
 used `/tmp/nnm-backend-jobs-8000` explicitly and therefore does not represent
 the default installation layout.
 
+## Portable model wheels
+
+After a successful training process writes `weights.safetensors`, the manager
+builds an inference-only wheel in the job's `dist/` directory and records
+`model-package.json`. The wheel contains `GraphNet`, the resolved graph, its
+custom operations and a declarative input adapter; it does not require
+Lightning, W&B or the training dataset at inference time. The owner downloads
+it through `GET /jobs/{job_id}/package`.
+
+The training sidebar accepts a package-name suffix such as
+`mnist_classifier`; it sends the full, Python-importable name
+`nnm_mnist_classifier`. The backend validates the required `nnm_` prefix and
+allows only letters, digits and underscores after it. When no suffix is
+provided, it uses the unique fallback `nnm_job_<job-id>`.
+
 ## Integration tests and model selection
 
 The integration model test always reads a non-converted Svelte Flow diagram,

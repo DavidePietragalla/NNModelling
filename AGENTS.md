@@ -81,7 +81,7 @@ mkdir -p valkey-data
 valkey-server backend/valkey.conf --dir valkey-data
 PYTHONPATH=src NNM_VALKEY_URL=valkey://127.0.0.1:6379/0 \
   uv run uvicorn backend.app:app --host 127.0.0.1 --port 8000
-# Default job artifacts: converted/jobs/<job-id>/
+# Default job artifacts: converted/jobs/<job-id>/ (logs, config, safe weights, and exported wheel)
 # Override with NNM_BACKEND_ARTIFACT_ROOT for Docker/Slurm volumes.
 ```
 
@@ -191,6 +191,7 @@ NNModelling/
 │   ├── convert.py              # NNTree JSON → Hydra config dir
 │   ├── main.py                 # Training entry point (Hydra + Lightning)
 │   ├── infer.py                # Inference on trained model (--output, --image-dir)
+│   ├── model_package/           # Portable wheel exporter, GraphNet runtime, and input adapters
 │   └── tests/                  # Python test suite (pytest)
 │       ├── test_ops.py         # 36 ops unit tests
 │       ├── test_convert.py     # 35 convert.py unit tests
@@ -762,7 +763,12 @@ Implemented the initial issue #14 training workflow:
 - Added `front-end/src/components/TrainingSidebar.svelte` and
   `front-end/src/training/api.ts`. The frontend sends the compiled NNTree and
   Hydra configuration as one JSON request, displays jobs through REST/SSE, and
-  exposes dataset, resources, priority, W&B, and arbitrary Hydra overrides.
+  exposes dataset, resources, priority, W&B, package naming, and arbitrary
+  Hydra overrides. A successful job produces a downloadable wheel containing
+  the resolved graph, custom operations, a declarative input adapter, and
+  `safetensors` weights. The sidebar accepts a suffix such as
+  `mnist_classifier`, while the backend enforces the importable package name
+  `nnm_mnist_classifier` (or falls back to `nnm_job_<job-id>`).
 - Added optional MCP HTTP proxy tools that reuse FastAPI job state.
 - Fixed source JSON loading so file inputs remain in the DOM during Chrome file
   selection, invalid files produce a visible error, and failed imports do not
