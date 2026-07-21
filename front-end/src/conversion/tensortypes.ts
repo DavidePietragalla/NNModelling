@@ -323,6 +323,9 @@ export interface NodeTypeAnnotation {
 
   /** Type produced by this node. */
   outputType: TensorType;
+
+  /** Primary node IDs whose type errors prevented inference here. */
+  blockedBy?: string[];
 }
 
 // ─────────────────────────────────────────────────────────────────────────────

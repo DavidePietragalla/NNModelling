@@ -98,7 +98,7 @@ describe("BrowserRPCClient - start", () => {
     expect(client.getTabs()).toEqual([]);
     expect(client.getActiveTabId()).toBeNull();
 
-    client.start();
+    await client.start();
 
     const browser = await createBrowserConnection(port);
 
@@ -108,21 +108,21 @@ describe("BrowserRPCClient - start", () => {
     expect(client.getTabs()[0].id).toBe("tab_1");
 
     browser.ws.close();
-    client.close();
+    await client.close();
   });
 
   it("start() is idempotent (multiple calls do not create multiple servers)", async () => {
     const port = await findAvailablePort();
     const client = new BrowserRPCClient({ port });
-    client.start();
-    client.start(); // Second start should be a no-op
-    client.start(); // Third start should be a no-op
+    await client.start();
+    await client.start(); // Second start should be a no-op
+    await client.start(); // Third start should be a no-op
 
     const browser = await createBrowserConnection(port);
     expect(client.isConnected()).toBe(true);
 
     browser.ws.close();
-    client.close();
+    await client.close();
   });
 });
 
@@ -137,13 +137,13 @@ describe("BrowserRPCClient - call", () => {
       port,
       requestTimeout: 5000,
     });
-    client.start();
+    await client.start();
     browser = await createBrowserConnection(port);
   });
 
-  afterAll(() => {
-    browser.ws.close();
-    client.close();
+  afterAll(async () => {
+    browser?.ws.close();
+    await client?.close();
   });
 
   it("call() sends {id, method, params} and resolves with result", async () => {
@@ -193,7 +193,7 @@ describe("BrowserRPCClient - call", () => {
       port: timeoutPort,
       requestTimeout: 100,
     });
-    shortTimeoutClient.start();
+    await shortTimeoutClient.start();
     const shortBrowser = await createBrowserConnection(timeoutPort);
 
     // Make a call but don't respond — it should time out
@@ -202,7 +202,7 @@ describe("BrowserRPCClient - call", () => {
     ).rejects.toThrow("RPC timeout");
 
     shortBrowser.ws.close();
-    shortTimeoutClient.close();
+    await shortTimeoutClient.close();
   });
 
   it("call() rejects on {id, error: {message}}", async () => {
@@ -253,12 +253,12 @@ describe("BrowserRPCClient - call", () => {
   it("call() rejects when no active tab", async () => {
     const isolatedPort = await findAvailablePort();
     const isolatedClient = new BrowserRPCClient({ port: isolatedPort });
-    isolatedClient.start();
+    await isolatedClient.start();
     // No browser connected — call should reject
     await expect(isolatedClient.call("get_graph", {})).rejects.toThrow(
       "No browser connected",
     );
-    isolatedClient.close();
+    await isolatedClient.close();
   });
 });
 
@@ -266,7 +266,7 @@ describe("BrowserRPCClient - multi-tab", () => {
   it("supports multiple browser tabs", async () => {
     const port = await findAvailablePort();
     const client = new BrowserRPCClient({ port });
-    client.start();
+    await client.start();
 
     // First tab connects — auto-selected
     const tab1 = await createBrowserConnection(port);
@@ -303,7 +303,7 @@ describe("BrowserRPCClient - multi-tab", () => {
     });
     await expect(callPromise).resolves.toEqual({ stereotypes: [] });
 
-    client.close();
+    await client.close();
     tab1.ws.close();
     tab2.ws.close();
   });
@@ -311,7 +311,7 @@ describe("BrowserRPCClient - multi-tab", () => {
   it("tab disconnection removes it from tab list", async () => {
     const port = await findAvailablePort();
     const client = new BrowserRPCClient({ port });
-    client.start();
+    await client.start();
 
     const tab1 = await createBrowserConnection(port);
     const tab2 = await createBrowserConnection(port);
@@ -327,14 +327,14 @@ describe("BrowserRPCClient - multi-tab", () => {
     expect(tabs).toHaveLength(1);
     expect(tabs[0].id).toBe("tab_2");
 
-    client.close();
+    await client.close();
     tab2.ws.close();
   });
 
   it("disconnecting active tab clears activeTabId", async () => {
     const port = await findAvailablePort();
     const client = new BrowserRPCClient({ port });
-    client.start();
+    await client.start();
 
     const tab = await createBrowserConnection(port);
     expect(client.getActiveTabId()).toBe("tab_1");
@@ -345,22 +345,22 @@ describe("BrowserRPCClient - multi-tab", () => {
     expect(client.getActiveTabId()).toBeNull();
     expect(client.isConnected()).toBe(false);
 
-    client.close();
+    await client.close();
   });
 
   it("selectTab() throws for unknown tab id", async () => {
     const port = await findAvailablePort();
     const client = new BrowserRPCClient({ port });
-    client.start();
+    await client.start();
     // No tabs connected — any selectTab should throw
     expect(() => client.selectTab("nonexistent")).toThrow("not found");
-    client.close();
+    await client.close();
   });
 
   it("getTabs() returns TabInfo with nodeCount/edgeCount after ping", async () => {
     const port = await findAvailablePort();
     const client = new BrowserRPCClient({ port, requestTimeout: 5000 });
-    client.start();
+    await client.start();
 
     // Connect a browser that responds to pings with custom stats.
     // Register message handler BEFORE awaiting open to avoid race.
@@ -393,7 +393,7 @@ describe("BrowserRPCClient - multi-tab", () => {
     expect(tabs[0].edgeCount).toBe(4);
 
     ws.close();
-    client.close();
+    await client.close();
   });
 });
 
@@ -416,7 +416,7 @@ describe("BrowserRPCClient - close", () => {
       port,
       requestTimeout: 5000,
     });
-    client.start();
+    await client.start();
     const browser = await createBrowserConnection(port);
 
     // Make a call that will be pending when we close
@@ -426,7 +426,7 @@ describe("BrowserRPCClient - close", () => {
     browser.ws.once("message", () => {});
 
     // Close the server
-    client.close();
+    await client.close();
 
     // Pending call should reject
     await expect(callPromise).rejects.toThrow("Server shutting down");
@@ -437,12 +437,12 @@ describe("BrowserRPCClient - close", () => {
   it("isConnected returns false after close", async () => {
     const port = await findAvailablePort();
     const client = new BrowserRPCClient({ port });
-    client.start();
+    await client.start();
     const browser = await createBrowserConnection(port);
 
     expect(client.isConnected()).toBe(true);
 
-    client.close();
+    await client.close();
     expect(client.isConnected()).toBe(false);
 
     browser.ws.close();

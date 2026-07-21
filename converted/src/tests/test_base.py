@@ -10,8 +10,10 @@
 # MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.
 import torch
 import pytest
+from unittest.mock import Mock
 from omegaconf import OmegaConf
 
+import net.base as base
 from net.base import Net
 
 
@@ -121,6 +123,39 @@ class TestClassifierHelpers:
         net = Net(cfg)
         from torchmetrics import MeanSquaredError
         assert isinstance(net.metric, MeanSquaredError)
+
+    def test_classification_report_logs_metrics_and_wandb_charts(self, monkeypatch):
+        cfg = _make_cfg(
+            {"a": {"type": "module", "stereotype": "Input", "children": []}},
+            root="a",
+            num_classes=2,
+        )
+        cfg.net.class_names = ["ham", "spam"]
+        net = Net(cfg)
+        net._test_probabilities = [torch.tensor([[0.9, 0.1], [0.2, 0.8], [0.7, 0.3]])]
+        net._test_targets = [torch.tensor([0, 1, 1])]
+        experiment = Mock()
+        charts = {"confusion": object(), "roc": object(), "pr": object()}
+
+        monkeypatch.setattr(base.wandb.plot, "confusion_matrix", lambda **kwargs: charts["confusion"])
+        monkeypatch.setattr(base.wandb.plot, "roc_curve", lambda *args, **kwargs: charts["roc"])
+        monkeypatch.setattr(base.wandb.plot, "pr_curve", lambda *args, **kwargs: charts["pr"])
+
+        net._log_classification_report(experiment)
+
+        payload = experiment.log.call_args.args[0]
+        assert payload["test/accuracy"] == pytest.approx(2 / 3)
+        assert payload["test/recall/spam"] == pytest.approx(0.5)
+        assert payload["test/confusion_matrix"] is charts["confusion"]
+        assert payload["test/roc_curve"] is charts["roc"]
+        assert payload["test/precision_recall_curve"] is charts["pr"]
+
+    def test_regression_does_not_collect_or_log_classification_report(self):
+        loss_node = {"stereotype": "MSELoss", "_target_": "torch.nn.MSELoss", "taskType": "regression"}
+        net = Net(_make_cfg({"a": {"type": "module", "stereotype": "Input", "children": []}}, loss_node=loss_node))
+
+        assert net._classification_report() is None
+        net._log_classification_report(Mock())
 
 
 # -- Net.__init__ dispatch ----------------------------------------------------------

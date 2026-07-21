@@ -1,0 +1,4 @@
+interface:
+  display_name: "Direct Chrome"
+  short_description: "Control Chrome directly via CDP"
+  default_prompt: "Use $chrome-direct to inspect and interact with a live Chrome page directly through DevTools Protocol."

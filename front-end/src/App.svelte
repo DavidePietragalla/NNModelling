@@ -14,13 +14,20 @@ MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.
 <script lang="ts">
   import { SvelteFlowProvider } from "@xyflow/svelte";
   import FlowCanvas from "./FlowCanvas.svelte";
+  import TrainingLogWindow from "./components/TrainingLogWindow.svelte";
   import "@xyflow/svelte/dist/style.css";
+
+  const trainingLogJobId = new URL(window.location.href).searchParams.get("training-log");
 </script>
 
-<div
-  style="height: 100vh; width: 100vw; overflow: hidden; background: #f8f8f8;"
->
-  <SvelteFlowProvider>
-    <FlowCanvas />
-  </SvelteFlowProvider>
-</div>
+{#if trainingLogJobId}
+  <TrainingLogWindow jobId={trainingLogJobId} />
+{:else}
+  <div
+    style="height: 100vh; width: 100vw; overflow: hidden; background: #f8f8f8;"
+  >
+    <SvelteFlowProvider>
+      <FlowCanvas />
+    </SvelteFlowProvider>
+  </div>
+{/if}

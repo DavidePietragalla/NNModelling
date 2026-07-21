@@ -36,6 +36,7 @@ import { readdirSync, readFileSync } from "fs";
 import { join } from "path";
 import * as pipelineMod from "./pipeline.js";
 import { BrowserRPCClient } from "./browser-client.js";
+import { RemoteTrainingClient } from "./remote-training.js";
 
 // ── Import all tool modules ─────────────────────────────────────────────
 // Each file exports multiple named tools (e.g. create_node, delete_nodes).
@@ -50,6 +51,7 @@ import * as inspectionTools from "./tools/inspection.js";
 import * as lifecycleTools from "./tools/lifecycle.js";
 import * as connectionTools from "./tools/connection.js";
 import * as screenshotTools from "./tools/screenshot.js";
+import * as remoteTrainingTools from "./tools/remote-training.js";
 
 // ── ServerContext ───────────────────────────────────────────────────────
 
@@ -64,6 +66,7 @@ export interface ServerContext {
   browser: BrowserRPCClient;
   pipeline: typeof pipelineMod;
   stereotypes: CachedStereotype[];
+  remoteTraining?: RemoteTrainingClient;
 }
 
 interface CachedStereotype {
@@ -84,6 +87,7 @@ interface CachedStereotype {
 
 export interface CreateServerOptions {
   wsPort?: number;
+  backendUrl?: string;
 }
 
 // ── Internal Types ──────────────────────────────────────────────────────
@@ -219,6 +223,7 @@ export async function createServer(
     browser,
     pipeline: pipelineMod,
     stereotypes,
+    remoteTraining: new RemoteTrainingClient(options.backendUrl),
   };
 
   // ── Step 4: Create MCP Server instance ──────────────────────────────
@@ -243,6 +248,7 @@ export async function createServer(
     lifecycleTools,
     connectionTools,
     screenshotTools,
+    remoteTrainingTools,
   ] as Record<string, unknown>[];
 
   for (const module of allToolModules) {

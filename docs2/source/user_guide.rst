@@ -61,7 +61,7 @@ Open the URL printed by Vite (typically ``http://localhost:5173``).
 The Canvas
 ~~~~~~~~~~
 
-The editor shows a blank canvas with a **sidebar** on the left. The canvas uses
+The editor shows a blank canvas with a **sidebar** on the right. The canvas uses
 `Svelte Flow <https://www.svelteflow.dev/>`_ for interactive node editing.
 
 Adding Nodes
@@ -130,6 +130,13 @@ Select any node to edit its parameters in the sidebar:
 * Node appearance: change color, width, height
 
 Parameters are serialized with the diagram and used during code generation.
+The sidebar form is vertically scrollable: scroll inside it to reach lower
+parameters and the type-check diagnostics for the selected node.
+
+Type diagnostics distinguish primary errors from downstream consequences. A
+shape mismatch is reported on the node where it originates; nodes whose input
+depends on that failure are marked as blocked rather than producing duplicate
+errors.
 
 Save and Load
 -------------

@@ -1,4 +1,4 @@
-# CLAUDE.md
+# AGENTS.md
 
 This file provides guidance to Claude Code when working with this repository.
 
@@ -12,14 +12,21 @@ Three main packages (pnpm workspace):
 2. **converted/** — Python codegen target (PyTorch + Lightning + Hydra)
 3. **mcp-server/** — MCP server — thin proxy that queries browser diagram state via WebSocket RPC
 
-## NNModelling MCP Skill
+## Browser and NNModelling skills
 
-The repository provides the project skill
-`.agents/skills/nnmodelling-mcp/SKILL.md`. **Whenever the user asks an agent to
-use NNModelling**—including opening the editor, manipulating a diagram,
+The repository provides local skills for browser-backed work:
+
+- `.agents/skills/chrome-direct/SKILL.md` for direct Chrome/Chromium control
+  through CDP. Use this when the user asks to use Chrome directly or says not
+  to use MCP. It includes DOM inspection, file upload, screenshots, and
+  network/runtime diagnostics.
+- `.agents/skills/nnmodelling-mcp/SKILL.md` for the optional NNModelling MCP
+  workflow when the user explicitly requests MCP or the browser-backed MCP
+  server.
+
+Load the applicable skill before opening the editor, manipulating a diagram,
 inspecting tensor types, taking screenshots, converting, training, inference,
-or diagnosing the browser/MCP connection—the agent must load and follow
-`$nnmodelling-mcp` before acting.
+or diagnosing the browser connection.
 
 The skill documents the required browser-backed architecture, safe startup
 order, Chromium DevTools configuration, raw stdio fallback, MCP tools, type and
@@ -68,6 +75,14 @@ cd docs2 && uv run make html  # Build Sphinx HTML docs
 # Or from root:
 pnpm run docs               # Full build: TypeDoc + Sphinx
 bash gendocs.sh             # Sphinx-only build (auto-creates uv venv)
+
+# Remote training backend (from converted/)
+mkdir -p valkey-data
+valkey-server backend/valkey.conf --dir valkey-data
+PYTHONPATH=src NNM_VALKEY_URL=valkey://127.0.0.1:6379/0 \
+  uv run uvicorn backend.app:app --host 127.0.0.1 --port 8000
+# Default job artifacts: converted/jobs/<job-id>/ (logs, config, safe weights, and exported wheel)
+# Override with NNM_BACKEND_ARTIFACT_ROOT for Docker/Slurm volumes.
 ```
 
 ```bash
@@ -137,7 +152,9 @@ NNModelling/
 │   ├── styles/                 # CSS (flowcanvas, node, sidebar, join, subflow, dropdown)
 │   ├── components/
 │   │   ├── Sidebar.svelte      # Node create/edit form
+│   │   ├── TrainingSidebar.svelte # Dataset, Hydra, resources, and jobs
 │   │   └── SDropdown.svelte    # Custom dropdown widget
+│   ├── training/api.ts          # FastAPI REST/SSE client
 │   ├── Diagram.svelte.ts       # Central reactive state manager
 │   ├── FlowCanvas.svelte       # Main editor canvas + toolbar
 │   ├── stereotype.ts           # Stereotype loader (import.meta.glob)
@@ -153,6 +170,7 @@ NNModelling/
 │   ├── diagrams/               # Svelte Flow format source diagrams
 │   └── nntrees/                # Pre-compiled NNTree JSON files
 ├── converted/src/              # Python codegen target
+│   ├── backend/                 # FastAPI, Valkey store, scheduler, executors
 │   ├── net/base.py             # LightningModule: dynamic ModuleDict + topo sort
 │   ├── ops/                    # Custom operations
 │   │   ├── addition.py         # Add join operation
@@ -173,13 +191,16 @@ NNModelling/
 │   ├── convert.py              # NNTree JSON → Hydra config dir
 │   ├── main.py                 # Training entry point (Hydra + Lightning)
 │   ├── infer.py                # Inference on trained model (--output, --image-dir)
+│   ├── model_package/           # Portable wheel exporter, GraphNet runtime, and input adapters
 │   └── tests/                  # Python test suite (pytest)
 │       ├── test_ops.py         # 36 ops unit tests
 │       ├── test_convert.py     # 35 convert.py unit tests
 │       ├── test_base.py        # 21 Net/base unit tests
 │       ├── test_integration.py # 11 end-to-end integration tests
 │       ├── test_main.py        # 2 training smoke tests
-│       └── test_infer.py       # 4 inference validation tests
+│       ├── test_infer.py       # 4 inference validation tests
+│       └── test_remote_backend.py # Backend API, queue, and executor tests
+├── converted/backend/          # Valkey config and Docker deployment
 ├── mcp-server/                        # MCP server package (Node.js ESM)
 │   ├── package.json
 │   ├── tsconfig.json
@@ -203,7 +224,7 @@ NNModelling/
 │           └── lifecycle.ts           # reset_diagram, ping
 ├── docs/
 │   ├── report/                 # Bug reports (mcp_issues.md, etc.)
-│   └── designs/                # Design plans (mcp-sync-fixes/plan.md, etc.)
+│   └── designs/                # Design plans and implementation notes
 ├── analysis/
 │   ├── requirements/reqs.md    # DSL requirements specification
 │   └── uml/nn.vpp              # UML model (Visual Paradigm)
@@ -226,6 +247,7 @@ NNModelling/
 │   │   ├── index.rst           # Root toctree
 │   │   ├── user_guide.rst      # Educational user guide
 │   │   ├── architecture.rst    # System architecture explanation
+│   │   ├── remote_training.rst  # Implemented backend and training workflow
 │   │   ├── stereotypes.rst     # All 35 stereotypes with params and examples
 │   │   ├── python_api.rst      # Auto-generated Python API docs
 │   │   ├── typescript_api.rst  # TypeDoc integration page
@@ -245,7 +267,7 @@ NNModelling/
 - **Pattern**: Pure TS unit tests, no DOM/browser
 - **Real Diagram**: Tests use real `Diagram` class (Svelte `$state.raw` compiled by Vite plugin). Stub `globalThis.window` before construction.
 - **Helpers**: `node(id, stereo, name, params, overrides?)` and `edge(id, source, target, handles?)` for concise fixtures.
-- **Coverage**: **291 tests passed, 5 skipped** — sequential chain, skip/joins, autoencoder, subflow compilation, nested subflows, hidden nodes, error handling, connection validation, Fork node, type inference (Input, Linear, ReLU, Conv1d, Conv2d, Flatten, Unflatten, MaxPool2d, wildcards, mismatches, edge cases, computed dimensions, param_spread, join type checking, Repeat/HorizontalRepeat subflows, generic subflow recursion, nested subflows, loss nodes, complex modules), BrowserRPCHandler, MCP type serialization, undo/redo, param merging, edge handle defaults, viewport injection, invalid parameter validation, parentId placement, fuzz testing, expression evaluator, dtype validation, advisory warnings, shape suggestions, join input labels, and Einsum shape inference
+- **Coverage**: **293 tests passed, 5 skipped** — sequential chain, skip/joins, autoencoder, subflow compilation, nested subflows, hidden nodes, error handling, connection validation, Fork node, type inference (Input, Linear, ReLU, Conv1d, Conv2d, Flatten, Unflatten, MaxPool2d, wildcards, mismatches, edge cases, computed dimensions, param_spread, join type checking, Repeat/HorizontalRepeat subflows, generic subflow recursion, nested subflows, loss nodes, complex modules), BrowserRPCHandler, MCP type serialization, undo/redo, param merging, edge handle defaults, viewport injection, invalid parameter validation, parentId placement, fuzz testing, expression evaluator, dtype validation, advisory warnings, shape suggestions, join input labels, Einsum shape inference, model loading validation, and training API helpers
 
 ### Testing — Integration (Vitest + Python Pipeline)
 
@@ -268,7 +290,7 @@ NNModelling/
 
 - **Framework**: pytest (via `uv run pytest`)
 - **Files**: `converted/src/tests/` — pure Python tests (no TS/Vitest dependency)
-- **Coverage**: **104 non-training Python tests** currently pass across `test_ops.py`, `test_convert.py`, `test_base.py`, and `test_integration.py`; training/inference pipeline tests remain separate because they are slow and may download data.
+- **Coverage**: **112 fast non-training Python tests** currently pass across the conversion, runtime, integration, and remote-backend suites; full training/inference pipeline tests remain separate because they are slow and may download data.
 - **Fixtures**: NNTree JSON files from `examples/nntrees/` — shared between Python and Vitest integration tests
 
 ### Front-end Data Flow
@@ -331,14 +353,14 @@ MCP Server (thin proxy, no DiagramCore)
 
   **Phase 4 (subflows + complex modules)**: Subflow containers have recursive type inference via `SubflowConfig`. Declarative actions include `identity`, `infer`, `repeat` (compose the internal transform `iterations` times), and `infer_then_transform` (infer then multiply the last dim for HorizontalRepeat). All stereotypes have `type_signature` or are explicitly handled. Complex module signatures are pure JSON. Loss nodes are conceptual layers and produce a rank-1 batch tensor `[B]`. Fork has wildcard pass-through.
 
-  **Phase 5 (editor integration)**: The TypeEngine is wired into the visual editor. Edge connections, parameter changes, and diagram loads trigger real-time type inference. Errors appear as red badges on nodes and in a panel at the bottom of the Sidebar. Hovering an output handle shows the inferred output shape via tooltip.
+  **Phase 5 (editor integration)**: The TypeEngine is wired into the visual editor. Edge connections, parameter changes, and diagram loads trigger real-time type inference. Primary errors appear as red badges on the offending nodes and in the type-check panel inside the vertically scrollable Sidebar. Downstream nodes whose inputs depend on a primary error are annotated with `blockedBy` and do not receive duplicate red diagnostics. Hovering an output handle shows the inferred output shape via tooltip.
 
   **Phase 6 (expression language + declarative configs)**: Added `front-end/src/expr/` — a mini arithmetic expression language for computed dimensions (`parseExpr` tokenizer → parser → evaluator pipeline) with `$-`prefixed symbolic variables, `$*` wildcard product, 5 built-in functions (`floor`, `ceil`, `abs`, `max`, `min`). All `computed` dims migrated from `formula`+`args` to `expr` across 5 stereotypes (Conv2d, MaxPool2d, AvgPool2d, Flatten, Unsample). Subflow name checks replaced by declarative `SubflowConfig` (`identity`/`infer`/`infer_then_transform`) in Repeat.json and HorizontalRepeat.json. Join constraint checks replaced by declarative `JoinConfig` (`action` + `dim_expr`) in Concat.json. 54 expression tests covering tokenizer, parser, evaluator, round-trip, and errors.
 
   **Phase 7 (type system improvements)**: Dtype input validation on 7 stereotypes (warnings, not errors), advisory warnings via `Advisory` interface (kernel_size-vs-spatial, param-threshold checks on 4 stereotypes), shape suggestions for unset `param_ref` dimensions matching const input dims, join input labels for clearer error messages (MatMul: A/B, ScaledDotProduct: Q/K/V), and Einsum shape inference via 5-step label-mapping algorithm with 14 test cases. Einsum.json now has a full `type_signature`.
 
   **Parameter validation**: `resolveParamRef` returns a `ParamResolution` discriminated union (`unset` | `invalid` | `resolved`). Invalid parameter values (e.g. "cazz" for an int param) generate type errors instead of being silently treated as unset.
-- **Tensor Types** (conversion/tensortypes.ts) — Type model: ShapeDimension (const/symbolic/param_ref/wildcard discriminated union), TensorType (shape + dtype), TypeSignature (declarative input/output patterns), TypeEnvironment (symbolic bindings), TypeResult (annotations + errors), ParamResolution (unset/invalid/resolved for parameter validation).
+- **Tensor Types** (conversion/tensortypes.ts) — Type model: ShapeDimension (const/symbolic/param_ref/wildcard discriminated union), TensorType (shape + dtype), TypeSignature (declarative input/output patterns), TypeEnvironment (symbolic bindings), TypeResult (annotations + errors/warnings/suggestions), NodeTypeAnnotation (`blockedBy` records upstream errors whose consequences were suppressed), ParamResolution (unset/invalid/resolved for parameter validation).
 - **FlowCanvas.svelte** — Main editor component. Renders SvelteFlow canvas, toolbar (Save/Load/Convert), and Sidebar. Three node types: `custom`, `subflow`, `join`.
 - **Sidebar.svelte** — Node create/edit form. Resizable. Updates Diagram state reactively.
 
@@ -448,7 +470,7 @@ NNTree JSON → convert.py → Hydra YAML configs (net/, optimizer/, trainer/, w
 ```
 
 - **convert.py** — Reads NNTree JSON, generates Hydra-compatible config directory. Parses param strings via `ast.literal_eval`. Builds `_target_` paths for Hydra instantiation. Handles `type:"subflow"` nodes with `_recursive_: false` config. Supports `--num-classes` and `--dataset` CLI flags.
-- **net/base.py** — `Net` class (LightningModule). Dynamically builds `ModuleDict` from config nodes. Topological sort for forward pass (BFS with in-degree tracking). Handles sequential chains, joins, subflows. Flatten is explicit via Flatten stereotype (no auto-flatten heuristic). Detects taskType (classification/regression) for metric selection.
+- **net/base.py** — `Net` class (LightningModule). Dynamically builds `ModuleDict` from config nodes. Topological sort for forward pass (BFS with in-degree tracking). Handles sequential chains, joins, subflows. Flatten is explicit via Flatten stereotype (no auto-flatten heuristic). Detects taskType (classification/regression) for metric selection. At test-epoch end, classification models log whole-test-set accuracy, macro/per-class precision/recall/F1, confusion matrix, ROC, and precision-recall charts to W&B; regression and autoencoder paths skip this reporting.
   - **Join input ordering**: Join nodes receive inputs ordered by `targetHandle` ("in-0", "in-1", ...) preserved from diagram edges, not BFS traversal order. The `inputs` field lists parent node IDs in handle order. Non-commutative joins (MatMul, ScaledDotProduct) depend on this for correct behavior.
 - **ops/addition.py**, **ops/einsum.py**, **ops/concat.py** — Custom join operations for forward pass.
 - **dataset/** — MNIST, AutoencoderMNIST, and EnronSpam text classification dataset classes. Selectable via `--dataset` flag.
@@ -525,7 +547,18 @@ New stereotypes and refactoring:
 - **HorizontalRepeat stereotype**: `Stereotypes/SubFlows/HorizontalRepeat.json`, `ops.HorizontalRepeat`, N parallel subflow copies via `vmap` + `functional_call` + `stack_module_state`, output `[batch, ..., n*d]`
 - **HorizontalRepeat join**: hardcoded to concat on dim=-1. Not configurable. See `horizontal_repeat.py:14` docstring.
 - **Example diagram**: `horizontal_multihead_attention.json` — single head attention wrapped in HorizontalRepeat n=4
-- **EnronSpamDataset**: text classification dataset via HF datasets + transformers
+- **Dataset metadata**: every dataset may expose ``num_classes(config)`` without
+  loading data. The remote training registry returns it to the sidebar and the
+  backend uses it when generating classification configs (MNIST: 10; Enron
+  Spam: 2; autoencoders: none).
+- **Class labels**: datasets may expose ``class_names(config)`` in class-index
+  order. The backend writes them into the generated network config so W&B
+  classification reports label their per-class metrics and charts correctly
+  (Enron Spam: ``ham``, ``spam``); otherwise ``class_<index>`` is used.
+- **EnronSpamDataset**: text classification dataset via HF datasets + transformers.
+  Its exported model wheel has a ``text`` input adapter which tokenizes one raw
+  email using the configured BERT tokenizer and max length; the tokenizer is
+  downloaded or read from the Hugging Face cache at inference time.
 - **Test count**: 73 → 76 tests (3 Fork tests)
 
 ### Phase 9 — Core Extraction for MCP Server (commit XXXXXXX)
@@ -705,7 +738,7 @@ Replaced all hardcoded logic in the TypeEngine with a mini expression language a
 - **Declarative JoinConfig**: Concat.json now uses `join.action: "concat"` with `join.dim_expr` instead of the old hardcoded `constraints.concat` check. Removed `resolveConcatDim()` and `resolveConcatOutput()`.
 - **TypeScript interfaces**: Added `SubflowConfig`, `SubflowTransform`, `JoinConfig` to `tensortypes.ts`. Updated `ShapeDimPattern` to support optional `expr` field alongside legacy `formula`+`args`.
 - **54 expression tests**: Covering tokenizer (numbers, identifiers, dollar-prefixed tokens, whitespace, errors), parser (precedence, grouping, function calls, unary minus, error handling), evaluator (symbolic env, params, wildcard product, unresolved vars), and round-trip parse→evaluate.
-- **All current unit tests pass** (291 passed, 5 skipped), including the later soundness and MCP diagnostic regressions.
+- **All current unit tests pass** (307 passed, 5 skipped), including the later soundness, subflow annotation, and cascading-diagnostic regressions.
 
 ### Phase 18 — Type System Improvements II: Dtype, Advisories, Suggestions, Labels, Einsum
 
@@ -724,3 +757,50 @@ Five new type system capabilities (Phases A–E from the design plan):
 **Historical test count for this phase**: 225 → 269 (+44); the current suite has grown further to 291 passing tests.
 
 **Files changed**: `tensortypes.ts` (TypeWarning, TypeSuggestion, Advisory, JoinConfig.input_labels/einsum_param, TypeResult.warnings/suggestions), `typeEngine.ts` (dtype validation, evaluateAdvisory, inferEinsumShape, patternMatch suggestions out-param), `typeEngine.test.ts` (44 new tests), 7 stereotype JSONs (dtype), 4 JSONs (advisories), 4 JSONs (input_labels + Einsum type_signature)
+
+### Phase 19 — Remote Training Backend and Source Model Loading
+
+Implemented the initial issue #14 training workflow:
+
+- Added `converted/src/backend/` with FastAPI endpoints, Pydantic job models,
+  dataset discovery, Valkey persistence, priority/FIFO scheduling, heartbeats,
+  cancellation, artifact management, and startup recovery.
+- Added `LocalExecutor` and `SlurmExecutor`. Slurm jobs use generated batch
+  scripts and support local `sbatch` or `ssh <host> sbatch` submission.
+- Added persistent Valkey configuration and Docker deployment under
+  `converted/backend/`. The default artifact directory is
+  `converted/jobs/<job-id>/`; `NNM_BACKEND_ARTIFACT_ROOT` is the deployment
+  override for mounted filesystems.
+- Added `front-end/src/components/TrainingSidebar.svelte` and
+  `front-end/src/training/api.ts`. The frontend sends the compiled NNTree and
+  Hydra configuration as one JSON request, displays jobs through REST/SSE, and
+  exposes dataset, resources, priority, W&B, package naming, and arbitrary
+  Hydra overrides. A successful job produces a downloadable wheel containing
+  the resolved graph, custom operations, a declarative input adapter, and
+  `safetensors` weights. The sidebar accepts a suffix such as
+  `mnist_classifier`, while the backend enforces the importable package name
+  `nnm_mnist_classifier` (or falls back to `nnm_job_<job-id>`).
+- Dataset discovery exposes static `num_classes` metadata. The frontend shows
+  the inferred count and the backend resolves it independently before calling
+  the converter, rejecting contradictory manual values. `EnronSpamDataset`
+  now declares two classes and exports a BERT-backed `text` adapter, allowing
+  `model.predict(raw_email)` from an exported wheel (with `transformers` and
+  tokenizer availability at inference time).
+- Classification tests now publish whole-test-set W&B diagnostics: accuracy,
+  macro and per-class precision/recall/F1, confusion matrix, ROC, and
+  precision-recall curves. The report is guarded by `taskType ==
+  "classification"`, so regression and autoencoder jobs remain unchanged.
+- Added optional MCP HTTP proxy tools that reuse FastAPI job state.
+- Fixed source JSON loading so file inputs remain in the DOM during Chrome file
+  selection, invalid files produce a visible error, and failed imports do not
+  replace the current diagram. Editable diagrams are under
+  `examples/diagrams/`; `examples/nntrees/` contains converted artifacts.
+- Added `NNM_MODEL_PATH` source-model integration validation and the direct
+  Chrome skill at `.agents/skills/chrome-direct/` for CDP interaction,
+  uploads, DOM checks, and screenshots.
+- Added `docs2/source/remote_training.rst` and the design implementation notes
+  under `docs/designs/remote-training-backend/`.
+
+Remote training verification includes 307 frontend unit tests (5 skipped),
+source-model validation for the transformer fixture, backend tests, and a
+completed local MNIST training job through the browser UI.

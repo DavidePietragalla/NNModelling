@@ -1,0 +1,82 @@
+set shell := ["bash", "-cu"]
+
+backend_dir := justfile_directory()
+converted_dir := backend_dir / ".."
+valkey_data_dir := converted_dir / "valkey-data"
+valkey_port := env_var_or_default("NNM_VALKEY_PORT", "6379")
+api_host := env_var_or_default("NNM_BACKEND_HOST", "127.0.0.1")
+api_port := env_var_or_default("NNM_BACKEND_PORT", "8000")
+valkey_url := "valkey://127.0.0.1:" + valkey_port + "/0"
+uv_cache_dir := env_var_or_default("UV_CACHE_DIR", "/tmp/nnmodelling-uv-cache")
+admin_token_file := env_var_or_default("NNM_ADMIN_TOKEN_FILE", valkey_data_dir / "admin.token")
+admin_url := env_var_or_default("NNM_ADMIN_URL", "http://127.0.0.1:" + api_port)
+
+default:
+    @just --list
+
+# Start Valkey in the foreground with persistent local data.
+valkey:
+    mkdir -p "{{valkey_data_dir}}"
+    valkey-server "{{backend_dir}}/valkey.conf" --dir "{{valkey_data_dir}}" --port "{{valkey_port}}"
+
+# Create the machine-local administrator capability if it does not exist.
+admin-init:
+    cd "{{converted_dir}}" && UV_CACHE_DIR="{{uv_cache_dir}}" PYTHONPATH=src NNM_ADMIN_TOKEN_FILE="{{admin_token_file}}" uv run python -m backend.admin_cli init
+
+# Start the FastAPI backend in the foreground.
+backend: admin-init
+    cd "{{converted_dir}}" && UV_CACHE_DIR="{{uv_cache_dir}}" PYTHONPATH=src NNM_VALKEY_URL="{{valkey_url}}" NNM_ADMIN_TOKEN_FILE="{{admin_token_file}}" uv run uvicorn backend.app:app --host "{{api_host}}" --port "{{api_port}}"
+
+# Check that the API is reachable.
+health:
+    curl --fail --show-error "http://{{api_host}}:{{api_port}}/health"
+
+# List pending browser pairing requests.
+pairing-pending:
+    cd "{{converted_dir}}" && UV_CACHE_DIR="{{uv_cache_dir}}" PYTHONPATH=src NNM_ADMIN_TOKEN_FILE="{{admin_token_file}}" NNM_ADMIN_URL="{{admin_url}}" uv run python -m backend.admin_cli pairing-pending
+
+# Approve a pairing request. Supply an optional TTL such as 8h or 7d.
+pairing-approve request_id ttl="":
+    args=(); if [[ -n "{{ttl}}" ]]; then args+=(--ttl "{{ttl}}"); fi; cd "{{converted_dir}}"; UV_CACHE_DIR="{{uv_cache_dir}}" PYTHONPATH=src NNM_ADMIN_TOKEN_FILE="{{admin_token_file}}" NNM_ADMIN_URL="{{admin_url}}" uv run python -m backend.admin_cli pairing-approve "{{request_id}}" "${args[@]}"
+
+# Reject a pending browser pairing request.
+pairing-reject request_id:
+    cd "{{converted_dir}}" && UV_CACHE_DIR="{{uv_cache_dir}}" PYTHONPATH=src NNM_ADMIN_TOKEN_FILE="{{admin_token_file}}" NNM_ADMIN_URL="{{admin_url}}" uv run python -m backend.admin_cli pairing-reject "{{request_id}}"
+
+# List all browser sessions, including expired and revoked entries.
+sessions:
+    cd "{{converted_dir}}" && UV_CACHE_DIR="{{uv_cache_dir}}" PYTHONPATH=src NNM_ADMIN_TOKEN_FILE="{{admin_token_file}}" NNM_ADMIN_URL="{{admin_url}}" uv run python -m backend.admin_cli sessions
+
+# Revoke a browser session immediately.
+session-revoke connection_id:
+    cd "{{converted_dir}}" && UV_CACHE_DIR="{{uv_cache_dir}}" PYTHONPATH=src NNM_ADMIN_TOKEN_FILE="{{admin_token_file}}" NNM_ADMIN_URL="{{admin_url}}" uv run python -m backend.admin_cli session-revoke "{{connection_id}}"
+
+# List every job as the backend administrator.
+jobs:
+    cd "{{converted_dir}}" && UV_CACHE_DIR="{{uv_cache_dir}}" PYTHONPATH=src NNM_ADMIN_TOKEN_FILE="{{admin_token_file}}" NNM_ADMIN_URL="{{admin_url}}" uv run python -m backend.admin_cli jobs
+
+admin-jobs: jobs
+
+# Inspect one job as the backend administrator.
+admin-job job_id:
+    cd "{{converted_dir}}" && UV_CACHE_DIR="{{uv_cache_dir}}" PYTHONPATH=src NNM_ADMIN_TOKEN_FILE="{{admin_token_file}}" NNM_ADMIN_URL="{{admin_url}}" uv run python -m backend.admin_cli job "{{job_id}}"
+
+# Read one job's complete logs as the backend administrator.
+admin-job-logs job_id:
+    cd "{{converted_dir}}" && UV_CACHE_DIR="{{uv_cache_dir}}" PYTHONPATH=src NNM_ADMIN_TOKEN_FILE="{{admin_token_file}}" NNM_ADMIN_URL="{{admin_url}}" uv run python -m backend.admin_cli job-logs "{{job_id}}"
+
+# Cancel one queued or running job as the backend administrator.
+admin-job-cancel job_id:
+    cd "{{converted_dir}}" && UV_CACHE_DIR="{{uv_cache_dir}}" PYTHONPATH=src NNM_ADMIN_TOKEN_FILE="{{admin_token_file}}" NNM_ADMIN_URL="{{admin_url}}" uv run python -m backend.admin_cli job-cancel "{{job_id}}"
+
+# Run the backend test suite.
+test:
+    cd "{{converted_dir}}" && UV_CACHE_DIR="{{uv_cache_dir}}" PYTHONPATH=src uv run pytest src/tests/test_remote_backend.py src/tests/test_backend_auth.py src/tests/test_admin_cli.py -q
+
+# Build and start the persistent Docker deployment.
+docker-up: admin-init
+    docker compose -f "{{backend_dir}}/docker-compose.yml" up --build
+
+# Stop the Docker deployment without deleting its volumes.
+docker-down:
+    docker compose -f "{{backend_dir}}/docker-compose.yml" down

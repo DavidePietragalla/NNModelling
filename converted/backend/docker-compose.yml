@@ -1,0 +1,35 @@
+services:
+  valkey:
+    image: valkey/valkey:8
+    command: ["valkey-server", "/usr/local/etc/valkey/valkey.conf", "--dir", "/data", "--bind", "0.0.0.0", "--protected-mode", "no"]
+    volumes:
+      - valkey-data:/data
+      - ./valkey.conf:/usr/local/etc/valkey/valkey.conf:ro
+    healthcheck:
+      test: ["CMD", "valkey-cli", "ping"]
+      interval: 5s
+      timeout: 3s
+      retries: 10
+
+  backend:
+    build:
+      context: ..
+      dockerfile: backend/Dockerfile
+    environment:
+      NNM_VALKEY_URL: valkey://valkey:6379/0
+      NNM_BACKEND_ARTIFACT_ROOT: /app/jobs
+      NNM_ADMIN_TOKEN_FILE: /run/secrets/nnm-admin-token
+      NNM_ALLOWED_ORIGINS: ${NNM_ALLOWED_ORIGINS:-http://127.0.0.1:5174}
+      NNM_SESSION_TTL: ${NNM_SESSION_TTL:-24h}
+    ports:
+      - "8000:8000"
+    volumes:
+      - backend-jobs:/app/jobs
+      - ../valkey-data/admin.token:/run/secrets/nnm-admin-token:ro
+    depends_on:
+      valkey:
+        condition: service_healthy
+
+volumes:
+  valkey-data:
+  backend-jobs:

@@ -24,6 +24,7 @@ MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.
   } from "@xyflow/svelte";
 
   import Sidebar from "./components/Sidebar.svelte";
+  import TrainingSidebar from "./components/TrainingSidebar.svelte";
 
   const { getInternalNode, getIntersectingNodes, screenToFlowPosition, fitView, setCenter } =
     useSvelteFlow();
@@ -81,11 +82,13 @@ MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.
   );
 
   let isSidebarOpen = $state(false);
+  let activeMode = $state<"nodes" | "training">("nodes");
+  let loadError = $state<string | null>(null);
   let canvasRef: HTMLDivElement;
 
   // Auto-apertura quando si seleziona un nodo
   $effect(() => {
-    if (activeNode) {
+    if (activeNode && activeMode === "nodes") {
       isSidebarOpen = true;
     }
   });
@@ -256,13 +259,19 @@ MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.
         >
         <button
           onclick={() => {
-            handleLoadModel(diagram, () => {
-              diagram.refreshTypes();
-            });
+            loadError = null;
+            handleLoadModel(
+              diagram,
+              () => diagram.refreshTypes(),
+              (message) => (loadError = message),
+            );
             isSidebarOpen = false;
           }}
           class="toolbar-btn">📂 Carica</button
         >
+        {#if loadError}
+          <div class="load-error" role="alert">{loadError}</div>
+        {/if}
         <button onclick={handleConversion} class="toolbar-btn"
           >📦 Converti in Python</button
         >
@@ -282,6 +291,15 @@ MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.
       </Panel>
       <Panel position="top-right">
         <button
+          class="training-mode-btn"
+          onclick={() => {
+            activeMode = "training";
+            isSidebarOpen = false;
+          }}
+        >
+          🧪 Training
+        </button>
+        <button
           class="toggle-sidebar-btn"
           onclick={() => (isSidebarOpen = !isSidebarOpen)}
         >
@@ -291,15 +309,38 @@ MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.
     </SvelteFlow>
   </div>
 
-  <Sidebar
-    {diagram}
-    selectedNode={activeNode}
-    isOpen={isSidebarOpen}
-    onClose={() => (isSidebarOpen = false)}
-    {getSpawnPosition}
-  />
+  {#if activeMode === "nodes"}
+    <Sidebar
+      {diagram}
+      selectedNode={activeNode}
+      isOpen={isSidebarOpen}
+      onClose={() => (isSidebarOpen = false)}
+      {getSpawnPosition}
+    />
+  {:else}
+    <TrainingSidebar
+      {diagram}
+      onClose={() => (activeMode = "nodes")}
+    />
+  {/if}
 </div>
 
 <style>
   @import "./styles/flowcanvas.css";
+
+  .training-mode-btn {
+    margin-right: 8px;
+  }
+
+  .load-error {
+    max-width: 360px;
+    margin-top: 8px;
+    padding: 8px 10px;
+    border: 1px solid #d33;
+    border-radius: 4px;
+    background: #fff1f1;
+    color: #a00;
+    font-size: 0.85rem;
+    white-space: normal;
+  }
 </style>

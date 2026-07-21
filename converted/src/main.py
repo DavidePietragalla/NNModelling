@@ -50,6 +50,11 @@ def main(cfg: DictConfig):
 
     lit.seed_everything(cfg.seed)
     wandb_logger = WandbLogger(**cfg.wandb)
+    try:
+        print(f"W&B URL: {wandb_logger.experiment.url}", flush=True)
+    except (AttributeError, RuntimeError):
+        # Disabled/offline W&B modes may not expose a public run URL.
+        pass
 
     model = Net(cfg)
 
@@ -82,6 +87,9 @@ def main(cfg: DictConfig):
     }
 
     torch.save(model, "weights.pt")
+    from safetensors.torch import save_file
+
+    save_file(model.state_dict(), "weights.safetensors")
     wandb_logger.log_hyperparams(hyperparams_dict)
 
 

@@ -10,6 +10,7 @@
 # MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.
 from torchvision import datasets
 from torch.utils.data import DataLoader, random_split
+from typing import Any
 
 from dataset.mnist import MNISTDataset
 
@@ -27,6 +28,20 @@ class _ImageOnly:
 
 class AutoencoderMNIST(MNISTDataset):
     """MNIST dataset for autoencoder training. Returns (image, image) instead of (image, label)."""
+
+    @classmethod
+    def num_classes(cls, config: dict[str, Any]) -> None:
+        """Report no classification cardinality for reconstruction training."""
+
+        del config
+        return None
+
+    @classmethod
+    def class_names(cls, config: dict[str, Any]) -> None:
+        """Report no class labels for reconstruction training."""
+
+        del config
+        return None
 
     def __getitem__(self, index):
         image, _ = self.dataset[index]

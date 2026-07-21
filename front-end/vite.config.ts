@@ -13,6 +13,11 @@ export default defineConfig({
         target: "ws://localhost:9339",
         ws: true,
       },
+      "/api": {
+        target: "http://127.0.0.1:8000",
+        changeOrigin: true,
+        rewrite: (path) => path.replace(/^\/api/, ""),
+      },
     },
   },
   optimizeDeps: {

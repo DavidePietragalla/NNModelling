@@ -1,5 +1,11 @@
 # Task frontend-1 — Type Model Interfaces
 
+> Historical design note. The current type model also includes warnings,
+> suggestions, and optional `NodeTypeAnnotation.blockedBy` provenance for
+> suppressing diagnostics caused by an upstream type error. See
+> `front-end/src/conversion/tensortypes.ts` and
+> `docs2/source/type_system.rst` for the active contract.
+
 **Delegate to**: `@frontend`  
 **Depends on**: None (first task)  
 **Estimated files**: 1 new file

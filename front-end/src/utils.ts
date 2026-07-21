@@ -214,28 +214,57 @@ export function handleSaveModel(diagram: Diagram) {
 }
 
 // --- LOGICA DI CARICAMENTO (Upload File) ---
-export function handleLoadModel(diagram: Diagram, onLoad?: () => void) {
-  // Creiamo un input file invisibile
+export function handleLoadModel(
+  diagram: Diagram,
+  onLoad?: () => void,
+  onError?: (message: string) => void,
+) {
+  // L'input deve essere nel document mentre la finestra nativa è aperta.
+  // Questo è necessario in Chrome/Linux e rende inoltre possibile usare
+  // DOM.setFileInputFiles durante i test end-to-end via CDP.
   const input = document.createElement("input");
   input.type = "file";
-  input.accept = ".json"; // Accettiamo solo file JSON
+  input.accept = ".json,application/json";
+  input.style.display = "none";
+  document.body.appendChild(input);
+
+  const cleanup = () => input.remove();
 
   input.onchange = (e) => {
     const file = (e.target as HTMLInputElement).files?.[0];
-    if (!file) return;
+    if (!file) {
+      cleanup();
+      return;
+    }
 
     const reader = new FileReader();
     reader.onload = (event) => {
       const fileContent = event.target?.result as string;
-      if (fileContent) {
-        // Passiamo il contenuto al diagramma!
-        diagram.importFromJson(fileContent);
-        onLoad?.();
+      if (!fileContent) {
+        onError?.(`Il file "${file.name}" è vuoto.`);
+        cleanup();
+        return;
       }
+
+      if (diagram.importFromJson(fileContent)) {
+        onLoad?.();
+      } else {
+        onError?.(
+          `Impossibile caricare "${file.name}": il file deve essere un diagramma JSON con gli array "nodes" e "edges".`,
+        );
+      }
+      cleanup();
+    };
+    reader.onerror = () => {
+      onError?.(`Impossibile leggere il file "${file.name}".`);
+      cleanup();
     };
     // Leggiamo il file come testo semplice
     reader.readAsText(file);
   };
+
+  // Se l'utente chiude la finestra senza scegliere un file, puliamo l'input.
+  input.addEventListener("cancel", cleanup, { once: true });
 
   // Simuliamo il click per aprire la finestra di dialogo del SO
   input.click();

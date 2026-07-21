@@ -368,7 +368,8 @@ This produces:
 captured wildcards into the output pattern, producing the output tensor
 type. If any constraint is violated (a constant dimension does not match,
 a dtype constraint fails, a parameter reference cannot be resolved), a
-``TypeError`` is recorded.
+``TypeError`` is recorded on the offending node. Diagnostics are
+deduplicated: one underlying mismatch should produce one primary error.
 
 The algorithm in pseudocode:
 
@@ -380,11 +381,20 @@ The algorithm in pseudocode:
         a. Read stereotype and typeSignature
         b. If no typeSignature → warning, treat output as "unknown"
         c. Determine input type(s) from predecessor annotations
-        d. Call patternMatch(inputShape, inputPattern, params, env)
-        e. If match fails → record TypeError, continue
-        f. Resolve output: substitute bindings + captured wildcards
-        g. Store annotation, update environment
+        d. If an input is blocked by an upstream TypeError:
+             store annotation with blockedBy = [upstream node IDs]
+             skip constraint checking for this node
+        e. Otherwise call patternMatch(inputShape, inputPattern, params, env)
+        f. If match fails → record one primary TypeError
+        g. Resolve output: substitute bindings + captured wildcards
+        h. Store annotation, update environment
      3. Return { ok, annotations, errors }
+
+Nodes marked with ``blockedBy`` are not independent type errors. Their
+diagnostics are suppressed because their input type is already unreliable;
+the annotation preserves the upstream node IDs so callers can explain the
+dependency. This prevents a single shape mismatch from producing a long,
+misleading cascade of downstream errors.
 
 Pattern Matching
 ~~~~~~~~~~~~~~~~
@@ -638,7 +648,9 @@ parameter is unset, it behaves like a wildcard (consuming remaining dims).
 **Gradual typing.** If the tuple parameter is unset or invalid, the output
 type becomes symbolic (unknown shape). No error is reported — the type
 propagates as unknown, and errors surface only when a downstream module
-expects a specific shape.
+expects a specific shape. This is distinct from an unknown type caused by a
+known upstream ``TypeError``: in that case downstream nodes are marked with
+``blockedBy`` and their duplicate diagnostics are suppressed.
 
 Join Type Checking
 ------------------
@@ -705,10 +717,14 @@ immediately as the user edits.
 edge is added or removed, a parameter changes (debounced 300ms), or a
 diagram is loaded.
 
-**Error panel.** A collapsible section at the bottom of the Sidebar lists
-all type problems. Errors (red) indicate shape mismatches that would cause
-runtime crashes. Warnings (amber) indicate missing type signatures or
-unresolved parameters. Clicking an error selects the offending node.
+**Error panel.** The type-check section is part of the vertically scrollable
+Sidebar form, so all diagnostics remain reachable even when a node has many
+parameters or the graph produces many messages. Errors (red) indicate
+primary shape mismatches that would cause runtime crashes. Warnings (amber)
+indicate missing type signatures or unresolved parameters. Downstream nodes
+blocked by an upstream error are not shown as additional errors; their
+``blockedBy`` provenance is retained in the type annotations. Clicking an
+error selects the offending node.
 
 **Node indicators.** Nodes with errors display a red border (2px) with an
 ✗ indicator in the top-right corner. Nodes with warnings display an amber

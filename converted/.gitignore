@@ -1,10 +1,11 @@
 outputs
+jobs/
+valkey-data/
 *.pyc
 multirun
 data/
 fds-mnist/
 wandb/
-uv.lock
 *.pt
 
 cfg*/

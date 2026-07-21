@@ -3326,4 +3326,36 @@ describe("TypeEngine — Real-world diagrams", () => {
     }
     expect(hardErrors).toHaveLength(0);
   });
+
+  it("transformer_classifier.json: keeps internal types when MultiHeadAttn.n is 16", () => {
+    const filePath = resolve(DIAGRAMS_DIR, "transformer_classifier.json");
+    const d = new Diagram();
+    d.importFromJson(readFileSync(filePath, "utf-8"));
+    d.updateModule("mha", { params: { n: { value: "16" } } });
+
+    const result = TypeEngine.infer(d);
+
+    expectOutputShape(result, "fork_input", ["$B", "128", "128"]);
+    expectOutputShape(result, "layer_norm", ["$B", "128", "128"]);
+    expectOutputShape(result, "q_proj", ["$B", "128", "32"]);
+    expect(result.errors.some(
+      (error) => error.nodeId === "attn_proj" && /got 512/.test(error.message),
+    )).toBe(true);
+  });
+
+  it("transformer_classifier.json: reports only the primary downstream type error", () => {
+    const filePath = resolve(DIAGRAMS_DIR, "transformer_classifier.json");
+    const d = new Diagram();
+    d.importFromJson(readFileSync(filePath, "utf-8"));
+    d.updateModule("mha", { params: { n: { value: "16" } } });
+
+    const result = TypeEngine.infer(d);
+    const hardErrors = result.errors.filter((error) => error.severity === "error");
+
+    expect(hardErrors).toHaveLength(1);
+    expect(hardErrors[0].nodeId).toBe("attn_proj");
+    expect(hardErrors[0].message).toContain("got 512");
+    expect(result.annotations.get("add1_join")?.blockedBy).toEqual(["attn_proj"]);
+    expect(result.annotations.get("pool")?.blockedBy).toEqual(["attn_proj"]);
+  });
 });
