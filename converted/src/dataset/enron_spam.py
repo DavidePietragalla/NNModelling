@@ -11,6 +11,7 @@
 from torch.utils.data import DataLoader, random_split
 from transformers import AutoTokenizer, DataCollatorWithPadding
 from datasets import load_dataset
+from typing import Any
 
 from dataset.ds import Dataset
 
@@ -21,6 +22,30 @@ class EnronSpamDataset(Dataset):
     Tokenizes with HF AutoTokenizer. Uses DataCollatorWithPadding.
     division() returns DataLoaders yielding (input_ids, labels) tuples.
     """
+
+    @classmethod
+    def num_classes(cls, config: dict[str, Any]) -> int:
+        """Return the ham/spam label cardinality without downloading the corpus."""
+
+        del config
+        return 2
+
+    @classmethod
+    def inference_adapter_spec(cls, config: dict[str, Any]) -> dict[str, Any]:
+        """Describe BERT tokenization needed to infer from one raw email."""
+
+        model_name = config.get("model_name", "bert-base-uncased")
+        max_length = config.get("max_length", 128)
+        if not isinstance(model_name, str) or not model_name:
+            raise ValueError("EnronSpamDataset model_name must be a non-empty string")
+        if not isinstance(max_length, int) or max_length < 1:
+            raise ValueError("EnronSpamDataset max_length must be a positive integer")
+        return {
+            "kind": "text",
+            "version": 1,
+            "model_name": model_name,
+            "max_length": max_length,
+        }
 
     def __init__(
         self,

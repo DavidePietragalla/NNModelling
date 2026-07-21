@@ -89,6 +89,49 @@ def test_export_uses_dataset_adapter_specs_without_instantiating_the_dataset():
     }
 
 
+def test_enron_export_declares_a_text_adapter():
+    spec = adapter_spec_from_dataset_config(
+        {
+            "_target_": "dataset.enron_spam.EnronSpamDataset",
+            "model_name": "bert-base-uncased",
+            "max_length": 64,
+        }
+    )
+
+    assert spec == {
+        "kind": "text",
+        "version": 1,
+        "model_name": "bert-base-uncased",
+        "max_length": 64,
+    }
+
+
+def test_text_adapter_tokenizes_one_email(monkeypatch):
+    class Tokenizer:
+        def __call__(self, text, **kwargs):
+            assert text == "Sale ends today"
+            assert kwargs == {
+                "return_tensors": "pt",
+                "truncation": True,
+                "max_length": 4,
+                "padding": "max_length",
+            }
+            return {"input_ids": torch.tensor([[101, 1, 2, 102]])}
+
+    class AutoTokenizer:
+        @staticmethod
+        def from_pretrained(model_name):
+            assert model_name == "bert-base-uncased"
+            return Tokenizer()
+
+    monkeypatch.setattr("transformers.AutoTokenizer", AutoTokenizer)
+    adapter = adapter_from_spec(
+        {"kind": "text", "version": 1, "model_name": "bert-base-uncased", "max_length": 4}
+    )
+
+    assert torch.equal(adapter.to_tensor("Sale ends today"), torch.tensor([[101, 1, 2, 102]]))
+
+
 def test_mnist_image_adapter_converts_one_image_to_a_normalized_batch_tensor():
     adapter = adapter_from_spec(adapter_spec_from_dataset_config({"_target_": "dataset.mnist.MNISTDataset"}))
 

@@ -128,6 +128,7 @@ def _metadata(package_name: str, version: str) -> str:
         "Requires-Dist: safetensors\n"
         "Requires-Dist: torchvision\n"
         "Requires-Dist: Pillow\n"
+        "Requires-Dist: transformers\n"
     )
 
 

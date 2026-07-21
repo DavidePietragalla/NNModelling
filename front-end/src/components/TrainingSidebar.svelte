@@ -288,6 +288,7 @@
       network: { format: "nntree", value: nntree },
       training: {
         seed: Number.parseInt(seed, 10),
+        ...(selectedDatasetInfo.num_classes === null ? {} : { num_classes: selectedDatasetInfo.num_classes }),
         dataset: {
           ...datasetConfig,
           batch_size: Number.parseInt(batchSize, 10),
@@ -533,6 +534,9 @@
         </select>
       </label>
       {#if selectedDatasetInfo}
+        {#if selectedDatasetInfo.num_classes !== null}
+          <small>Classi rilevate dal dataset: {selectedDatasetInfo.num_classes}</small>
+        {/if}
         {#each selectedDatasetInfo.parameters as parameter (parameter.name)}
           <label>{parameter.name}
             <input value={datasetParams[parameter.name] ?? ""} oninput={(event) => setDatasetParameter(parameter, event)} />

@@ -10,6 +10,7 @@ export interface DatasetInfo {
   name: string;
   doc: string;
   parameters: DatasetParameter[];
+  num_classes: number | null;
 }
 
 export interface TrainingJobStatus {

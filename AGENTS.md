@@ -547,7 +547,14 @@ New stereotypes and refactoring:
 - **HorizontalRepeat stereotype**: `Stereotypes/SubFlows/HorizontalRepeat.json`, `ops.HorizontalRepeat`, N parallel subflow copies via `vmap` + `functional_call` + `stack_module_state`, output `[batch, ..., n*d]`
 - **HorizontalRepeat join**: hardcoded to concat on dim=-1. Not configurable. See `horizontal_repeat.py:14` docstring.
 - **Example diagram**: `horizontal_multihead_attention.json` — single head attention wrapped in HorizontalRepeat n=4
-- **EnronSpamDataset**: text classification dataset via HF datasets + transformers
+- **Dataset metadata**: every dataset may expose ``num_classes(config)`` without
+  loading data. The remote training registry returns it to the sidebar and the
+  backend uses it when generating classification configs (MNIST: 10; Enron
+  Spam: 2; autoencoders: none).
+- **EnronSpamDataset**: text classification dataset via HF datasets + transformers.
+  Its exported model wheel has a ``text`` input adapter which tokenizes one raw
+  email using the configured BERT tokenizer and max length; the tokenizer is
+  downloaded or read from the Hugging Face cache at inference time.
 - **Test count**: 73 → 76 tests (3 Fork tests)
 
 ### Phase 9 — Core Extraction for MCP Server (commit XXXXXXX)
@@ -769,6 +776,12 @@ Implemented the initial issue #14 training workflow:
   `safetensors` weights. The sidebar accepts a suffix such as
   `mnist_classifier`, while the backend enforces the importable package name
   `nnm_mnist_classifier` (or falls back to `nnm_job_<job-id>`).
+- Dataset discovery exposes static `num_classes` metadata. The frontend shows
+  the inferred count and the backend resolves it independently before calling
+  the converter, rejecting contradictory manual values. `EnronSpamDataset`
+  now declares two classes and exports a BERT-backed `text` adapter, allowing
+  `model.predict(raw_email)` from an exported wheel (with `transformers` and
+  tokenizer availability at inference time).
 - Added optional MCP HTTP proxy tools that reuse FastAPI job state.
 - Fixed source JSON loading so file inputs remain in the DOM during Chrome file
   selection, invalid files produce a visible error, and failed imports do not

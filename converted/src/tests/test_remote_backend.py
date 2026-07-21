@@ -12,7 +12,7 @@ import pytest
 
 from backend.app import create_app
 from backend.auth import AuthService, InMemoryAuthStore
-from backend.config_service import normalize_training_config
+from backend.config_service import build_job_hydra_configs, normalize_training_config
 from backend.dataset_registry import discover_datasets
 from backend.executors import SlurmExecutor
 from backend.manager import JobManager
@@ -90,9 +90,19 @@ def test_job_submission_requires_an_nnm_prefixed_package_name():
 
 
 def test_dataset_registry_discovers_installed_classes():
-    targets = {item.target for item in discover_datasets()}
-    assert "dataset.mnist.MNISTDataset" in targets
-    assert "dataset.autoencoder_mnist.AutoencoderMNIST" in targets
+    datasets = {item.target: item for item in discover_datasets()}
+    assert datasets["dataset.mnist.MNISTDataset"].num_classes == 10
+    assert datasets["dataset.enron_spam.EnronSpamDataset"].num_classes == 2
+    assert datasets["dataset.autoencoder_mnist.AutoencoderMNIST"].num_classes is None
+
+
+def test_job_config_uses_dataset_class_count_when_request_omits_it(tmp_path):
+    job = submission().model_dump(mode="json")
+
+    config_dir = build_job_hydra_configs(job, tmp_path)
+
+    net = (config_dir / "net" / "custom_sequence.yaml").read_text(encoding="utf-8")
+    assert "num_classes: 2" in net
 
 
 def test_in_memory_store_orders_priority_then_fifo():

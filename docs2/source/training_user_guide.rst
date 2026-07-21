@@ -124,8 +124,24 @@ or the training dataset. Every model offers a universal tensor API:
 ``predict_tensor`` expects a batch tensor already prepared for the model. A
 model trained with MNIST also offers ``model.predict(path_or_bytes_or_image)``;
 it applies the saved grayscale, resize and normalization configuration before
-inference. Text adapters require packaged tokenizer assets and are not part of
-this initial export.
+inference. A model trained with ``EnronSpamDataset`` also accepts one raw email
+string through ``model.predict(email_text)``. Its exported text adapter uses the
+saved Hugging Face tokenizer name and maximum length. The first inference may
+download that tokenizer unless it is already available in the local Hugging
+Face cache; install the wheel's ``transformers`` dependency and provision the
+tokenizer cache in offline environments.
+
+Dataset class metadata
+-----------------------
+
+The training backend discovers the dataset classes installed in its trusted
+environment. A dataset can declare its fixed classification cardinality through
+the ``Dataset.num_classes(config)`` class method, without constructing or
+downloading the dataset. The training sidebar displays this value and includes
+it in the job request. The backend independently resolves the same metadata,
+so requests from older clients are still correct. For example, MNIST declares
+10 classes and Enron Spam declares 2. A supplied ``training.num_classes`` that
+conflicts with a dataset's declared value is rejected before conversion.
 
 Only the browser connection that created a job can download its wheel. The
 wheel contains model parameters: store and distribute it as a model artifact,

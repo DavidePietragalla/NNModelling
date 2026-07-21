@@ -93,6 +93,7 @@ class DatasetInfo(BaseModel):
     name: str
     doc: str = ""
     parameters: list[DatasetParameter] = Field(default_factory=list)
+    num_classes: int | None = Field(default=None, ge=1)
 
 
 class ComputeUnitInfo(BaseModel):

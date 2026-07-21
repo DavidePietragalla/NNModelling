@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import json
+import importlib
 from pathlib import Path
 from typing import Any
 
@@ -45,6 +46,20 @@ def _resolve_config(config_dir: Path, overrides: list[str]) -> DictConfig:
         return compose(config_name="base", overrides=overrides)
 
 
+def _dataset_num_classes(dataset_config: dict[str, Any]) -> int | None:
+    """Read a dataset's static classification cardinality without loading data."""
+
+    target = dataset_config.get("_target_")
+    if not isinstance(target, str) or "." not in target:
+        raise ValueError("training.dataset._target_ must be an import path")
+    module_name, _, class_name = target.rpartition(".")
+    dataset_class = getattr(importlib.import_module(module_name), class_name)
+    value = dataset_class.num_classes(dict(dataset_config))
+    if value is not None and (not isinstance(value, int) or value < 1):
+        raise ValueError(f"{target}.num_classes must return a positive integer or None")
+    return value
+
+
 def build_job_hydra_configs(job: dict[str, Any], output_dir: str | Path) -> Path:
     """Generate Hydra files for a complete remote-training job.
 
@@ -65,6 +80,15 @@ def build_job_hydra_configs(job: dict[str, Any], output_dir: str | Path) -> Path
     num_classes = training.get("num_classes")
     if num_classes is not None and not isinstance(num_classes, int):
         raise ValueError("training.num_classes must be an integer")
+    dataset_config = _section(training, "dataset", {})
+    dataset_num_classes = _dataset_num_classes(dataset_config)
+    if num_classes is None:
+        num_classes = dataset_num_classes
+    elif dataset_num_classes is not None and num_classes != dataset_num_classes:
+        raise ValueError(
+            f"training.num_classes={num_classes} conflicts with the {dataset_num_classes} classes declared by "
+            f"{dataset_config['_target_']}"
+        )
 
     # The existing converter owns the network-specific transformation. The
     # optional training_config argument lets it write all Hydra groups from
@@ -74,7 +98,7 @@ def build_job_hydra_configs(job: dict[str, Any], output_dir: str | Path) -> Path
         output_dir=str(output_path / "cfg"),
         num_classes=num_classes,
         training_config={
-            "dataset": _section(training, "dataset", {}),
+            "dataset": dataset_config,
             "optimizer": _section(
                 training,
                 "optimizer",
@@ -108,4 +132,3 @@ def build_job_hydra_configs(job: dict[str, Any], output_dir: str | Path) -> Path
     resolved_path = output_path / "resolved_config.yaml"
     OmegaConf.save(config=resolved, f=str(resolved_path))
     return output_path / "cfg"
-

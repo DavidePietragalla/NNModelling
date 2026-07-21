@@ -81,7 +81,17 @@ def discover_datasets() -> list[DatasetInfo]:
                     name=class_name,
                     doc=inspect.getdoc(candidate) or "",
                     parameters=parameters,
+                    num_classes=_num_classes(candidate),
                 )
             )
     return sorted(result, key=lambda item: item.target)
 
+
+def _num_classes(dataset_class: type[Dataset], config: dict[str, Any] | None = None) -> int | None:
+    """Read validated class-count metadata without constructing a dataset."""
+
+    value = dataset_class.num_classes(config or {})
+    if value is not None and (not isinstance(value, int) or value < 1):
+        target = f"{dataset_class.__module__}.{dataset_class.__name__}"
+        raise ValueError(f"{target}.num_classes must return a positive integer or None")
+    return value

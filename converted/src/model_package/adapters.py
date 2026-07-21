@@ -69,6 +69,32 @@ class ImageAdapter:
         return tensor.unsqueeze(0)
 
 
+class TextAdapter:
+    """Tokenize one text value into the input IDs expected by a text model."""
+
+    def __init__(self, *, model_name: str, max_length: int) -> None:
+        try:
+            from transformers import AutoTokenizer
+        except ImportError as exc:  # pragma: no cover - depends on consumer extras
+            raise RuntimeError("Text inference requires transformers") from exc
+        self.max_length = max_length
+        self.tokenizer = AutoTokenizer.from_pretrained(model_name)
+
+    def to_tensor(self, value: object) -> torch.Tensor:
+        """Tokenize one email and return a padded batch of input IDs."""
+
+        if not isinstance(value, str):
+            raise TypeError("TextAdapter expects a string")
+        encoded = self.tokenizer(
+            value,
+            return_tensors="pt",
+            truncation=True,
+            max_length=self.max_length,
+            padding="max_length",
+        )
+        return encoded["input_ids"]
+
+
 def adapter_from_spec(spec: Mapping[str, Any]) -> InputAdapter:
     """Construct an adapter exclusively from the supported declarative registry."""
 
@@ -81,6 +107,11 @@ def adapter_from_spec(spec: Mapping[str, Any]) -> InputAdapter:
             size=_number_list(spec, "size"),
             mean=_number_list(spec, "mean"),
             std=_number_list(spec, "std"),
+        )
+    if kind == "text":
+        return TextAdapter(
+            model_name=_string(spec, "model_name"),
+            max_length=_integer(spec, "max_length"),
         )
     raise ValueError(f"unsupported input adapter kind: {kind!r}")
 
@@ -113,4 +144,11 @@ def _number_list(spec: Mapping[str, Any], name: str) -> list[float] | list[int]:
     value = spec.get(name)
     if not isinstance(value, list) or not all(isinstance(item, (int, float)) for item in value):
         raise ValueError(f"image adapter field {name!r} must be a numeric list")
+    return value
+
+
+def _string(spec: Mapping[str, Any], name: str) -> str:
+    value = spec.get(name)
+    if not isinstance(value, str) or not value:
+        raise ValueError(f"text adapter field {name!r} must be a non-empty string")
     return value

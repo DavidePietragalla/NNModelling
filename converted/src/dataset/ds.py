@@ -21,6 +21,17 @@ class Dataset(torch.utils.data.Dataset):
         raise NotImplementedError("Dataset.division is not implemented by subclasses")
 
     @classmethod
+    def num_classes(cls, config: dict[str, Any]) -> int | None:
+        """Return the fixed classification cardinality, if this dataset has one.
+
+        This metadata is intentionally available without constructing the
+        dataset, which may otherwise download data or allocate worker state.
+        """
+
+        del config
+        return None
+
+    @classmethod
     def inference_adapter_spec(cls, config: dict[str, Any]) -> dict[str, Any]:
         """Describe a portable inference adapter without constructing a dataset.
 

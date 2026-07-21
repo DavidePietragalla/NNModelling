@@ -19,6 +19,13 @@ from dataset.ds import Dataset
 
 class MNISTDataset(Dataset):
     @classmethod
+    def num_classes(cls, config: dict[str, Any]) -> int:
+        """Return the ten digit classes supplied by MNIST."""
+
+        del config
+        return 10
+
+    @classmethod
     def inference_adapter_spec(cls, config: dict[str, Any]) -> dict[str, Any]:
         """Export the image preprocessing used by MNIST training."""
 
