@@ -150,6 +150,74 @@ def test_manager_builds_job_artifacts_and_finishes(tmp_path):
     assert manager.logs(queued.id, owner_connection_id=OWNER)["stdout"] == "ok\n"
 
 
+def test_manager_tails_only_new_log_bytes_and_resets_a_stale_offset(tmp_path):
+    """Log viewers receive bounded incremental output rather than whole files."""
+
+    manager = JobManager(InMemoryJobStore(), tmp_path, [ImmediateExecutor()])
+    queued = manager.submit(submission(), owner_connection_id=OWNER)
+    root = Path(manager.status(queued.id, owner_connection_id=OWNER).artifact_dir)
+    (root / "stdout.log").write_text("first\nsecond\n", encoding="utf-8")
+    (root / "stderr.log").write_text("warning\n", encoding="utf-8")
+
+    first = manager.tail_logs(queued.id, owner_connection_id=OWNER, stdout_after=0, stderr_after=0)
+    assert first == {
+        "stdout": {"text": "first\nsecond\n", "offset": 13, "reset": False},
+        "stderr": {"text": "warning\n", "offset": 8, "reset": False},
+    }
+
+    (root / "stdout.log").write_text("first\nsecond\nthird\n", encoding="utf-8")
+    appended = manager.tail_logs(
+        queued.id,
+        owner_connection_id=OWNER,
+        stdout_after=first["stdout"]["offset"],
+        stderr_after=first["stderr"]["offset"],
+    )
+    assert appended["stdout"] == {"text": "third\n", "offset": 19, "reset": False}
+    assert appended["stderr"] == {"text": "", "offset": 8, "reset": False}
+
+    reset = manager.tail_logs(queued.id, owner_connection_id=OWNER, stdout_after=99, stderr_after=99)
+    assert reset["stdout"]["text"] == "first\nsecond\nthird\n"
+    assert reset["stdout"]["reset"] is True
+    assert reset["stderr"]["reset"] is True
+
+
+def test_manager_publishes_wandb_url_as_soon_as_a_heartbeat_sees_it(tmp_path):
+    manager = JobManager(InMemoryJobStore(), tmp_path, [ImmediateExecutor()])
+    queued = manager.submit(submission(), owner_connection_id=OWNER)
+    root = Path(manager.status(queued.id, owner_connection_id=OWNER).artifact_dir)
+    (root / "stdout.log").write_text("W&B URL: https://wandb.ai/team/project/runs/live-run\n", encoding="utf-8")
+
+    manager._heartbeat(queued.id, {"worker": "test"})
+
+    status = manager.status(queued.id, owner_connection_id=OWNER)
+    assert status.wandb_url == "https://wandb.ai/team/project/runs/live-run"
+    assert manager.events(queued.id, owner_connection_id=OWNER)[-1]["type"] == "heartbeat"
+    assert any(
+        event["type"] == "wandb_ready" and event["wandb_url"] == status.wandb_url
+        for event in manager.events(queued.id, owner_connection_id=OWNER)
+    )
+
+
+def test_manager_publishes_wandb_url_when_a_short_job_finishes_before_heartbeat(tmp_path):
+    class WandbImmediateExecutor(ImmediateExecutor):
+        def submit(self, job, artifact_dir, on_heartbeat, on_finished):
+            stdout = Path(artifact_dir, "stdout.log")
+            stdout.write_text("W&B URL: https://wandb.ai/team/project/runs/quick-run\n", encoding="utf-8")
+            on_finished(0, {"stdout": str(stdout)})
+            return {"worker": "test"}
+
+    manager = JobManager(InMemoryJobStore(), tmp_path, [WandbImmediateExecutor()])
+    queued = manager.submit(submission(), owner_connection_id=OWNER)
+
+    manager.run_once()
+
+    assert any(
+        event["type"] == "wandb_ready"
+        and event["wandb_url"] == "https://wandb.ai/team/project/runs/quick-run"
+        for event in manager.events(queued.id, owner_connection_id=OWNER)
+    )
+
+
 def test_manager_skips_incompatible_high_priority_job(tmp_path):
     """A blocked high-priority job must not starve a runnable lower-priority job."""
 
@@ -331,6 +399,13 @@ def test_api_requires_pairing_and_scopes_jobs_to_their_connection(tmp_path):
                 assert len((await client.get("/jobs", headers=first_headers)).json()) == 1
                 assert (await client.get("/jobs", headers=second_headers)).json() == []
                 assert (await client.get(f"/jobs/{job_id}", headers=second_headers)).status_code == 404
+                tail = await client.get(
+                    f"/jobs/{job_id}/logs/tail?stdout_after=0&stderr_after=0",
+                    headers=first_headers,
+                )
+                assert tail.status_code == 200
+                assert set(tail.json()["stdout"]) == {"text", "offset", "reset"}
+                assert (await client.get(f"/jobs/{job_id}/logs/tail", headers=second_headers)).status_code == 404
 
     asyncio.run(exercise_api())
 

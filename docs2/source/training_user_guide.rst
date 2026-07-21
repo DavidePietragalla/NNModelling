@@ -85,9 +85,15 @@ Job states are:
                     |-> failed
                     `-> cancelled
 
-Select a job to follow lifecycle events and read stdout/stderr. Both queued
-and running jobs can be cancelled. W&B links are shown when the training
-process reports one.
+Selecting **Invia training** opens a terminal-like tab for the new job. It
+follows stdout and stderr incrementally while the job is queued or running,
+and remains available afterwards from **Apri terminale**. Both queued and
+running jobs can be cancelled.
+
+With W&B mode set to ``online``, a second tab opens in a waiting state. It is
+redirected to the live W&B run as soon as the remote training process reports
+its public run URL. If the browser blocks a popup, the job row still exposes
+**Apri W&B** once that URL is available.
 
 Job privacy
 -----------

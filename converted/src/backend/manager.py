@@ -272,7 +272,13 @@ class JobManager:
         timestamp = utc_now()
         job["heartbeat_at"] = timestamp
         job["heartbeat"] = details
-        self.store.save_job(job_id, job)
+        wandb_url = _find_wandb_url(job)
+        if wandb_url and wandb_url != job.get("wandb_url"):
+            job["wandb_url"] = wandb_url
+            self.store.save_job(job_id, job)
+            self._event(job_id, "wandb_ready", {"wandb_url": wandb_url})
+        else:
+            self.store.save_job(job_id, job)
         self._event(job_id, "heartbeat", details)
 
     def _finished(self, job_id: str, return_code: int, details: dict[str, Any]) -> None:
@@ -281,14 +287,18 @@ class JobManager:
         job = self.store.get_job(job_id)
         if job is None or job.get("status") in TERMINAL_STATES:
             return
+        wandb_url = _find_wandb_url(job)
+        publish_wandb_url = wandb_url is not None and wandb_url != job.get("wandb_url")
         if return_code == 0:
             self._set_status(
                 job_id,
                 "succeeded",
                 finished_at=utc_now(),
                 error=None,
-                wandb_url=_find_wandb_url(job),
+                wandb_url=wandb_url,
             )
+            if publish_wandb_url:
+                self._event(job_id, "wandb_ready", {"wandb_url": wandb_url})
             self._event(job_id, "succeeded", details)
         else:
             error = self._failure_text(job, details)
@@ -297,8 +307,10 @@ class JobManager:
                 "failed",
                 finished_at=utc_now(),
                 error=error,
-                wandb_url=_find_wandb_url(job),
+                wandb_url=wandb_url,
             )
+            if publish_wandb_url:
+                self._event(job_id, "wandb_ready", {"wandb_url": wandb_url})
             self._event(job_id, "failed", {"error": error, **details})
 
     def _failure_text(self, job: dict[str, Any], details: dict[str, Any]) -> str:
@@ -354,6 +366,27 @@ class JobManager:
             "stderr": _read_text(root / "stderr.log"),
         }
 
+    def tail_logs(
+        self,
+        job_id: str,
+        *,
+        owner_connection_id: str,
+        stdout_after: int = 0,
+        stderr_after: int = 0,
+    ) -> dict[str, dict[str, str | int | bool]]:
+        """Return the appended bytes for an owned job's stdout and stderr files.
+
+        Offsets are byte positions so a browser can continuously follow a file
+        without forcing the server to load the full artifact into memory.
+        """
+
+        job = self._owned_job(job_id, owner_connection_id)
+        root = Path(job["artifact_dir"])
+        return {
+            "stdout": _tail_text(root / "stdout.log", stdout_after),
+            "stderr": _tail_text(root / "stderr.log", stderr_after),
+        }
+
     def events(
         self,
         job_id: str,
@@ -407,6 +440,26 @@ def _read_text(path: Path) -> str:
         return path.read_text(encoding="utf-8", errors="replace")
     except FileNotFoundError:
         return ""
+
+
+def _tail_text(path: Path, offset: int, *, limit: int = 64 * 1024) -> dict[str, str | int | bool]:
+    """Read at most ``limit`` new bytes, restarting when a file was replaced."""
+
+    safe_offset = max(offset, 0)
+    try:
+        size = path.stat().st_size
+    except FileNotFoundError:
+        return {"text": "", "offset": safe_offset, "reset": False}
+    reset = safe_offset > size
+    start = 0 if reset else safe_offset
+    with path.open("rb") as stream:
+        stream.seek(start)
+        chunk = stream.read(limit)
+    return {
+        "text": chunk.decode("utf-8", errors="replace"),
+        "offset": start + len(chunk),
+        "reset": reset,
+    }
 
 
 def _find_wandb_url(job: dict[str, Any]) -> str | None:

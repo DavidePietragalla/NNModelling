@@ -1,5 +1,6 @@
 import { afterEach, describe, expect, it, vi } from "vitest";
 import { BackendApiError, SseParser, TrainingApiClient, canCancelTrainingJob } from "../training/api";
+import { trainingLogWindowUrl } from "../training/windows";
 
 afterEach(() => {
   vi.unstubAllGlobals();
@@ -47,6 +48,29 @@ describe("authenticated training API", () => {
       status: 401,
       code: "session_expired",
     });
+  });
+
+  it("requests incremental job logs with authenticated byte cursors", async () => {
+    const fetchMock = vi.fn().mockResolvedValue(
+      new Response(JSON.stringify({ stdout: {}, stderr: {} }), { status: 200, headers: { "content-type": "application/json" } }),
+    );
+    vi.stubGlobal("fetch", fetchMock);
+    const api = new TrainingApiClient("http://backend.lan:8000", "very-secret-token");
+
+    await api.tailTrainingJobLogs("job-1", 42, 7);
+
+    const [url, init] = fetchMock.mock.calls[0] as [string, RequestInit];
+    expect(url).toBe("http://backend.lan:8000/jobs/job-1/logs/tail?stdout_after=42&stderr_after=7");
+    expect(url).not.toContain("very-secret-token");
+    expect(new Headers(init.headers).get("authorization")).toBe("Bearer very-secret-token");
+  });
+});
+
+describe("training companion windows", () => {
+  it("opens the log viewer without putting credentials in its URL", () => {
+    expect(trainingLogWindowUrl("http://editor.lan:5174/?diagram=mnist", "job-1")).toBe(
+      "http://editor.lan:5174/?diagram=mnist&training-log=job-1",
+    );
   });
 });
 

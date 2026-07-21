@@ -1,7 +1,7 @@
 services:
   valkey:
     image: valkey/valkey:8
-    command: ["valkey-server", "/usr/local/etc/valkey/valkey.conf", "--bind", "0.0.0.0", "--protected-mode", "no"]
+    command: ["valkey-server", "/usr/local/etc/valkey/valkey.conf", "--dir", "/data", "--bind", "0.0.0.0", "--protected-mode", "no"]
     volumes:
       - valkey-data:/data
       - ./valkey.conf:/usr/local/etc/valkey/valkey.conf:ro

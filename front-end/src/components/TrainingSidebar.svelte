@@ -21,6 +21,7 @@
     saveBackendConnection,
     type SavedBackendConnection,
   } from "../training/connection";
+  import { trainingLogWindowUrl } from "../training/windows";
 
   interface Props {
     diagram: Diagram;
@@ -313,26 +314,38 @@
     loading = true;
     errorMessage = "";
     successMessage = "";
+    const logWindow = openWaitingWindow("Preparazione del terminale del training…");
+    const wandbWindow = wandbMode === "online"
+      ? openWaitingWindow("In attesa che W&B inizializzi la run…")
+      : null;
     try {
       const job = await requireApi().submitTrainingJob(buildRequest());
       successMessage = `Job ${job.id} accodato.`;
       selectedJobId = job.id;
-      startEvents(job.id);
+      openLogWindow(job.id, logWindow);
+      startEvents(job.id, (wandbUrl) => openWandbWindow(wandbWindow, wandbUrl));
       await loadJobLogs(job.id);
       await refreshJobs();
     } catch (error) {
+      logWindow?.close();
+      wandbWindow?.close();
       handleConnectionError(error);
     } finally {
       loading = false;
     }
   }
 
-  function startEvents(jobId: string) {
+  function startEvents(jobId: string, onWandbReady?: (url: string) => void) {
     eventAbort?.abort();
     eventAbort = new AbortController();
     void requireApi().subscribeTrainingEvents(
       jobId,
-      () => void refreshJobs(),
+      (event) => {
+        if (event.type === "wandb_ready" && typeof event.wandb_url === "string") {
+          onWandbReady?.(event.wandb_url);
+        }
+        void refreshJobs();
+      },
       eventAbort.signal,
     ).catch((error) => {
       if (!(error instanceof DOMException && error.name === "AbortError")) handleConnectionError(error);
@@ -368,6 +381,28 @@
 
   function openWandb(job: TrainingJobStatus) {
     if (job.wandb_url) window.open(job.wandb_url, "_blank", "noopener,noreferrer");
+  }
+
+  function openWaitingWindow(message: string): Window | null {
+    const popup = window.open("", "_blank");
+    if (!popup) return null;
+    popup.opener = null;
+    popup.document.title = "NNModelling training";
+    popup.document.body.textContent = message;
+    return popup;
+  }
+
+  function openLogWindow(jobId: string, popup: Window | null = null) {
+    const target = popup ?? window.open("", "_blank");
+    if (target) target.location.href = trainingLogWindowUrl(window.location.href, jobId);
+  }
+
+  function openWandbWindow(popup: Window | null, wandbUrl: string) {
+    if (popup && !popup.closed) {
+      popup.location.replace(wandbUrl);
+    } else {
+      window.open(wandbUrl, "_blank", "noopener,noreferrer");
+    }
   }
 
   function requireApi(): TrainingApiClient {
@@ -537,6 +572,7 @@
           {#if job.error}<pre>{job.error}</pre>{/if}
           {#if canCancelTrainingJob(job.status)}<button onclick={() => cancel(job.id)}>Annulla</button>{/if}
           {#if job.wandb_url}<button onclick={() => openWandb(job)}>Apri W&B</button>{/if}
+          <button onclick={() => openLogWindow(job.id)}>Apri terminale</button>
           {#if selectedJobId === job.id}
             <button onclick={() => void loadJobLogs(job.id)} disabled={loadingLogs}>
               {loadingLogs ? "Caricamento log..." : "Aggiorna log"}

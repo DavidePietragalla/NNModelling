@@ -11,7 +11,7 @@ from contextlib import asynccontextmanager
 from pathlib import Path
 from typing import Any
 
-from fastapi import Depends, FastAPI, Header, HTTPException, Request
+from fastapi import Depends, FastAPI, Header, HTTPException, Query, Request
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import StreamingResponse
 
@@ -217,6 +217,25 @@ def create_app(
     ) -> dict[str, str]:
         try:
             return app.state.manager.logs(job_id, owner_connection_id=connection["id"])
+        except KeyError as exc:
+            raise HTTPException(status_code=404, detail="Unknown job") from exc
+
+    @app.get("/jobs/{job_id}/logs/tail")
+    async def tail_logs(
+        job_id: str,
+        connection: dict[str, Any] = Depends(current_connection),
+        stdout_after: int = Query(default=0, ge=0),
+        stderr_after: int = Query(default=0, ge=0),
+    ) -> dict[str, dict[str, str | int | bool]]:
+        """Read only the output appended after each client cursor."""
+
+        try:
+            return app.state.manager.tail_logs(
+                job_id,
+                owner_connection_id=connection["id"],
+                stdout_after=stdout_after,
+                stderr_after=stderr_after,
+            )
         except KeyError as exc:
             raise HTTPException(status_code=404, detail="Unknown job") from exc
 

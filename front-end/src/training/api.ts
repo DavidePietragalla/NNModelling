@@ -32,6 +32,17 @@ export interface TrainingJobLogs {
   stderr: string;
 }
 
+export interface TrainingLogTail {
+  stdout: TrainingLogChunk;
+  stderr: TrainingLogChunk;
+}
+
+export interface TrainingLogChunk {
+  text: string;
+  offset: number;
+  reset: boolean;
+}
+
 export interface TrainingJobRequest {
   schema_version: number;
   network: { format: "nntree"; value: Record<string, unknown> };
@@ -140,6 +151,18 @@ export class TrainingApiClient {
 
   getTrainingJobLogs(jobId: string): Promise<TrainingJobLogs> {
     return this.request(`/jobs/${encodeURIComponent(jobId)}/logs`);
+  }
+
+  getTrainingJob(jobId: string): Promise<TrainingJobStatus> {
+    return this.request(`/jobs/${encodeURIComponent(jobId)}`);
+  }
+
+  tailTrainingJobLogs(jobId: string, stdoutAfter: number, stderrAfter: number): Promise<TrainingLogTail> {
+    const query = new URLSearchParams({
+      stdout_after: String(stdoutAfter),
+      stderr_after: String(stderrAfter),
+    });
+    return this.request(`/jobs/${encodeURIComponent(jobId)}/logs/tail?${query}`);
   }
 
   async subscribeTrainingEvents(
