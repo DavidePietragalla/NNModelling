@@ -31,6 +31,13 @@ class EnronSpamDataset(Dataset):
         return 2
 
     @classmethod
+    def class_names(cls, config: dict[str, Any]) -> list[str]:
+        """Return label names in the order used by SetFit/enron_spam."""
+
+        del config
+        return ["ham", "spam"]
+
+    @classmethod
     def inference_adapter_spec(cls, config: dict[str, Any]) -> dict[str, Any]:
         """Describe BERT tokenization needed to infer from one raw email."""
 

@@ -97,6 +97,7 @@ def _build_nested_subflow_config(data: dict[str, Any]) -> dict[str, Any]:
 
 
 def build_hydra_configs(json_path: str | dict[str, Any], output_dir: str = "cfg", num_classes: int | None = None,
+                        class_names: list[str] | None = None,
                         dataset: str = "dataset.mnist.MNISTDataset",
                         early_stop_patience: int = 3, early_stop_min_delta: float = 0.0,
                         max_epochs: int = 20,
@@ -151,6 +152,10 @@ def build_hydra_configs(json_path: str | dict[str, Any], output_dir: str = "cfg"
             net_config_dict["num_classes"] = 10
         else:
             net_config_dict["num_classes"] = num_classes
+        if class_names is not None:
+            if len(class_names) != net_config_dict["num_classes"]:
+                raise ValueError("class_names length must match num_classes")
+            net_config_dict["class_names"] = class_names
 
     for node_id, node_info in nntree.get("nodes", {}).items():
         node_type = node_info["data"].get("type", "")

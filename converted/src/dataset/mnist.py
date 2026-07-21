@@ -26,6 +26,13 @@ class MNISTDataset(Dataset):
         return 10
 
     @classmethod
+    def class_names(cls, config: dict[str, Any]) -> list[str]:
+        """Return display names for the MNIST digit classes."""
+
+        del config
+        return [str(index) for index in range(10)]
+
+    @classmethod
     def inference_adapter_spec(cls, config: dict[str, Any]) -> dict[str, Any]:
         """Export the image preprocessing used by MNIST training."""
 

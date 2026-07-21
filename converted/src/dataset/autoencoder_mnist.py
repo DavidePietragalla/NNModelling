@@ -36,6 +36,13 @@ class AutoencoderMNIST(MNISTDataset):
         del config
         return None
 
+    @classmethod
+    def class_names(cls, config: dict[str, Any]) -> None:
+        """Report no class labels for reconstruction training."""
+
+        del config
+        return None
+
     def __getitem__(self, index):
         image, _ = self.dataset[index]
         return image, image

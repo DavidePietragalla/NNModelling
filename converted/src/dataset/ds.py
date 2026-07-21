@@ -32,6 +32,13 @@ class Dataset(torch.utils.data.Dataset):
         return None
 
     @classmethod
+    def class_names(cls, config: dict[str, Any]) -> list[str] | None:
+        """Return display names ordered by class index, when known."""
+
+        del config
+        return None
+
+    @classmethod
     def inference_adapter_spec(cls, config: dict[str, Any]) -> dict[str, Any]:
         """Describe a portable inference adapter without constructing a dataset.
 

@@ -8,9 +8,12 @@
 # This program is distributed in the hope that it will be useful,
 # but WITHOUT ANY WARRANTY; without even the implied warranty of
 # MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.
+import warnings
+
+import lightning as lit
 import torch
 import torch.nn as nn
-import lightning as lit
+import wandb
 from torchmetrics import Accuracy, MeanSquaredError
 from hydra.utils import instantiate
 from omegaconf import DictConfig, OmegaConf
@@ -61,6 +64,11 @@ class Net(lit.LightningModule):
         else:
             self.loss_fn = nn.CrossEntropyLoss()
 
+        self.task_type = self._task_type()
+        self.num_classes = getattr(self.cfg.net, "num_classes", 10)
+        self.class_names = self._class_names()
+        self._test_probabilities: list[torch.Tensor] = []
+        self._test_targets: list[torch.Tensor] = []
         self.metric = self._build_metric()
 
     def _is_loss(self, name: str) -> bool:
@@ -69,17 +77,29 @@ class Net(lit.LightningModule):
     def _is_input(self, name: str) -> bool:
         return name.lower() in ("input", "fork")
 
-    def _build_metric(self):
-        loss_node = self.cfg.net.get("lossNode")
-        if loss_node is not None:
-            task_type = loss_node.get("taskType", "")
-        else:
-            task_type = "classification"
+    def _task_type(self) -> str:
+        """Return the configured task type, defaulting to classification."""
 
-        if task_type == "classification":
-            num_classes = getattr(self.cfg.net, "num_classes", 10)
-            return Accuracy(task="multiclass", num_classes=num_classes)
-        elif task_type == "regression":
+        loss_node = self.cfg.net.get("lossNode")
+        return loss_node.get("taskType", "classification") if loss_node is not None else "classification"
+
+    def _is_classification(self) -> bool:
+        """Return whether this model should emit classification diagnostics."""
+
+        return self.task_type == "classification"
+
+    def _class_names(self) -> list[str]:
+        """Return configured display names or stable generic class labels."""
+
+        configured = self.cfg.net.get("class_names")
+        if configured is not None and len(configured) == self.num_classes:
+            return [str(name) for name in configured]
+        return [f"class_{index}" for index in range(self.num_classes)]
+
+    def _build_metric(self):
+        if self.task_type == "classification":
+            return Accuracy(task="multiclass", num_classes=self.num_classes)
+        elif self.task_type == "regression":
             return MeanSquaredError()
         else:
             return Accuracy(task="multiclass", num_classes=10)
@@ -161,6 +181,89 @@ class Net(lit.LightningModule):
         loss = self.loss_fn(y_hat, y)
         self.log("test_loss", loss)
         self.log("test_metric", self.metric(y_hat, y), prog_bar=True)
+        if self._is_classification():
+            self._test_probabilities.append(torch.softmax(y_hat.detach(), dim=1).cpu())
+            self._test_targets.append(y.detach().reshape(-1).cpu())
+
+    def on_test_epoch_start(self):
+        """Clear test-set classification data before Lightning starts evaluation."""
+
+        if self._is_classification():
+            self._test_probabilities = []
+            self._test_targets = []
+
+    def on_test_epoch_end(self):
+        """Log whole-test-set classification diagnostics to an active W&B run."""
+
+        if not self._is_classification():
+            return
+        logger = self.logger
+        experiment = getattr(logger, "experiment", None)
+        if experiment is not None:
+            self._log_classification_report(experiment)
+
+    def _classification_report(self) -> dict[str, object] | None:
+        """Build scalar metrics and chart inputs from all test predictions."""
+
+        if not self._is_classification() or not self._test_probabilities:
+            return None
+        probabilities = torch.cat(self._test_probabilities)
+        targets = torch.cat(self._test_targets).to(torch.long)
+        predictions = probabilities.argmax(dim=1)
+        confusion = torch.bincount(
+            targets * self.num_classes + predictions,
+            minlength=self.num_classes**2,
+        ).reshape(self.num_classes, self.num_classes).to(torch.float)
+        true_positives = confusion.diag()
+        precision = true_positives / confusion.sum(dim=0).clamp_min(1)
+        recall = true_positives / confusion.sum(dim=1).clamp_min(1)
+        f1 = 2 * precision * recall / (precision + recall).clamp_min(torch.finfo(torch.float).eps)
+        scalars: dict[str, float] = {
+            "test/accuracy": (predictions == targets).float().mean().item(),
+            "test/macro_precision": precision.mean().item(),
+            "test/macro_recall": recall.mean().item(),
+            "test/macro_f1": f1.mean().item(),
+        }
+        for index, name in enumerate(self.class_names):
+            scalars[f"test/precision/{name}"] = precision[index].item()
+            scalars[f"test/recall/{name}"] = recall[index].item()
+            scalars[f"test/f1/{name}"] = f1[index].item()
+        return {
+            "scalars": scalars,
+            "targets": targets.tolist(),
+            "predictions": predictions.tolist(),
+            "probabilities": probabilities.tolist(),
+        }
+
+    def _log_classification_report(self, experiment) -> None:
+        """Send metrics and W&B charts without risking a successful test run."""
+
+        report = self._classification_report()
+        if report is None:
+            return
+        payload = dict(report["scalars"])
+        try:
+            payload["test/confusion_matrix"] = wandb.plot.confusion_matrix(
+                y_true=report["targets"],
+                preds=report["predictions"],
+                class_names=self.class_names,
+                title="Test confusion matrix",
+            )
+            payload["test/roc_curve"] = wandb.plot.roc_curve(
+                report["targets"],
+                report["probabilities"],
+                labels=self.class_names,
+                title="Test ROC curve",
+            )
+            payload["test/precision_recall_curve"] = wandb.plot.pr_curve(
+                report["targets"],
+                report["probabilities"],
+                labels=self.class_names,
+                title="Test precision-recall curve",
+            )
+        except Exception as error:
+            warnings.warn(f"Unable to log W&B classification charts: {error}", RuntimeWarning)
+        experiment.log(payload)
 
     def configure_optimizers(self):
         return instantiate(self.cfg.optimizer, self.parameters())

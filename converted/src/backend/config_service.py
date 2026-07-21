@@ -60,6 +60,22 @@ def _dataset_num_classes(dataset_config: dict[str, Any]) -> int | None:
     return value
 
 
+def _dataset_class_names(dataset_config: dict[str, Any], num_classes: int | None) -> list[str] | None:
+    """Read and validate optional class names without loading dataset samples."""
+
+    if num_classes is None:
+        return None
+    target = dataset_config["_target_"]
+    module_name, _, class_name = target.rpartition(".")
+    dataset_class = getattr(importlib.import_module(module_name), class_name)
+    value = dataset_class.class_names(dict(dataset_config))
+    if value is None:
+        return [f"class_{index}" for index in range(num_classes)]
+    if not isinstance(value, list) or len(value) != num_classes or not all(isinstance(name, str) for name in value):
+        raise ValueError(f"{target}.class_names must return {num_classes} strings or None")
+    return value
+
+
 def build_job_hydra_configs(job: dict[str, Any], output_dir: str | Path) -> Path:
     """Generate Hydra files for a complete remote-training job.
 
@@ -89,6 +105,7 @@ def build_job_hydra_configs(job: dict[str, Any], output_dir: str | Path) -> Path
             f"training.num_classes={num_classes} conflicts with the {dataset_num_classes} classes declared by "
             f"{dataset_config['_target_']}"
         )
+    class_names = _dataset_class_names(dataset_config, num_classes)
 
     # The existing converter owns the network-specific transformation. The
     # optional training_config argument lets it write all Hydra groups from
@@ -97,6 +114,7 @@ def build_job_hydra_configs(job: dict[str, Any], output_dir: str | Path) -> Path
         nntree,
         output_dir=str(output_path / "cfg"),
         num_classes=num_classes,
+        class_names=class_names,
         training_config={
             "dataset": dataset_config,
             "optimizer": _section(

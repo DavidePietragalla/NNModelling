@@ -103,6 +103,9 @@ def test_job_config_uses_dataset_class_count_when_request_omits_it(tmp_path):
 
     net = (config_dir / "net" / "custom_sequence.yaml").read_text(encoding="utf-8")
     assert "num_classes: 2" in net
+    assert "class_names:" in net
+    assert "- ham" in net
+    assert "- spam" in net
 
 
 def test_in_memory_store_orders_priority_then_fifo():
