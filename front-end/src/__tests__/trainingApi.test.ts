@@ -35,6 +35,26 @@ describe("authenticated training API", () => {
     expect(new Headers(init.headers).get("authorization")).toBe("Bearer very-secret-token");
   });
 
+  it("submits the requested nnm-prefixed package name", async () => {
+    const fetchMock = vi.fn().mockResolvedValue(
+      new Response(JSON.stringify({}), { status: 200, headers: { "content-type": "application/json" } }),
+    );
+    vi.stubGlobal("fetch", fetchMock);
+    const api = new TrainingApiClient("http://backend.lan:8000", "very-secret-token");
+
+    await api.submitTrainingJob({
+      schema_version: 1,
+      network: { format: "nntree", value: {} },
+      training: {},
+      resources: {},
+      priority: 0,
+      package_name: "nnm_mnist_classifier",
+    });
+
+    const [, init] = fetchMock.mock.calls[0] as [string, RequestInit];
+    expect(JSON.parse(String(init.body))).toMatchObject({ package_name: "nnm_mnist_classifier" });
+  });
+
   it("exposes machine-readable authentication errors", async () => {
     vi.stubGlobal("fetch", vi.fn().mockResolvedValue(
       new Response(JSON.stringify({ detail: { code: "session_expired", message: "expired" } }), {

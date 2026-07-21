@@ -98,13 +98,16 @@ its public run URL. If the browser blocks a popup, the job row still exposes
 Install and use an exported model
 ---------------------------------
 
-When a job completes successfully, the backend creates a portable ``.whl``
-artifact. Select **Scarica wheel** in the job row, then install the downloaded
-file in a Python 3.12+ environment:
+Before submitting a job, optionally set **Nome pacchetto** in the training
+sidebar. Enter only the suffix, for example ``mnist_classifier``: NNModelling
+creates the distribution and Python module ``nnm_mnist_classifier``. The name
+must begin with a letter and may then contain only letters, digits, and
+underscores. When a job completes successfully, select **Scarica wheel** in
+the job row and install the downloaded file in a Python 3.12+ environment:
 
 .. code-block:: bash
 
-   pip install ./nnm_model_<job_id>-0.1.0-py3-none-any.whl
+   pip install ./nnm_mnist_classifier-0.1.0-py3-none-any.whl
 
 The wheel contains the resolved graph, safe ``safetensors`` weights and its
 declared input adapter. It does not need the training backend, W&B, Lightning
@@ -113,7 +116,7 @@ or the training dataset. Every model offers a universal tensor API:
 .. code-block:: python
 
    import torch
-   from nnm_model_<job_id> import load_model
+   from nnm_mnist_classifier import load_model
 
    model = load_model(device="cpu")
    logits = model.predict_tensor(batch_tensor)

@@ -81,6 +81,14 @@ def test_normalize_training_config_accepts_dataset_target_string():
     assert normalized["dataset"] == {"_target_": "dataset.mnist.MNISTDataset"}
 
 
+def test_job_submission_requires_an_nnm_prefixed_package_name():
+    payload = submission().model_dump(mode="json")
+    payload["package_name"] = "classifier"
+
+    with pytest.raises(ValueError, match="nnm_"):
+        JobSubmission.model_validate(payload)
+
+
 def test_dataset_registry_discovers_installed_classes():
     targets = {item.target for item in discover_datasets()}
     assert "dataset.mnist.MNISTDataset" in targets
@@ -172,14 +180,17 @@ def test_manager_exports_a_model_wheel_after_a_successful_job(tmp_path, monkeypa
 
     monkeypatch.setattr("backend.manager.build_model_wheel", fake_export)
     manager = JobManager(InMemoryJobStore(), tmp_path, [ImmediateExecutor()])
-    queued = manager.submit(submission(), owner_connection_id=OWNER)
+    queued = manager.submit(
+        submission().model_copy(update={"package_name": "nnm_mnist_classifier"}),
+        owner_connection_id=OWNER,
+    )
     Path(queued.artifact_dir, "weights.safetensors").write_bytes(b"safe-weights")
 
     manager.run_once()
 
     status = manager.status(queued.id, owner_connection_id=OWNER)
     assert status.model_package is not None
-    assert status.model_package.package_name == f"nnm-model-{queued.id.replace('-', '')}"
+    assert status.model_package.package_name == "nnm_mnist_classifier"
     assert any(event["type"] == "package_ready" for event in manager.events(queued.id, owner_connection_id=OWNER))
 
 

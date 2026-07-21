@@ -50,7 +50,7 @@ def test_build_model_wheel_installs_a_self_contained_inference_package(tmp_path)
     artifact_dir.mkdir()
     expected = _write_toy_artifact(artifact_dir)
 
-    wheel = build_model_wheel(artifact_dir, package_name="nnm-toy-model", version="0.1.0")
+    wheel = build_model_wheel(artifact_dir, package_name="nnm_toy_model", version="0.1.0")
 
     assert wheel.name == "nnm_toy_model-0.1.0-py3-none-any.whl"
     with zipfile.ZipFile(wheel) as archive:
@@ -105,7 +105,7 @@ def test_export_rejects_an_invalid_distribution_name(tmp_path):
     _write_toy_artifact(artifact_dir)
 
     try:
-        build_model_wheel(artifact_dir, package_name="unsafe/name", version="0.1.0")
+        build_model_wheel(artifact_dir, package_name="classifier", version="0.1.0")
     except ValueError as error:
         assert "package_name" in str(error)
     else:
@@ -152,7 +152,7 @@ def test_exported_wheel_executes_a_converted_skip_connection_graph(tmp_path):
     inputs = torch.randn(2, 1, 28, 28)
     expected = source_model(inputs)
 
-    wheel = build_model_wheel(artifact_dir, package_name="nnm-skip-model")
+    wheel = build_model_wheel(artifact_dir, package_name="nnm_skip_model")
 
     sys.path.insert(0, str(wheel))
     try:

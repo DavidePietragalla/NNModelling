@@ -460,7 +460,7 @@ class JobManager:
             # Executors used by unit tests and artifacts created before the
             # portable-export feature do not contain safe weights.
             return
-        package_name = f"nnm-model-{job_id.replace('-', '')}"
+        package_name = job["submission"].get("package_name") or f"nnm_job_{job_id.replace('-', '')}"
         try:
             build_model_wheel(artifact_dir, package_name=package_name, version="0.1.0")
             manifest_path = artifact_dir / "model-package.json"

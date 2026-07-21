@@ -60,6 +60,7 @@ export interface TrainingJobRequest {
   training: Record<string, unknown>;
   resources: Record<string, unknown>;
   priority: number;
+  package_name?: string;
 }
 
 export interface PairingGrant {

@@ -71,6 +71,7 @@
   let gpuType = $state("");
   let node = $state("");
   let priority = $state("0");
+  let packageSuffix = $state("");
   let selectedJobId = $state<string | null>(null);
   let loading = $state(false);
   let loadingJobs = $state(false);
@@ -272,6 +273,10 @@
 
   function buildRequest(): TrainingJobRequest {
     if (!selectedDatasetInfo) throw new Error("Seleziona un dataset");
+    const normalizedPackageSuffix = packageSuffix.trim();
+    if (normalizedPackageSuffix && !/^[A-Za-z][A-Za-z0-9_]*$/.test(normalizedPackageSuffix)) {
+      throw new Error("Il nome del pacchetto può contenere solo lettere, numeri e _ e deve iniziare con una lettera");
+    }
     const datasetConfig: Record<string, unknown> = { _target_: selectedDataset };
     for (const parameter of selectedDatasetInfo.parameters) {
       const value = datasetParams[parameter.name];
@@ -307,6 +312,7 @@
         ...(node ? { node } : {}),
       },
       priority: Number.parseInt(priority, 10),
+      ...(normalizedPackageSuffix ? { package_name: `nnm_${normalizedPackageSuffix}` } : {}),
     };
   }
 
@@ -575,6 +581,10 @@
       <label>Tipo GPU<input bind:value={gpuType} placeholder="A100" /></label>
       <label>Nodo<input bind:value={node} placeholder="qualsiasi" /></label>
       <label>Priorità<input type="number" bind:value={priority} /></label>
+      <label>Nome pacchetto
+        <input bind:value={packageSuffix} placeholder="mnist_classifier" pattern="[A-Za-z][A-Za-z0-9_]*" />
+        <small>La wheel e l'import avranno il prefisso <code>nnm_</code>.</small>
+      </label>
       <button class="submit" onclick={submit} disabled={loading}>{loading ? "Invio..." : "Invia training"}</button>
     </section>
 

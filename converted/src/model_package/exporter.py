@@ -18,7 +18,7 @@ from omegaconf import OmegaConf
 from model_package.adapters import adapter_spec_from_dataset_config
 
 
-PACKAGE_NAME = re.compile(r"[A-Za-z][A-Za-z0-9._-]*\Z")
+PACKAGE_NAME = re.compile(r"nnm_[A-Za-z][A-Za-z0-9_]*\Z")
 VERSION = re.compile(r"[0-9]+(?:\.[0-9]+)*(?:[A-Za-z0-9.+-]*)\Z")
 RUNTIME_FILES = ("runtime.py", "adapters.py")
 
@@ -32,7 +32,7 @@ def build_model_wheel(
     """Build a pure-Python inference wheel from one successful job artifact."""
 
     if not PACKAGE_NAME.fullmatch(package_name):
-        raise ValueError("package_name must contain only letters, digits, dots, underscores, and hyphens")
+        raise ValueError("package_name must match nnm_<name> using letters, digits, and underscores")
     if not VERSION.fullmatch(version):
         raise ValueError("version is not a valid package version")
     artifact_path = Path(artifact_dir).resolve()
@@ -40,7 +40,7 @@ def build_model_wheel(
     if not weights_path.is_file():
         raise FileNotFoundError(f"model weights not found: {weights_path}")
     config = _load_resolved_config(artifact_path)
-    module_name = package_name.replace("-", "_").replace(".", "_")
+    module_name = package_name
     architecture = {
         "schema_version": 1,
         "net": _rewrite_targets(_mapping(config["net"]), module_name),

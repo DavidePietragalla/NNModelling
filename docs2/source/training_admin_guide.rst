@@ -166,8 +166,10 @@ Model wheel artifacts
 ---------------------
 
 After a successful training process writes ``weights.safetensors``, the
-backend builds ``dist/nnm_model_<job_id>-0.1.0-py3-none-any.whl`` inside the
+backend builds ``dist/nnm_<chosen_name>-0.1.0-py3-none-any.whl`` inside the
 job artifact directory and records ``model-package.json`` with its SHA-256.
+The browser may choose only the suffix; the backend requires the full name to
+match ``nnm_<name>`` and falls back to ``nnm_job_<job_id>`` when none is sent.
 The browser owner downloads it through ``GET /jobs/{job_id}/package``; the
 endpoint does not accept a filesystem path and applies normal job ownership.
 

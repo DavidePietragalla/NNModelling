@@ -14,15 +14,20 @@ job riuscito
   ├─ architecture.json
   ├─ weights.safetensors
   ├─ model-package.json
-  └─ dist/nnm_model_<job>-0.1.0-py3-none-any.whl
+  └─ dist/nnm_<nome_scelto>-0.1.0-py3-none-any.whl
                                ↓ pip install
-                         import nnm_model_<job>
+                         import nnm_<nome_scelto>
                                ↓
                     load_model().predict(...)
 ```
 
 Il wheel è un artifact del job, scaricabile solo dal proprietario della
 connessione che ha creato il job.
+
+Il browser inserisce il solo suffisso del nome: ``mnist_classifier`` diventa
+``nnm_mnist_classifier`` sia come wheel sia come modulo importabile. Il
+backend accetta esclusivamente ``nnm_<nome>`` con lettere, numeri e underscore
+per evitare differenze tra nome della distribuzione e nome da importare.
 
 ## Decisioni
 

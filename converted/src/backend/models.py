@@ -10,6 +10,7 @@ from pydantic import BaseModel, ConfigDict, Field, field_validator
 
 GPU_TYPE_SELECTOR = re.compile(r"[A-Za-z0-9][A-Za-z0-9_.-]*")
 NODE_SELECTOR = re.compile(r"[A-Za-z0-9][A-Za-z0-9_.\-,\[\]]*")
+PACKAGE_NAME = re.compile(r"nnm_[A-Za-z][A-Za-z0-9_]*\Z")
 
 
 class NetworkPayload(BaseModel):
@@ -62,6 +63,18 @@ class JobSubmission(BaseModel):
     training: dict[str, Any]
     resources: ResourceRequest = Field(default_factory=ResourceRequest)
     priority: int = Field(default=0, ge=0, le=1_000_000)
+    package_name: str | None = Field(default=None, max_length=100)
+
+    @field_validator("package_name")
+    @classmethod
+    def package_name_has_required_prefix(cls, value: str | None) -> str | None:
+        """Accept Python-importable package names with the required prefix."""
+
+        if value is None:
+            return None
+        if not PACKAGE_NAME.fullmatch(value):
+            raise ValueError("package_name must match nnm_<name> using letters, digits, and underscores")
+        return value
 
 
 class DatasetParameter(BaseModel):
