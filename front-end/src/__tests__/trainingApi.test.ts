@@ -64,6 +64,21 @@ describe("authenticated training API", () => {
     expect(url).not.toContain("very-secret-token");
     expect(new Headers(init.headers).get("authorization")).toBe("Bearer very-secret-token");
   });
+
+  it("downloads an exported model wheel with the bearer token", async () => {
+    const fetchMock = vi.fn().mockResolvedValue(
+      new Response("wheel", { status: 200, headers: { "content-type": "application/octet-stream" } }),
+    );
+    vi.stubGlobal("fetch", fetchMock);
+    const api = new TrainingApiClient("http://backend.lan:8000", "very-secret-token");
+
+    const wheel = await api.downloadModelPackage("job-1");
+
+    const [url, init] = fetchMock.mock.calls[0] as [string, RequestInit];
+    expect(url).toBe("http://backend.lan:8000/jobs/job-1/package");
+    expect(new Headers(init.headers).get("authorization")).toBe("Bearer very-secret-token");
+    expect(await wheel.text()).toBe("wheel");
+  });
 });
 
 describe("training companion windows", () => {

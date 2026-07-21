@@ -17,6 +17,7 @@ dependencies = [
   "pytest>=9.0.0",
   "uvicorn[standard]>=0.30.0",
   "valkey>=6.0.0",
+  "safetensors>=0.7.0",
 ]
 
 [[tool.uv.index]]

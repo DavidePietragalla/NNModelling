@@ -13,7 +13,7 @@ from typing import Any
 
 from fastapi import Depends, FastAPI, Header, HTTPException, Query, Request
 from fastapi.middleware.cors import CORSMiddleware
-from fastapi.responses import StreamingResponse
+from fastapi.responses import FileResponse, StreamingResponse
 
 from backend.auth import (
     AuthError,
@@ -238,6 +238,21 @@ def create_app(
             )
         except KeyError as exc:
             raise HTTPException(status_code=404, detail="Unknown job") from exc
+
+    @app.get("/jobs/{job_id}/package")
+    async def download_model_package(
+        job_id: str,
+        connection: dict[str, Any] = Depends(current_connection),
+    ) -> FileResponse:
+        """Download the authenticated job's generated pip wheel."""
+
+        try:
+            path, filename = app.state.manager.package_path(job_id, owner_connection_id=connection["id"])
+        except KeyError as exc:
+            raise HTTPException(status_code=404, detail="Unknown job") from exc
+        except FileNotFoundError as exc:
+            raise HTTPException(status_code=404, detail="Model package is not available") from exc
+        return FileResponse(path, media_type="application/octet-stream", filename=filename)
 
     @app.get("/jobs/{job_id}/events")
     def get_events(

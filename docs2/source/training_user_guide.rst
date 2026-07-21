@@ -95,6 +95,39 @@ redirected to the live W&B run as soon as the remote training process reports
 its public run URL. If the browser blocks a popup, the job row still exposes
 **Apri W&B** once that URL is available.
 
+Install and use an exported model
+---------------------------------
+
+When a job completes successfully, the backend creates a portable ``.whl``
+artifact. Select **Scarica wheel** in the job row, then install the downloaded
+file in a Python 3.12+ environment:
+
+.. code-block:: bash
+
+   pip install ./nnm_model_<job_id>-0.1.0-py3-none-any.whl
+
+The wheel contains the resolved graph, safe ``safetensors`` weights and its
+declared input adapter. It does not need the training backend, W&B, Lightning
+or the training dataset. Every model offers a universal tensor API:
+
+.. code-block:: python
+
+   import torch
+   from nnm_model_<job_id> import load_model
+
+   model = load_model(device="cpu")
+   logits = model.predict_tensor(batch_tensor)
+
+``predict_tensor`` expects a batch tensor already prepared for the model. A
+model trained with MNIST also offers ``model.predict(path_or_bytes_or_image)``;
+it applies the saved grayscale, resize and normalization configuration before
+inference. Text adapters require packaged tokenizer assets and are not part of
+this initial export.
+
+Only the browser connection that created a job can download its wheel. The
+wheel contains model parameters: store and distribute it as a model artifact,
+not as a public URL.
+
 Job privacy
 -----------
 

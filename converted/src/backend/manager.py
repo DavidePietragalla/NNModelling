@@ -14,6 +14,7 @@ from backend.config_service import build_job_hydra_configs
 from backend.executors import Executor, LocalExecutor, SlurmExecutor
 from backend.models import JobStatus, JobSubmission, ResourceRequest
 from backend.store import JobStore, ValkeyJobStore, utc_now
+from model_package.exporter import build_model_wheel
 
 
 TERMINAL_STATES = {"succeeded", "failed", "cancelled"}
@@ -162,6 +163,8 @@ class JobManager:
             "error": None,
             "heartbeat_at": None,
             "wandb_url": None,
+            "model_package": None,
+            "package_error": None,
             "artifact_dir": str(artifact_dir),
             "owner_connection_id": owner_connection_id,
             "resources": submission.resources.model_dump(mode="json"),
@@ -299,6 +302,7 @@ class JobManager:
             )
             if publish_wandb_url:
                 self._event(job_id, "wandb_ready", {"wandb_url": wandb_url})
+            self._export_model_package(job_id)
             self._event(job_id, "succeeded", details)
         else:
             error = self._failure_text(job, details)
@@ -366,6 +370,19 @@ class JobManager:
             "stderr": _read_text(root / "stderr.log"),
         }
 
+    def package_path(self, job_id: str, *, owner_connection_id: str) -> tuple[Path, str]:
+        """Return the owned job's wheel path and its safe download filename."""
+
+        job = self._owned_job(job_id, owner_connection_id)
+        package = job.get("model_package")
+        if not isinstance(package, dict) or not isinstance(package.get("wheel"), str):
+            raise FileNotFoundError("Model package is not available")
+        root = Path(job["artifact_dir"]).resolve()
+        wheel = (root / package["wheel"]).resolve()
+        if root not in wheel.parents or not wheel.is_file() or wheel.suffix != ".whl":
+            raise FileNotFoundError("Model package is not available")
+        return wheel, wheel.name
+
     def tail_logs(
         self,
         job_id: str,
@@ -431,6 +448,32 @@ class JobManager:
 
     def _event(self, job_id: str, event_type: str, details: dict[str, Any]) -> None:
         self.store.append_event(job_id, {"type": event_type, "at": utc_now(), **details})
+
+    def _export_model_package(self, job_id: str) -> None:
+        """Create a portable wheel without turning export failures into train failures."""
+
+        job = self.store.get_job(job_id)
+        if job is None:
+            return
+        artifact_dir = Path(job["artifact_dir"])
+        if not (artifact_dir / "weights.safetensors").is_file():
+            # Executors used by unit tests and artifacts created before the
+            # portable-export feature do not contain safe weights.
+            return
+        package_name = f"nnm-model-{job_id.replace('-', '')}"
+        try:
+            build_model_wheel(artifact_dir, package_name=package_name, version="0.1.0")
+            manifest_path = artifact_dir / "model-package.json"
+            manifest = json.loads(manifest_path.read_text(encoding="utf-8"))
+        except Exception as exc:
+            job["package_error"] = str(exc)
+            self.store.save_job(job_id, job)
+            self._event(job_id, "package_failed", {"error": str(exc)})
+            return
+        job["model_package"] = manifest
+        job["package_error"] = None
+        self.store.save_job(job_id, job)
+        self._event(job_id, "package_ready", manifest)
 
 
 def _read_text(path: Path) -> str:

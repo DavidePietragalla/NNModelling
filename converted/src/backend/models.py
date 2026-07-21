@@ -91,6 +91,17 @@ class ComputeUnitInfo(BaseModel):
     enabled: bool = True
 
 
+class ModelPackageInfo(BaseModel):
+    """Portable inference wheel emitted by a completed training job."""
+
+    schema_version: int
+    package_name: str
+    version: str
+    wheel: str
+    sha256: str
+    input_adapter: dict[str, Any]
+
+
 class JobStatus(BaseModel):
     """Public job metadata returned by the API."""
 
@@ -105,6 +116,8 @@ class JobStatus(BaseModel):
     error: str | None = None
     heartbeat_at: str | None = None
     wandb_url: str | None = None
+    model_package: ModelPackageInfo | None = None
+    package_error: str | None = None
     artifact_dir: str
 
 

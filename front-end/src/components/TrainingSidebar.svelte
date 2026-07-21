@@ -405,6 +405,23 @@
     }
   }
 
+  async function downloadModelPackage(job: TrainingJobStatus) {
+    if (!job.model_package) return;
+    try {
+      const blob = await requireApi().downloadModelPackage(job.id);
+      const url = URL.createObjectURL(blob);
+      const link = document.createElement("a");
+      link.href = url;
+      link.download = job.model_package.wheel.split("/").at(-1) ?? "model.whl";
+      document.body.append(link);
+      link.click();
+      link.remove();
+      URL.revokeObjectURL(url);
+    } catch (error) {
+      handleConnectionError(error);
+    }
+  }
+
   function requireApi(): TrainingApiClient {
     if (!api) throw new Error("Collega prima un backend");
     return api;
@@ -573,6 +590,11 @@
           {#if canCancelTrainingJob(job.status)}<button onclick={() => cancel(job.id)}>Annulla</button>{/if}
           {#if job.wandb_url}<button onclick={() => openWandb(job)}>Apri W&B</button>{/if}
           <button onclick={() => openLogWindow(job.id)}>Apri terminale</button>
+          {#if job.model_package}
+            <button onclick={() => void downloadModelPackage(job)}>Scarica wheel</button>
+          {:else if job.package_error}
+            <small>Export wheel non riuscito: {job.package_error}</small>
+          {/if}
           {#if selectedJobId === job.id}
             <button onclick={() => void loadJobLogs(job.id)} disabled={loadingLogs}>
               {loadingLogs ? "Caricamento log..." : "Aggiorna log"}

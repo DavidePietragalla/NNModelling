@@ -162,6 +162,22 @@ Cancellation is sent through the running FastAPI process. Do not edit a job's
 Valkey status manually: a separate process does not own the local/Slurm
 executor handle and could leave the actual training process running.
 
+Model wheel artifacts
+---------------------
+
+After a successful training process writes ``weights.safetensors``, the
+backend builds ``dist/nnm_model_<job_id>-0.1.0-py3-none-any.whl`` inside the
+job artifact directory and records ``model-package.json`` with its SHA-256.
+The browser owner downloads it through ``GET /jobs/{job_id}/package``; the
+endpoint does not accept a filesystem path and applies normal job ownership.
+
+An export failure does not change a successful training job into a failed one.
+It is instead exposed as ``package_error`` in the job status and in a
+``package_failed`` lifecycle event. Typical causes are missing safe weights or
+an unsupported dataset adapter. Keep the artifact root persistent and include
+wheels in backup/retention policies: they are the portable form of trained
+models.
+
 Configuration reference
 -----------------------
 

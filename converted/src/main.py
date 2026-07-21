@@ -87,6 +87,9 @@ def main(cfg: DictConfig):
     }
 
     torch.save(model, "weights.pt")
+    from safetensors.torch import save_file
+
+    save_file(model.state_dict(), "weights.safetensors")
     wandb_logger.log_hyperparams(hyperparams_dict)
 
 

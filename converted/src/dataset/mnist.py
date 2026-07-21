@@ -8,7 +8,7 @@
 # This program is distributed in the hope that it will be useful,
 # but WITHOUT ANY WARRANTY; without even the implied warranty of
 # MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.
-from abc import abstractmethod
+from typing import Any
 import torch
 import torch.nn as nn
 from torchvision import datasets, transforms
@@ -18,6 +18,20 @@ from dataset.ds import Dataset
 
 
 class MNISTDataset(Dataset):
+    @classmethod
+    def inference_adapter_spec(cls, config: dict[str, Any]) -> dict[str, Any]:
+        """Export the image preprocessing used by MNIST training."""
+
+        del config
+        return {
+            "kind": "image",
+            "version": 1,
+            "channels": 1,
+            "size": [28, 28],
+            "mean": [0.1307],
+            "std": [0.3081],
+        }
+
     def __init__(self, batch_size=32, num_workers=4, train_size=0.8) -> None:
         super().__init__()
 

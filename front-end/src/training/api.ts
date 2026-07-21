@@ -24,7 +24,18 @@ export interface TrainingJobStatus {
   error: string | null;
   heartbeat_at: string | null;
   wandb_url: string | null;
+  model_package: ModelPackageInfo | null;
+  package_error: string | null;
   artifact_dir: string;
+}
+
+export interface ModelPackageInfo {
+  schema_version: number;
+  package_name: string;
+  version: string;
+  wheel: string;
+  sha256: string;
+  input_adapter: Record<string, unknown>;
 }
 
 export interface TrainingJobLogs {
@@ -163,6 +174,14 @@ export class TrainingApiClient {
       stderr_after: String(stderrAfter),
     });
     return this.request(`/jobs/${encodeURIComponent(jobId)}/logs/tail?${query}`);
+  }
+
+  async downloadModelPackage(jobId: string): Promise<Blob> {
+    const response = await fetch(`${this.baseUrl}/jobs/${encodeURIComponent(jobId)}/package`, {
+      headers: this.authHeaders(),
+    });
+    if (!response.ok) throw await responseError(response);
+    return await response.blob();
   }
 
   async subscribeTrainingEvents(

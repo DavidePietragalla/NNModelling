@@ -150,6 +150,39 @@ def test_manager_builds_job_artifacts_and_finishes(tmp_path):
     assert manager.logs(queued.id, owner_connection_id=OWNER)["stdout"] == "ok\n"
 
 
+def test_manager_exports_a_model_wheel_after_a_successful_job(tmp_path, monkeypatch):
+    def fake_export(artifact_dir, *, package_name, version):
+        wheel = Path(artifact_dir) / "dist" / "model.whl"
+        wheel.parent.mkdir()
+        wheel.write_bytes(b"wheel")
+        (Path(artifact_dir) / "model-package.json").write_text(
+            json.dumps(
+                {
+                    "schema_version": 1,
+                    "package_name": package_name,
+                    "version": version,
+                    "wheel": "dist/model.whl",
+                    "sha256": "checksum",
+                    "input_adapter": {"kind": "tensor", "version": 1},
+                }
+            ),
+            encoding="utf-8",
+        )
+        return wheel
+
+    monkeypatch.setattr("backend.manager.build_model_wheel", fake_export)
+    manager = JobManager(InMemoryJobStore(), tmp_path, [ImmediateExecutor()])
+    queued = manager.submit(submission(), owner_connection_id=OWNER)
+    Path(queued.artifact_dir, "weights.safetensors").write_bytes(b"safe-weights")
+
+    manager.run_once()
+
+    status = manager.status(queued.id, owner_connection_id=OWNER)
+    assert status.model_package is not None
+    assert status.model_package.package_name == f"nnm-model-{queued.id.replace('-', '')}"
+    assert any(event["type"] == "package_ready" for event in manager.events(queued.id, owner_connection_id=OWNER))
+
+
 def test_manager_tails_only_new_log_bytes_and_resets_a_stale_offset(tmp_path):
     """Log viewers receive bounded incremental output rather than whole files."""
 
@@ -406,6 +439,47 @@ def test_api_requires_pairing_and_scopes_jobs_to_their_connection(tmp_path):
                 assert tail.status_code == 200
                 assert set(tail.json()["stdout"]) == {"text", "offset", "reset"}
                 assert (await client.get(f"/jobs/{job_id}/logs/tail", headers=second_headers)).status_code == 404
+
+    asyncio.run(exercise_api())
+
+
+def test_api_downloads_only_the_owner_model_wheel(tmp_path):
+    store = InMemoryJobStore()
+    manager = JobManager(store, tmp_path, [ImmediateExecutor()])
+    auth = AuthService(InMemoryAuthStore())
+    owner = auth.create_pairing("Owner", client_host="127.0.0.1")
+    other = auth.create_pairing("Other", client_host="127.0.0.2")
+    auth.approve(owner.request_id)
+    auth.approve(other.request_id)
+    job = manager.submit(submission(), owner_connection_id=owner.connection_id)
+    record = store.get_job(job.id)
+    assert record is not None
+    artifact = Path(record["artifact_dir"])
+    wheel = artifact / "dist" / "nnm-model.whl"
+    wheel.parent.mkdir()
+    wheel.write_bytes(b"wheel-content")
+    record["model_package"] = {
+        "schema_version": 1,
+        "package_name": "nnm-model",
+        "version": "0.1.0",
+        "wheel": "dist/nnm-model.whl",
+        "sha256": "checksum",
+        "input_adapter": {"kind": "tensor", "version": 1},
+    }
+    store.save_job(job.id, record)
+    app = create_app(manager, auth_service=auth, admin_token="admin-secret")
+
+    async def exercise_api() -> None:
+        transport = httpx.ASGITransport(app=app)
+        async with app.router.lifespan_context(app):
+            async with httpx.AsyncClient(transport=transport, base_url="http://test") as client:
+                owner_headers = {"authorization": f"Bearer {owner.token}"}
+                other_headers = {"authorization": f"Bearer {other.token}"}
+                response = await client.get(f"/jobs/{job.id}/package", headers=owner_headers)
+                assert response.status_code == 200
+                assert response.content == b"wheel-content"
+                assert "attachment" in response.headers["content-disposition"]
+                assert (await client.get(f"/jobs/{job.id}/package", headers=other_headers)).status_code == 404
 
     asyncio.run(exercise_api())
 
