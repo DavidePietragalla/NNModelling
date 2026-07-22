@@ -1,6 +1,11 @@
 # AGENTS.md
 
-This file provides guidance to Claude Code when working with this repository.
+This file provides durable guidance to coding agents working with this repository.
+
+OpenCode's project-specific agent roster, model routing, and agentic execution
+loop are documented in `docs/opencode.md`. When working as an OpenCode
+architect, do not choose an implementation model on the user's behalf: use the
+OpenAI or DeepSeek implementer explicitly requested by the user.
 
 ## Project Overview
 
