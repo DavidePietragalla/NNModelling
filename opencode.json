@@ -1,8 +1,19 @@
 {
   "$schema": "https://opencode.ai/config.json",
-  "agent": {
-    "explore": {
-      "disable": true
+  "default_agent": "architect",
+  "permission": {
+    "skill": {
+      "*": "deny",
+      "chrome-direct": "allow",
+      "code-reviewer": "allow",
+      "nnmodelling-mcp": "allow",
+      "python-code-style": "allow",
+      "python-testing-patterns": "allow",
+      "pytorch-patterns": "allow",
+      "svelte-core-bestpractices": "allow",
+      "svelte5-best-practices": "allow",
+      "typescript-advanced-types": "allow",
+      "vitest": "allow"
     }
   },
   "mcp": {
