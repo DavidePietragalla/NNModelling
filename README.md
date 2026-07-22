@@ -1,8 +1,15 @@
 # NNModelling
 
 [![CI](https://github.com/LucaSforza/NNModelling/actions/workflows/ci.yml/badge.svg)](https://github.com/LucaSforza/NNModelling/actions/workflows/ci.yml)
+[![GitHub Pages](https://img.shields.io/badge/demo-GitHub%20Pages-2ea44f?logo=github)](https://lucasforza.github.io/NNModelling/)
 
-DSL for designing neural networks via visual node editor. Diagrams convert to PyTorch/Lightning training pipelines.
+A visual editor and DSL for designing neural networks. Create diagrams in the browser, compile them to NNTree, and generate PyTorch/Lightning training pipelines.
+
+## Try the editor
+
+**[Open NNModelling in your browser](https://lucasforza.github.io/NNModelling/)**
+
+The GitHub Pages demo contains the visual editor and runs entirely in the browser. Remote training, conversion, and MCP/browser integration require a local or separately deployed backend.
 
 ```
 Stereotypes/ (JSON) → Svelte Flow Editor → NNTree (JSON) → convert.py → Hydra YAML → main.py → Training
@@ -31,11 +38,11 @@ NNModelling/
 ### Frontend (Editor)
 
 ```bash
-cd front-end
-npm install
-npm run dev         # Development server with hot reload
-npm run build       # Production build
-npm run preview     # Preview production build
+# From the repository root
+pnpm install
+pnpm --dir front-end dev       # Development server with hot reload
+pnpm --dir front-end build     # Production build
+pnpm --dir front-end preview   # Preview production build
 ```
 
 ### Backend (Training)
@@ -51,7 +58,6 @@ uv run python src/main.py --config-dir <dir>
 
 ```bash
 cd mcp-server
-pnpm install
 pnpm run build      # Compile TypeScript
 pnpm run start      # Start server (node dist/index.js)
 ```
@@ -73,20 +79,19 @@ pnpm run start      # Start server (node dist/index.js)
 pnpm install
 
 # Build all packages
-cd front-end && npm run build    # Visual editor
-cd ../mcp-server && pnpm run build  # MCP server
+pnpm --dir front-end build          # Visual editor
+pnpm --dir mcp-server build         # MCP server
 
 # Build documentation
-cd ../docs2 && uv run make html  # Sphinx HTML docs (open docs2/build/html/index.html)
+pnpm docs
 ```
 
 ## Documentation
 
-For full documentation, build and open the Sphinx docs:
+For the local documentation site:
 
 ```bash
 cd docs2 && uv run make html
-open build/html/index.html
 ```
 
 The Sphinx docs cover:
@@ -103,10 +108,10 @@ See also `CLAUDE.md` / `AGENTS.md` for the AI agent project guide.
 
 ```bash
 # Frontend unit tests
-cd front-end && npm run test
+pnpm --dir front-end test
 
 # Integration tests (tiered: compile → convert → forward → train → infer)
-cd front-end && npm run test:integration
+pnpm --dir front-end test:integration
 
 # Python tests
 cd converted && uv run pytest src/tests/ -v
