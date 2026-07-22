@@ -16,23 +16,6 @@ Stereotypes/ (JSON) → Svelte Flow Editor → NNTree (JSON) → convert.py → 
                                                                                        → infer.py  → Inference
 ```
 
-## Repository Structure
-
-```
-NNModelling/
-├── front-end/          # Svelte 5 + Svelte Flow visual editor (TypeScript)
-├── converted/          # Python codegen target (PyTorch + Lightning + Hydra)
-├── mcp-server/         # MCP server — thin proxy for browser diagram state via WebSocket RPC
-├── Stereotypes/        # JSON template definitions (Modules, Joins, SubFlows)
-├── docs2/              # Sphinx documentation (user guide, architecture, API reference)
-├── examples/           # Test fixtures and diagrams for integration tests
-├── analysis/           # UML + requirements documentation
-├── *.json              # Example diagrams (Svelte Flow format)
-├── CLAUDE.md           # Detailed project guide for AI agents
-├── AGENTS.md           # Project guide (alias for CLAUDE.md)
-└── package.json        # pnpm workspace root
-```
-
 ## Quick Start
 
 ### Frontend (Editor)
@@ -95,6 +78,7 @@ cd docs2 && uv run make html
 ```
 
 The Sphinx docs cover:
+
 - **User Guide** — how to use the visual editor
 - **Architecture** — system design, data flow, components
 - **Stereotypes Reference** — JSON format, categories, all parameters
