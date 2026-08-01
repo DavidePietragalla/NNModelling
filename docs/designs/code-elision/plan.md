@@ -404,6 +404,13 @@ iniziare la Milestone B.
 Le tranche seguenti restano sospese fino al completamento e all'approvazione
 della Milestone A.
 
+**Regola di esecuzione:** la Milestone B deve iniziare con sessioni nuove degli
+implementatori selezionati; non vengono riutilizzate le sessioni operative della
+Milestone A. Ogni task assegnato deve essere validato e revisionato e deve
+terminare con un commit scoped creato dal sottoagente responsabile. Non sono
+ammessi handoff di task completati ma lasciati non committati. Push e pull
+request richiedono comunque un'autorizzazione separata dell'utente.
+
 ### Tranche 1 — Residui MCP e superficie workspace
 
 **Obiettivo:** completare l'elisione dei residui della vecchia dipendenza dal
