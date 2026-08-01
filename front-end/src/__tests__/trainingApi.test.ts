@@ -191,6 +191,45 @@ describe("authenticated training API", () => {
     });
     expect(fetchMock).not.toHaveBeenCalled();
   });
+
+  it("refuses the verified download before fetching when Web Crypto is unavailable", async () => {
+    const expected = await sha256Hex("wheel");
+    const fetchMock = vi.fn();
+    vi.stubGlobal("crypto", {});
+    vi.stubGlobal("fetch", fetchMock);
+    const api = new TrainingApiClient("http://backend.lan:8000", "very-secret-token");
+
+    const error = await api.downloadModelPackage("job-1", expected).catch((caught: unknown) => caught);
+    expect(error).toBeInstanceOf(BackendApiError);
+    const apiError = error as BackendApiError;
+    expect(apiError.status).toBe(400);
+    expect(apiError.code).toBe("package_verification_unavailable");
+    expect(apiError.message).toMatch(/HTTPS|localhost/);
+    expect(fetchMock).not.toHaveBeenCalled();
+  });
+
+  it("maps a rejecting Web Crypto digest to the same platform error after the download", async () => {
+    const expected = await sha256Hex("wheel");
+    const fetchMock = vi.fn().mockResolvedValue(
+      new Response("wheel", {
+        status: 200,
+        headers: { "content-type": "application/octet-stream", "x-nnm-sha256": expected },
+      }),
+    );
+    vi.stubGlobal("fetch", fetchMock);
+    const digestMock = vi.fn().mockRejectedValue(new Error("crypto disabled by browser policy"));
+    vi.stubGlobal("crypto", { subtle: { digest: digestMock } });
+    const api = new TrainingApiClient("http://backend.lan:8000", "very-secret-token");
+
+    const error = await api.downloadModelPackage("job-1", expected).catch((caught: unknown) => caught);
+    expect(error).toBeInstanceOf(BackendApiError);
+    const apiError = error as BackendApiError;
+    expect(apiError.status).toBe(400);
+    expect(apiError.code).toBe("package_verification_unavailable");
+    expect(apiError.message).toMatch(/HTTPS|localhost/);
+    expect(fetchMock).toHaveBeenCalledTimes(1);
+    expect(digestMock).toHaveBeenCalledWith("SHA-256", expect.any(Uint8Array));
+  });
 });
 
 describe("training companion windows", () => {

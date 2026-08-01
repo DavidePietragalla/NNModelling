@@ -189,13 +189,20 @@ export class TrainingApiClient {
    * client-side with Web Crypto and must match the expected digest too, so a
    * corrupted or substituted response is never trusted on the header alone.
    *
-   * @throws {BackendApiError} On a missing token, a non-OK response, or any
-   *   missing/malformed/mismatched header or body digest. No Blob is produced
-   *   unless every check passes.
+   * Web Crypto is exposed only in a secure frontend context (HTTPS or
+   * localhost). If it is unavailable — or a digest operation rejects — the
+   * download is refused with `package_verification_unavailable` and no file is
+   * offered; the error points at the frontend context, not at CORS or backend
+   * reachability.
+   *
+   * @throws {BackendApiError} On a missing token, a non-OK response, any
+   *   missing/malformed/mismatched header or body digest, or an unavailable
+   *   Web Crypto platform. No Blob is produced unless every check passes.
    */
   async downloadModelPackage(jobId: string, expectedSha256: string): Promise<Blob> {
     const expected = requireSha256Hex(expectedSha256, 400, "invalid_expected_digest",
       "Il digest SHA-256 atteso dal manifest del job non è valido");
+    requireWebCrypto();
     const response = await fetch(`${this.baseUrl}/jobs/${encodeURIComponent(jobId)}/package`, {
       headers: this.authHeaders(),
     });
@@ -328,9 +335,41 @@ function requireSha256Hex(value: string, status: number, code: string, message: 
   return value.toLowerCase();
 }
 
-/** Compute the lowercase hex SHA-256 digest of bytes with Web Crypto. */
+/**
+ * Dedicated error for a frontend context that cannot compute SHA-256 digests.
+ *
+ * Verified package download depends on Web Crypto, which browsers expose only
+ * in a secure context (HTTPS or localhost). Reporting this as CORS or backend
+ * reachability would mislead the user; the backend may stay on HTTP as long as
+ * the page serving the frontend is itself secure and CORS permits the Origin.
+ */
+function packageVerificationUnavailable(): BackendApiError {
+  return new BackendApiError(
+    400,
+    "package_verification_unavailable",
+    "Il download verificato del package richiede un contesto sicuro del browser (HTTPS o localhost): "
+    + "Web Crypto non è disponibile in questa pagina; nessun file è stato salvato. "
+    + "Non è un errore del backend: apri il frontend su HTTPS o localhost e riprova",
+  );
+}
+
+/** Throw when the current context cannot compute SHA-256 digests with Web Crypto. */
+function requireWebCrypto(): void {
+  if (typeof globalThis.crypto?.subtle?.digest !== "function") throw packageVerificationUnavailable();
+}
+
+/**
+ * Compute the lowercase hex SHA-256 digest of bytes with Web Crypto. A
+ * rejecting digest operation is mapped to the same actionable platform error
+ * as the upfront availability check, so verification never fails silently.
+ */
 async function sha256Hex(bytes: Uint8Array<ArrayBuffer>): Promise<string> {
-  const digest = await crypto.subtle.digest("SHA-256", bytes);
+  let digest: ArrayBuffer;
+  try {
+    digest = await globalThis.crypto.subtle.digest("SHA-256", bytes);
+  } catch {
+    throw packageVerificationUnavailable();
+  }
   return Array.from(new Uint8Array(digest), (byte) => byte.toString(16).padStart(2, "0")).join("");
 }
 
