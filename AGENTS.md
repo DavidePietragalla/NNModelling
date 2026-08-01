@@ -397,6 +397,25 @@ The `category` field in every stereotype JSON determines the node's role and han
 | `"Subflow"` | Container holding a sub-graph with structural transformation | 1 in, 1 out |
 | `"Module"` | Generic; reserved for future use | Depends |
 
+### Input and Fork contract
+
+The top-level model requires exactly one `Input`. It is the network source and
+has no input handle. Inside a subflow, `Input` may serve only as a declared
+boundary entry: the container injects its external tensor/type and it is not
+counted as another top-level root. If no internal `Input` is declared, the
+unique topological source is the entry.
+
+`Fork` is the canonical internal entry/pass-through, especially for branching,
+and is used by the canonical Repeat examples. It has normal input/output
+handles and may also appear downstream. `Input` and `Fork` are equivalent only
+as no-Python-module pass-through at a subflow boundary; they are not globally
+interchangeable, and `Fork` cannot replace the mandatory top-level `Input`.
+
+For public MCP construction, use `Fork` in the sensible Repeat residual model
+for the next QA. Compatibility with an internal `Input` remains intentional
+and supported. No GitHub issue is needed: this boundary compatibility is
+already part of the intended contract.
+
 **Note**: `"expr"` top-level field was removed from all stereotypes (Einsum's `params.expr` is preserved as a user parameter). Categories like `"Activation"`, `"Normalization"`, `"Pooling"`, etc. were consolidated into `"Layer"`.
 
 The `StereotypeCore` class loads stereotypes in the browser via Vite's `import.meta.glob` (`loadFromDirectory()`). The MCP server does not import the frontend loader: it keeps its own local ESM-safe projection of the same `Stereotypes/` JSON files (see `mcp-server/src/server.ts`).

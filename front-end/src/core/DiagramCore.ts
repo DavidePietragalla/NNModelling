@@ -266,24 +266,47 @@ export class DiagramCore {
    * producing exactly one undo snapshot and one graph notification. Returns
    * the created node.
    */
-  public addSubGraph(x: number, y: number, label?: string): Node {
+  public addSubGraph(
+    x: number,
+    y: number,
+    label?: string,
+    config?: {
+      stereotype?: StereotypeCore;
+      name?: string;
+      color?: string;
+      width?: number;
+      height?: number;
+      params?: Record<string, string | { value: string; position?: string }>;
+      parentId?: string;
+    },
+  ): Node {
     this._captureUndoState();
     const id = `subflow_${Date.now()}`;
-    const finalLabel = label ?? id;
+    const stereotype = config?.stereotype;
+    const finalLabel = config?.name ?? label ?? stereotype?.name ?? id;
+    const width = config?.width ?? stereotype?.view?.width ?? 400;
+    const height = config?.height ?? stereotype?.view?.height ?? 300;
     const newSubgraph: Node = {
       id,
       type: "subflow",
       position: { x, y },
+      parentId: config?.parentId,
       data: {
         name: finalLabel,
         label: finalLabel,
+        ...(stereotype ? {
+          stereotype: stereotype.name,
+          color: config?.color ?? stereotype.view?.color ?? "#ffffff",
+          params: this._mergeNodeParams(stereotype, config?.params),
+          isSubFlow: true,
+        } : {}),
         isCollapsed: false,
-        oldWidth: 400,
-        oldHeight: 300,
+        oldWidth: width,
+        oldHeight: height,
         // Dimensions are saved at collapse time in toggleSubflow.
       },
-      width: 400,
-      height: 300
+      width,
+      height,
     };
     this.nodes = [...this.nodes, newSubgraph];
 

@@ -22,8 +22,9 @@
 
 import { spawn } from "child_process";
 import { existsSync, writeFileSync, mkdtempSync, rmSync, readdirSync } from "fs";
-import { join, resolve } from "path";
+import { dirname, join, resolve } from "path";
 import { tmpdir } from "os";
+import { fileURLToPath } from "url";
 import {
   ConversionFailedError,
   TrainingFailedError,
@@ -114,15 +115,17 @@ export interface InferenceResult {
 /**
  * Resolve the path to the `converted/` directory.
  *
- * Defaults to `mcp-server/../converted/` but can be overridden via the
- * `NNM_PYTHON_DIR` environment variable.
+ * Defaults to the repository sibling `converted/` directory. The module is
+ * compiled either from `mcp-server/src/` or `mcp-server/dist/`, so this must
+ * be resolved from the module URL rather than the invocation working folder.
+ * It can be overridden via the `NNM_PYTHON_DIR` environment variable.
  */
 function getConvertedDir(): string {
   const envDir = process.env.NNM_PYTHON_DIR;
   if (envDir) {
     return resolve(envDir);
   }
-  return resolve(process.cwd(), "..", "converted");
+  return resolve(dirname(fileURLToPath(import.meta.url)), "..", "..", "converted");
 }
 
 /**

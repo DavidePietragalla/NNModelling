@@ -311,9 +311,10 @@ export async function captureChromiumScreenshot(
               const nodeId = ${nodeId};
               const node = Array.from(document.querySelectorAll("[data-id]"))
                 .find((element) => element.getAttribute("data-id") === nodeId);
-              const handle = node?.querySelector(".output-handle-wrapper");
+              const handle = node?.querySelector("[data-handleid='out']");
               if (!handle) throw new Error("No output handle found for node " + nodeId);
               handle.dispatchEvent(new MouseEvent("mouseenter"));
+              handle.parentElement?.dispatchEvent(new MouseEvent("mouseenter"));
               await new Promise((resolve) => requestAnimationFrame(() => requestAnimationFrame(resolve)));
               await new Promise((resolve) => setTimeout(resolve, 150));
               return true;

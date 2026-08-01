@@ -233,6 +233,18 @@ describe("NNTree — skip connections with joins", () => {
     expect(j1!.isJoin()).toBe(true);
   });
 
+  it("preserves target-handle order using runtime producer IDs after sequential compaction", () => {
+    const join0 = tree.nodes.get("join0")!;
+    const join1 = tree.nodes.get("join1")!;
+
+    // `skip_act` and `act1` are folded into their respective sequential
+    // runtime nodes. Join input references must therefore name those emitted
+    // tree nodes, not an elided visual-layer ID that Net.forward() never puts
+    // into its node-input map.
+    expect((join0.data as any).inputs).toEqual(["skip_fc", "input"]);
+    expect((join1.data as any).inputs).toEqual(["fc1", "skip2_fc"]);
+  });
+
   it("preserves sequential segments between joins", () => {
     // skip_fc + skip_act form a sequential before join0
     const skipSeq = tree.nodes.get("skip_fc");
@@ -476,6 +488,27 @@ describe("NNTree — subflow boundary mapping", () => {
   it("lossNode is CrossEntropyLoss", () => {
     expect(tree.lossNode).not.toBeNull();
     expect(tree.lossNode!.stereotype).toBe("CrossEntropyLoss");
+  });
+
+  it("accepts an internal Input as the Repeat subflow boundary, not a second root", () => {
+    const d = new Diagram();
+    d.nodes = [
+      node("root-input", "Input", "Input", { out_features: { value: "64" } }, { isInput: true }),
+      node("repeat", "Repeat", "Repeat", { iterations: { value: "2" } }, { type: "subflow" }),
+      node("repeat-input", "Input", "Repeat Input", { out_features: { value: "64" } }, { parentId: "repeat", isInput: true }),
+      node("repeat-relu", "ReLU", "Repeat ReLU", {}, { parentId: "repeat" }),
+      node("loss", "CrossEntropyLoss", "Loss", {}, { isLoss: true }),
+    ];
+    d.edges = [
+      edge("outer-in", "root-input", "repeat"),
+      edge("outer-out", "repeat", "loss"),
+      edge("internal", "repeat-input", "repeat-relu"),
+    ];
+
+    const tree = new NNTree(d);
+    expect(tree.root).toBe("root-input");
+    const repeat = tree.nodes.get("repeat")!;
+    expect((repeat.data as SubflowData).entryNode).toBe("repeat-input");
   });
 });
 

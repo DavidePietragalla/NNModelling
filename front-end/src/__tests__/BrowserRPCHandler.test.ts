@@ -197,6 +197,85 @@ describe("BrowserRPCHandler", () => {
     });
   });
 
+  it("creates a Repeat stereotype as a subflow container through MCP", () => {
+    const { handler, diagram, mockSend } = createHandler();
+
+    (handler as any).handleMessage({
+      data: JSON.stringify({
+        id: "create-repeat-subflow",
+        method: "create_node",
+        params: {
+          stereotype: "Repeat",
+          position: { x: 100, y: 200 },
+          config: { params: { iterations: "2" } },
+        },
+      }),
+    });
+
+    const response = JSON.parse(mockSend.mock.calls[0][0]);
+    expect(response.error).toBeUndefined();
+    const repeat = diagram.getNodeById(response.result.nodeId);
+    expect(repeat?.type).toBe("subflow");
+    expect(repeat?.data.stereotype).toBe("Repeat");
+    expect(repeat?.data.params).toMatchObject({
+      iterations: { value: "2" },
+    });
+  });
+
+  it("validates a Repeat subflow's internal Input without counting it as a second graph Input", () => {
+    const { handler, diagram, mockSend } = createHandler();
+    diagram.nodes = [
+      {
+        id: "top-input",
+        type: "custom",
+        position: { x: 0, y: 0 },
+        data: { stereotype: "Input", name: "Input", isInput: true },
+      },
+      {
+        id: "repeat",
+        type: "subflow",
+        position: { x: 100, y: 0 },
+        data: {
+          stereotype: "Repeat",
+          name: "Repeat",
+          params: { iterations: { value: "2" } },
+        },
+      },
+      {
+        id: "repeat-input",
+        type: "custom",
+        parentId: "repeat",
+        position: { x: 0, y: 0 },
+        data: { stereotype: "Input", name: "Repeat input", isInput: true },
+      },
+      {
+        id: "repeat-relu",
+        type: "custom",
+        parentId: "repeat",
+        position: { x: 100, y: 0 },
+        data: { stereotype: "ReLU", name: "Repeat ReLU" },
+      },
+      {
+        id: "loss",
+        type: "custom",
+        position: { x: 300, y: 0 },
+        data: { stereotype: "CrossEntropyLoss", name: "Loss", isLoss: true },
+      },
+    ] as Node[];
+    diagram.edges = [
+      { id: "e1", source: "top-input", target: "repeat" },
+      { id: "e2", source: "repeat", target: "loss" },
+      { id: "e3", source: "repeat-input", target: "repeat-relu" },
+    ] as Edge[];
+
+    (handler as any).handleMessage({
+      data: JSON.stringify({ id: "validate-repeat", method: "validate_graph" }),
+    });
+
+    const response = JSON.parse(mockSend.mock.calls[0][0]);
+    expect(response.result).toEqual({ valid: true, errors: [], warnings: [] });
+  });
+
   it("returns an error when type information is requested for an unknown node", () => {
     const { handler, mockSend } = createHandler();
 

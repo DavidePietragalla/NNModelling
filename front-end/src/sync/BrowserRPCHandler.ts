@@ -441,12 +441,24 @@ export class BrowserRPCHandler {
 
     const beforeCount = this.diagram.nodes.length;
 
-    if (stereo.isJoin) {
+    const parentId = config.parentId as string | undefined;
+    if (stereo.isSubFlow) {
+      this.diagram.addSubGraph(x, y, config.label as string | undefined, {
+        stereotype: stereo,
+        name: config.name as string | undefined,
+        color: config.color as string | undefined,
+        width: config.width as number | undefined,
+        height: config.height as number | undefined,
+        params: (config.params as Record<string, string | { value: string; position?: string }>) ?? {},
+        parentId,
+      });
+    } else if (stereo.isJoin) {
       this.diagram.addJoinNode(stereo, x, y, {
         name: config.name as string | undefined,
         inputsCount: (config.inputsCount as number) ?? 2,
         color: config.color as string | undefined,
         params: (config.params as Record<string, string>) ?? {},
+        parentId,
       });
     } else {
       this.diagram.addModule(stereo, x, y, {
@@ -455,6 +467,7 @@ export class BrowserRPCHandler {
         width: config.width as number | undefined,
         height: config.height as number | undefined,
         params: (config.params as Record<string, string>) ?? {},
+        parentId,
       });
     }
 
@@ -886,7 +899,8 @@ export class BrowserRPCHandler {
     const warnings: string[] = [];
 
     // Check for exactly 1 Input node
-    const inputNodes = this.diagram.nodes.filter((n) => {
+    const topLevelNodes = this.diagram.nodes.filter((n) => n.parentId == null);
+    const inputNodes = topLevelNodes.filter((n) => {
       const stereo = this.diagram.getStereotype((n.data as Record<string, unknown>).stereotype as string);
       return stereo?.isInput;
     });
@@ -898,7 +912,7 @@ export class BrowserRPCHandler {
     }
 
     // Check for at least 1 loss node
-    const lossNodes = this.diagram.nodes.filter((n) => {
+    const lossNodes = topLevelNodes.filter((n) => {
       const stereo = this.diagram.getStereotype((n.data as Record<string, unknown>).stereotype as string);
       return stereo?.isLoss;
     });
@@ -910,12 +924,14 @@ export class BrowserRPCHandler {
     }
 
     // Detect orphan nodes (no incoming or outgoing connections, except Input/Loss)
-    for (const node of this.diagram.nodes) {
+    for (const node of topLevelNodes) {
       const stereo = this.diagram.getStereotype((node.data as Record<string, unknown>).stereotype as string);
       if (stereo?.isInput || stereo?.isLoss) continue;
 
-      const hasIncoming = this.diagram.edges.some((e) => e.target === node.id);
-      const hasOutgoing = this.diagram.edges.some((e) => e.source === node.id);
+      const hasIncoming = this.diagram.edges.some((e) => e.target === node.id &&
+        this.diagram.getNodeById(e.source)?.parentId == null);
+      const hasOutgoing = this.diagram.edges.some((e) => e.source === node.id &&
+        this.diagram.getNodeById(e.target)?.parentId == null);
 
       if (!hasIncoming && !hasOutgoing) {
         warnings.push(
