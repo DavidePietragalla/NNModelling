@@ -172,7 +172,7 @@ eseguito da remoto perché non sono stati richiesti commit o push.
 | Frontend check | 0 errori, 11 warning preesistenti |
 | Frontend unit | 329 passed, 5 skipped |
 | Frontend build | passed |
-| Frontend integration completa | 151 passed, 3 skipped, circa 192 s (non rieseguita dopo le modifiche client-only) |
+| Frontend integration completa | 151 passed, 3 skipped, circa 210 s (rieseguita dopo le modifiche client-only) |
 | Backend fast (`-m fast`) | 188 passed, circa 9 s |
 | Backend service, Valkey reale | 13 passed, circa 4 s |
 | Backend E2E canonico | 3 passed, circa 27 s |
@@ -184,10 +184,10 @@ I conteggi di backend fast (188), service (13), E2E canonico (3) e frontend
 unit (329 passed, 5 skipped) sono stati riconfermati localmente dopo le
 correzioni D3/D4 e le riparazioni finali su ordinamento degli eventi terminali
 (`fd854f0`) e cleanup degli snapshot (`04b9564`). La suite di integrazione
-frontend completa (151 passed, 3 skipped) non è stata rieseguita dopo le
-modifiche client-only (`524762c`/`e87789f`): mantiene il valore registrato in
-precedenza e deve essere etichettata come **non rieseguita** finché la
-validazione finale non la esegue di nuovo.
+frontend completa è stata rieseguita per intero dopo le modifiche client-only
+(`68074f6`/`524762c`/`e87789f`): `pnpm --dir front-end run
+test:integration:all` ha concluso con 151 passed, 3 skipped in circa 210 s,
+senza leak di processi o directory temporanee.
 
 Sono stati verificati cleanup di processi e directory temporanee. Pesi,
 prediction JSON, credenziali e processi Valkey/training non sono rimasti nel
