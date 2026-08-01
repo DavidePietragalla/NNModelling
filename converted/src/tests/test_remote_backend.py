@@ -796,7 +796,12 @@ def _download_context(
 ) -> tuple[Any, InMemoryJobStore, JobStatus, PairingGrant, PairingGrant]:
     """Build an authenticated app with one owner, one other, and a packaged job."""
     store = InMemoryJobStore()
-    manager = JobManager(store, tmp_path, [ImmediateExecutor()])
+    manager = JobManager(
+        store,
+        tmp_path,
+        [ImmediateExecutor()],
+        package_snapshot_dir=tmp_path / "snapshots",
+    )
     auth = AuthService(InMemoryAuthStore())
     owner = auth.create_pairing("Owner", client_host="127.0.0.1")
     other = auth.create_pairing("Other", client_host="127.0.0.2")
@@ -916,6 +921,108 @@ def test_api_exposes_the_package_digest_header_via_cors(tmp_path):
                 assert "X-NNM-SHA256" in response.headers.get("access-control-expose-headers", "")
 
     asyncio.run(exercise_api())
+
+
+def test_api_pins_served_bytes_to_the_verified_snapshot(tmp_path):
+    """D3 TOCTOU: replacing the original wheel after verification but before
+    the response body is read must not change the bytes that are served.
+
+    The manager copies and hashes the wheel from one opened source handle into
+    an immutable private snapshot; the endpoint serves only that snapshot and
+    never reopens the mutable artifact path. The custom ASGI ``send`` replaces
+    the original wheel at ``http.response.start`` — after the snapshot was
+    verified, before any body byte was read — so a regression that reopened
+    the artifact path would serve the replaced bytes and fail this test.
+    """
+    app, store, job, owner, _other = _download_context(tmp_path)
+    original = b"original-wheel-bytes"
+    _materialize_package(store, job, wheel_bytes=original)
+    record = store.get_job(job.id)
+    assert record is not None
+    wheel = Path(record["artifact_dir"]) / record["model_package"]["wheel"]
+    manager = app.state.manager
+    snapshot_dir = manager.package_snapshot_dir
+    assert snapshot_dir is not None
+
+    async def exercise_api() -> None:
+        status_code = 0
+        response_headers: dict[str, str] = {}
+        body_parts: list[bytes] = []
+
+        async def send(message: dict[str, Any]) -> None:
+            nonlocal status_code, response_headers
+            if message["type"] == "http.response.start":
+                status_code = message["status"]
+                response_headers = {
+                    key.decode(): value.decode() for key, value in message["headers"]
+                }
+                # Verification and snapshot creation already finished; replace
+                # the original artifact before the response body is produced.
+                wheel.write_bytes(b"replaced-after-verification")
+            elif message["type"] == "http.response.body":
+                body_parts.append(message["body"])
+
+        async def receive() -> dict[str, Any]:
+            return {"type": "http.disconnect"}
+
+        scope = {
+            "type": "http",
+            "asgi": {"version": "3.0"},
+            "http_version": "1.1",
+            "method": "GET",
+            "headers": [(b"authorization", f"Bearer {owner.token}".encode())],
+            "scheme": "http",
+            "path": f"/jobs/{job.id}/package",
+            "raw_path": f"/jobs/{job.id}/package".encode(),
+            "query_string": b"",
+            "server": ("test", 80),
+            "client": ("127.0.0.1", 1234),
+            "root_path": "",
+        }
+        await app(scope, receive, send)
+
+        served = b"".join(body_parts)
+        assert status_code == 200
+        assert response_headers["x-nnm-sha256"] == hashlib.sha256(original).hexdigest()
+        assert wheel.read_bytes() == b"replaced-after-verification"
+        assert served == original
+        assert served != wheel.read_bytes()
+        # The verified snapshot is removed after the response completed.
+        assert list(snapshot_dir.iterdir()) == []
+
+    asyncio.run(exercise_api())
+
+
+def test_api_snapshot_mismatch_returns_409_without_body_and_cleans_up(tmp_path):
+    """A wheel whose snapshot digest differs from the manifest is rejected with
+    409, no wheel bytes are served, and the temporary snapshot is deleted."""
+    app, store, job, owner, _other = _download_context(tmp_path)
+    _materialize_package(store, job, wheel_bytes=b"original")
+    record = store.get_job(job.id)
+    assert record is not None
+    wheel = Path(record["artifact_dir"]) / record["model_package"]["wheel"]
+    wheel.write_bytes(b"tampered-before-download")
+    manager = app.state.manager
+    snapshot_dir = manager.package_snapshot_dir
+    assert snapshot_dir is not None
+
+    async def exercise_api() -> None:
+        transport = httpx.ASGITransport(app=app)
+        async with app.router.lifespan_context(app):
+            async with httpx.AsyncClient(transport=transport, base_url="http://test") as client:
+                headers = {"authorization": f"Bearer {owner.token}"}
+                response = await client.get(f"/jobs/{job.id}/package", headers=headers)
+                assert response.status_code == 409
+                assert response.json()["detail"] == {
+                    "code": "package_integrity_error",
+                    "message": "Model package integrity check failed",
+                }
+                # Only the error detail is sent; no wheel bytes, no paths.
+                assert b"tampered-before-download" not in response.content
+                assert str(tmp_path) not in response.text
+
+    asyncio.run(exercise_api())
+    assert list(snapshot_dir.iterdir()) == []
 
 
 def test_public_pairing_flow_waits_for_administrator_approval(tmp_path):

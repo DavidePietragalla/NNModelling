@@ -7,6 +7,7 @@ import hmac
 import json
 import os
 import re
+import tempfile
 import threading
 import time
 import uuid
@@ -33,6 +34,11 @@ FAILED_TRANSITION_BACKOFF_SECONDS = 0.2
 # is a corrupt manifest that must never be served.
 PACKAGE_SHA256_HEX = re.compile(r"[0-9a-fA-F]{64}\Z")
 
+# Downloads are pinned to an immutable backend-private snapshot streamed in
+# bounded chunks, so a wheel is never loaded into memory on either the
+# copy-and-hash side or the serve side.
+PACKAGE_SNAPSHOT_CHUNK_SIZE = 1024 * 1024
+
 
 class PackageIntegrityError(Exception):
     """Raised when an exported wheel no longer matches its declared digest.
@@ -53,6 +59,8 @@ class JobManager:
         executors: list[Executor],
         max_running_jobs: int = 1,
         poll_interval: float = 0.25,
+        *,
+        package_snapshot_dir: str | Path | None = None,
     ) -> None:
         if not executors:
             raise ValueError("At least one executor is required")
@@ -62,6 +70,12 @@ class JobManager:
         self.executors = executors
         self.max_running_jobs = max_running_jobs
         self.poll_interval = poll_interval
+        # Private directory for immutable download snapshots. When unset the
+        # OS temporary directory is used (mkstemp files are created ``0600``);
+        # the directory is never exposed through any API path.
+        self.package_snapshot_dir = (
+            Path(package_snapshot_dir) if package_snapshot_dir is not None else None
+        )
         self._active: dict[str, tuple[Executor, dict[str, Any]]] = {}
         self._round_robin_cursor = 0
         self._lock = threading.RLock()
@@ -425,18 +439,25 @@ class JobManager:
     def package_download(self, job_id: str, *, owner_connection_id: str) -> tuple[Path, str, str]:
         """Resolve and verify the owned job's wheel for download.
 
-        Returns the wheel path, its safe download filename, and the SHA-256
-        digest of the bytes currently on disk. The digest is recomputed with a
-        streaming read on every call and compared in constant time against the
-        authoritative ``model_package.sha256`` recorded at export time, so a
-        wheel that was corrupted or replaced after export is never served.
+        The wheel is streamed from a single opened source handle into an
+        immutable backend-private snapshot while its SHA-256 is computed, and
+        the snapshot digest is compared in constant time against the
+        authoritative ``model_package.sha256`` recorded at export time. The
+        download response never reopens the original artifact path: it serves
+        the verified snapshot bytes, so a wheel replaced or modified after
+        verification cannot influence what is transferred. A snapshot whose
+        digest differs from the manifest is deleted and never returned.
+
+        Returns:
+            The verified snapshot path, the safe download filename, and the
+            SHA-256 digest of the snapshot bytes.
 
         Raises:
             KeyError: The job does not exist or is not owned by the connection.
             FileNotFoundError: The job has no exported wheel or its declared
                 wheel path escapes the artifact root.
             PackageIntegrityError: The declared manifest digest is missing or
-                malformed, or the wheel bytes no longer match it.
+                malformed, or the snapshot bytes no longer match it.
         """
 
         job = self._owned_job(job_id, owner_connection_id)
@@ -450,10 +471,14 @@ class JobManager:
         declared = package.get("sha256")
         if not isinstance(declared, str) or not PACKAGE_SHA256_HEX.fullmatch(declared):
             raise PackageIntegrityError("Model package integrity cannot be verified")
-        computed = _sha256_hex(wheel)
+        snapshot, computed = _create_package_snapshot(
+            wheel,
+            snapshot_dir=self.package_snapshot_dir,
+        )
         if not hmac.compare_digest(computed, declared.lower()):
+            _remove_file(snapshot)
             raise PackageIntegrityError("Model package integrity check failed")
-        return wheel, wheel.name, computed
+        return snapshot, wheel.name, computed
 
     def tail_logs(
         self,
@@ -593,14 +618,58 @@ def _read_text(path: Path) -> str:
         return ""
 
 
-def _sha256_hex(path: Path, *, chunk_size: int = 1024 * 1024) -> str:
-    """Return the SHA-256 hex digest of a file without loading it whole."""
+def _remove_file(path: Path) -> None:
+    """Delete a temporary snapshot, tolerating races and double removal."""
 
+    try:
+        path.unlink(missing_ok=True)
+    except OSError:
+        pass
+
+
+def _create_package_snapshot(
+    source: Path,
+    *,
+    snapshot_dir: Path | None,
+    chunk_size: int = PACKAGE_SNAPSHOT_CHUNK_SIZE,
+) -> tuple[Path, str]:
+    """Copy a wheel into a private immutable snapshot while hashing it in one pass.
+
+    The source is opened exactly once and the returned digest covers exactly
+    the bytes copied into the snapshot, so a concurrent replacement of the
+    source path can never produce a verified snapshot whose bytes differ from
+    what the download later serves. The snapshot is created with ``0600``
+    permissions in the OS temporary directory (or ``snapshot_dir`` when given)
+    and is never reachable through any API path.
+
+    Returns:
+        The snapshot path and its SHA-256 hex digest.
+
+    Raises:
+        FileNotFoundError: If the source disappeared before it could be opened.
+    """
+
+    if snapshot_dir is not None:
+        snapshot_dir.mkdir(parents=True, exist_ok=True)
+    fd, raw_path = tempfile.mkstemp(
+        prefix="nnm_pkg_",
+        suffix=".whl",
+        dir=str(snapshot_dir) if snapshot_dir is not None else None,
+    )
+    snapshot = Path(raw_path)
     digest = hashlib.sha256()
-    with path.open("rb") as stream:
-        for chunk in iter(lambda: stream.read(chunk_size), b""):
-            digest.update(chunk)
-    return digest.hexdigest()
+    try:
+        with os.fdopen(fd, "wb") as writer, source.open("rb") as reader:
+            while True:
+                chunk = reader.read(chunk_size)
+                if not chunk:
+                    break
+                writer.write(chunk)
+                digest.update(chunk)
+    except BaseException:
+        _remove_file(snapshot)
+        raise
+    return snapshot, digest.hexdigest()
 
 
 def _tail_text(path: Path, offset: int, *, limit: int = 64 * 1024) -> dict[str, str | int | bool]:
