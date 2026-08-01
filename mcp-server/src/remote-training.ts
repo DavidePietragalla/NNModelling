@@ -5,17 +5,45 @@
  * Licensed under the GNU General Public License v3 or later.
  */
 
-/** Thin HTTP client for the optional FastAPI remote-training backend. */
+/**
+ * Thin HTTP client for the optional FastAPI remote-training backend.
+ *
+ * Authentication parity with the browser client: the browser sends
+ * `authorization: Bearer <token>` on every authenticated request (the token is
+ * injected into `TrainingApiClient` from the pairing flow). This client does
+ * the same whenever a token is configured — explicitly, or from the
+ * `NNM_BACKEND_TOKEN` environment variable mirroring `NNM_BACKEND_URL`. When
+ * no token is configured the header is omitted (unchanged behavior) and the
+ * backend answers 401. Acquiring/renewing a token (the pairing flow) remains a
+ * deployment concern; this client only transports an operator-provided token.
+ */
 
 export class RemoteTrainingClient {
   readonly baseUrl: string;
+  private readonly token: string | undefined;
 
-  constructor(baseUrl = process.env.NNM_BACKEND_URL ?? "http://127.0.0.1:8000") {
+  constructor(
+    baseUrl = process.env.NNM_BACKEND_URL ?? "http://127.0.0.1:8000",
+    token = process.env.NNM_BACKEND_TOKEN,
+  ) {
     this.baseUrl = baseUrl.replace(/\/$/, "");
+    this.token = token && token.length > 0 ? token : undefined;
+  }
+
+  /** Merge the caller's headers with the configured bearer token, if any. */
+  private headers(headers?: HeadersInit): Headers {
+    const merged = new Headers(headers);
+    if (this.token) {
+      merged.set("authorization", `Bearer ${this.token}`);
+    }
+    return merged;
   }
 
   private async request<T>(path: string, init?: RequestInit): Promise<T> {
-    const response = await fetch(`${this.baseUrl}${path}`, init);
+    const response = await fetch(`${this.baseUrl}${path}`, {
+      ...init,
+      headers: this.headers(init?.headers),
+    });
     const text = await response.text();
     let body: unknown = undefined;
     try {
@@ -72,7 +100,7 @@ export class RemoteTrainingClient {
     const cursor = after ? `?after=${encodeURIComponent(after)}` : "";
     const response = await fetch(
       `${this.baseUrl}/jobs/${encodeURIComponent(jobId)}/events${cursor}`,
-      { headers: { accept: "text/event-stream" } },
+      { headers: this.headers({ accept: "text/event-stream" }) },
     );
     if (!response.ok) {
       throw new Error(`Training backend ${response.status}: ${response.statusText}`);
