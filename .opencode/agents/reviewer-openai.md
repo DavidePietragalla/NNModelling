@@ -5,8 +5,8 @@ model: openai/gpt-5.6-terra
 reasoningEffort: high
 textVerbosity: medium
 permission:
-  edit: deny
-  task: deny
+  edit: allow
+  task: allow
   bash: allow
 ---
 
