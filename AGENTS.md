@@ -133,11 +133,10 @@ NNModelling/
 │   │       ├── train.test.ts   # Tier 3: main.py training smoke
 │   │       └── infer.test.ts   # Tier 4: infer.py output validation
 │   ├── core/                     # Pure TypeScript (no Svelte deps)
-│   │   ├── DiagramCore.ts        # All diagram business logic + EventBus
-│   │   ├── EventBus.ts           # Typed event emitter with monotonic seq
-│   │   ├── StereotypeCore.ts     # Pure TS stereotype with dual loader (Vite/Node)
-│   │   ├── types.ts              # Shared type definitions (events, WS, configs)
-│   │   └── validation.ts         # Standalone connection validation
+│   │   ├── DiagramCore.ts        # All diagram business logic + graph-change signal
+│   │   ├── StereotypeCore.ts     # Pure TS stereotype loader (Vite import.meta.glob)
+│   │   ├── types.ts              # Shared type definitions (Position, NodeConfig, snapshots)
+│   │   └── validation.ts         # Standalone connection validation + cycle detection
 │   ├── sync/                     # Browser-side RPC handler
 │   │   └── BrowserRPCHandler.ts  # Responds to MCP server RPC calls
 │   ├── nodes/
@@ -162,7 +161,6 @@ NNModelling/
 │   ├── training/api.ts          # FastAPI REST/SSE client
 │   ├── Diagram.svelte.ts       # Central reactive state manager
 │   ├── FlowCanvas.svelte       # Main editor canvas + toolbar
-│   ├── stereotype.ts           # Stereotype loader (import.meta.glob)
 │   ├── utils.ts                # Connection validation, helpers
 │   ├── App.svelte              # Entry point (SvelteFlowProvider)
 │   └── main.ts                 # Mount point
@@ -215,7 +213,7 @@ NNModelling/
 │       ├── index.ts                   # Entry point (stdio transport)
 │       ├── server.ts                  # MCP server setup + tool registration
 │       ├── browser-client.ts          # WebSocket RPC client (multi-tab)
-│       ├── errors.ts                  # Error classes (5: base + 4 pipeline)
+│       ├── errors.ts                  # Error classes (4: base + 3 pipeline)
 │       ├── pipeline.ts                # Python subprocess interface
 │       └── tools/
 │           ├── graph.ts               # create_node, delete_nodes, etc.
@@ -272,7 +270,7 @@ NNModelling/
 - **Pattern**: Pure TS unit tests, no DOM/browser
 - **Real Diagram**: Tests use real `Diagram` class (Svelte `$state.raw` compiled by Vite plugin). Stub `globalThis.window` before construction.
 - **Helpers**: `node(id, stereo, name, params, overrides?)` and `edge(id, source, target, handles?)` for concise fixtures.
-- **Coverage**: **293 tests passed, 5 skipped** — sequential chain, skip/joins, autoencoder, subflow compilation, nested subflows, hidden nodes, error handling, connection validation, Fork node, type inference (Input, Linear, ReLU, Conv1d, Conv2d, Flatten, Unflatten, MaxPool2d, wildcards, mismatches, edge cases, computed dimensions, param_spread, join type checking, Repeat/HorizontalRepeat subflows, generic subflow recursion, nested subflows, loss nodes, complex modules), BrowserRPCHandler, MCP type serialization, undo/redo, param merging, edge handle defaults, viewport injection, invalid parameter validation, parentId placement, fuzz testing, expression evaluator, dtype validation, advisory warnings, shape suggestions, join input labels, Einsum shape inference, model loading validation, and training API helpers
+- **Coverage**: **356 tests passed, 5 skipped** (fresh `pnpm --dir front-end run test`; re-run the command for the current count) — sequential chain, skip/joins, autoencoder, subflow compilation, nested subflows, hidden nodes, error handling, connection validation, Fork node, type inference (Input, Linear, ReLU, Conv1d, Conv2d, Flatten, Unflatten, MaxPool2d, wildcards, mismatches, edge cases, computed dimensions, param_spread, join type checking, Repeat/HorizontalRepeat subflows, generic subflow recursion, nested subflows, loss nodes, complex modules), BrowserRPCHandler, MCP type serialization, undo/redo, param merging, edge handle defaults, viewport injection, invalid parameter validation, parentId placement, fuzz testing, expression evaluator, dtype validation, advisory warnings, shape suggestions, join input labels, Einsum shape inference, model loading validation, and training API helpers
 
 ### Testing — Integration (Vitest + Python Pipeline)
 
@@ -295,13 +293,13 @@ NNModelling/
 
 - **Framework**: pytest (via `uv run pytest`)
 - **Files**: `converted/src/tests/` — pure Python tests (no TS/Vitest dependency)
-- **Coverage**: **112 fast non-training Python tests** currently pass across the conversion, runtime, integration, and remote-backend suites; full training/inference pipeline tests remain separate because they are slow and may download data.
+- **Coverage**: **188 fast non-training tests** pass via `uv run pytest src/tests/ -m fast -q` (fresh count; re-run the command for the current count) across the conversion, runtime, integration, and remote-backend suites; the `service` (real Valkey), `e2e` (canonical backend jobs) and optional `legacy_e2e` (real MNIST training) markers cover the slower tiers separately.
 - **Fixtures**: NNTree JSON files from `examples/nntrees/` — shared between Python and Vitest integration tests
 
 ### Front-end Data Flow
 
 ```
-Stereotypes/ (JSON) → StereotypeCore → DiagramCore (pure TS state + EventBus)
+Stereotypes/ (JSON) → StereotypeCore → DiagramCore (pure TS state + onGraphChanged)
                                             ↑ extends
                                        Diagram.svelte.ts ($state.raw wrapper)
                                             ↓
@@ -345,10 +343,9 @@ MCP Server (thin proxy, no DiagramCore)
 
 ### Key Classes
 
-- **DiagramCore** (core/DiagramCore.ts) — Pure TypeScript state authority. Holds `nodes` and `edges` as plain arrays. All business logic: `addModule`, `addJoinNode`, `addSubGraph`, `deleteNodes`, `addEdge`, `moveNode`, `importFromJson`, `exportToJson`, `toggleSubflow`, `undo`, `redo`. Integrates `EventBus` — every mutation emits typed domain events. Snapshot-based undo/redo (Ctrl+Z/Ctrl+Alt+Z) via `getSnapshot`/`restoreSnapshot` with 50-entry stack limit.
+- **DiagramCore** (core/DiagramCore.ts) — Pure TypeScript state authority. Holds `nodes` and `edges` as plain arrays. All business logic: `addModule`, `addJoinNode`, `addSubGraph`, `deleteNodes`, `addEdge`, `moveNode`, `importFromJson`, `exportToJson`, `toggleSubflow`, `undo`, `redo`. Exposes a single synchronous graph-change subscription (`onGraphChanged`) that is notified once after every successful public mutation (add/update/delete/move operations, edge changes, undo/redo, snapshot restore, reset and import); rejected connections and no-op operations do not notify, and the callback carries no payload. Snapshot-based undo/redo (Ctrl+Z/Ctrl+Alt+Z) via `getSnapshot`/`restoreSnapshot` with 50-entry stack limit.
 - **Diagram.svelte.ts** — Thin Svelte 5 wrapper extending `DiagramCore`. Overrides `nodes`/`edges` with `$state.raw` for reactive UI. Handles Svelte-specific concern: auto-spawn Input node. (No callback re-hydration needed — SubflowNode uses `getContext`.)
-- **StereotypeCore** (core/StereotypeCore.ts) — Pure TypeScript stereotype with dual loader: `loadFromDirectory()` uses Vite's `import.meta.glob` for browser; `loadFromDirectoryNode(path)` uses `fs.readdirSync` for Node.js/MCP server.
-- **Stereotype** (stereotype.ts) — Thin wrapper extending `StereotypeCore`. Delegates to Vite loader via `StereotypeCore.loadFromDirectory()`.
+- **StereotypeCore** (core/StereotypeCore.ts) — Pure TypeScript stereotype loader. In the browser it loads stereotype JSON via Vite's `import.meta.glob` (`loadFromDirectory()`). The MCP server does not import the frontend: it keeps its own local ESM-safe projection of the same `Stereotypes/` JSON files (see `mcp-server/src/server.ts`).
 - **NNTree** (conversion/nnTree.ts) — Converts visual graph to tree representation. Handles sequential chains, joins (multiple parents), loss nodes, and subflow containers with Kahn's topological sort. Subflows are type `"subflow"` with `entryNode` + internal `nodes` map (not flattened to sequential). Supports recursive nested subflows via `compileSubflowGraph`. Output JSON consumed by Python side.
 - **TypeEngine** (conversion/typeEngine.ts) — Constraint-based static tensor type checker. **Fully data-driven** — no hardcoded module names, formula bodies, or constraint checks. Interprets `type_signature` from stereotype JSON. Implements pattern matching with symbolic dimension binding, wildcard capture, param reference resolution, dtype propagation, expression-based computed dims, declarative subflow transforms (`SubflowConfig`), declarative join operations (`JoinConfig`), dtype input validation, advisory warnings, shape suggestions, join input labels, and Einsum shape inference. Phases: computed dims (Phase 2), join checking (Phase 3), subflow inference (Phase 4), editor integration (Phase 5), expression language + declarative configs (Phase 6), type system improvements (Phase 7).
 
@@ -402,7 +399,7 @@ The `category` field in every stereotype JSON determines the node's role and han
 
 **Note**: `"expr"` top-level field was removed from all stereotypes (Einsum's `params.expr` is preserved as a user parameter). Categories like `"Activation"`, `"Normalization"`, `"Pooling"`, etc. were consolidated into `"Layer"`.
 
-The StereotypeCore class provides two loaders: `loadFromDirectory()` (Vite glob, for browser) and `loadFromDirectoryNode(path)` (Node fs, for MCP server).
+The `StereotypeCore` class loads stereotypes in the browser via Vite's `import.meta.glob` (`loadFromDirectory()`). The MCP server does not import the frontend loader: it keeps its own local ESM-safe projection of the same `Stereotypes/` JSON files (see `mcp-server/src/server.ts`).
 
 ### Parameter Positions
 
