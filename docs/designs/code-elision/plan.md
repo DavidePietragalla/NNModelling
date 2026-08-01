@@ -1,6 +1,6 @@
 # Fase di elisione e semplificazione
 
-**Stato:** decisioni post-review D1/D5/D7 implementate; review finale in corso;
+**Stato:** decisioni D1/D3/D4/D5/D7 implementate; review finale in corso;
 esecuzione CI remota in attesa di push; Milestone B non autorizzata
 
 **Data:** 2026-08-01

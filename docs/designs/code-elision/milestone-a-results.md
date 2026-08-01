@@ -1,6 +1,6 @@
 # Milestone A — Testing foundation: risultati e bug register
 
-**Stato:** decisioni post-review D1/D5/D7 implementate; review finale in corso;
+**Stato:** decisioni D1/D3/D4/D5/D7 implementate; review finale in corso;
 esecuzione CI remota in attesa di push
 
 **Branch:** `milestone-a-testing-foundation`
@@ -154,15 +154,21 @@ eseguito da remoto perché non sono stati richiesti commit o push.
 | --- | --- |
 | `git diff --check` | clean |
 | Frontend check | 0 errori, 11 warning preesistenti |
-| Frontend unit | 315 passed, 5 skipped |
+| Frontend unit | 321 passed, 5 skipped |
 | Frontend build | passed |
-| Frontend integration completa | 151 passed, 3 skipped, circa 192 s |
-| Backend fast (`-m fast`) | 172 passed, circa 7 s |
+| Frontend integration completa | 151 passed, 3 skipped, circa 192 s (non rieseguita in questa sessione) |
+| Backend fast (`-m fast`) | 182 passed, circa 9 s |
 | Backend service, Valkey reale | 12 passed, circa 3 s |
-| Backend E2E canonico | 3 passed, circa 27 s |
+| Backend E2E canonico | 3 passed, circa 28 s |
 | Backend E2E legacy opzionale | 4 passed, circa 107 s |
 | MCP build | passed |
 | MCP test | 51 passed |
+
+I conteggi di backend fast (182), service (12), E2E canonico (3) e frontend
+unit (321 passed, 5 skipped) sono stati riconfermati localmente dopo le
+correzioni D3/D4. La suite di integrazione frontend completa non è stata
+rieseguita nella sessione di documentazione e mantiene il valore registrato
+in precedenza.
 
 Sono stati verificati cleanup di processi e directory temporanee. Pesi,
 prediction JSON, credenziali e processi Valkey/training non sono rimasti nel
@@ -191,9 +197,9 @@ Queste correzioni non hanno richiesto decisioni architetturali.
 
 ## 6. Decisioni sui bug di design
 
-Questi finding sono stati discussi con l'utente. D1, D5 e D7 hanno ricevuto una
-decisione e sono stati corretti; D2, D6 e D8 sono tracciati come lavoro futuro;
-D3 e D4 restano in attesa di decisione.
+Questi finding sono stati discussi con l'utente. D1, D3, D4, D5 e D7 hanno
+ricevuto una decisione e sono stati corretti; D2, D6 e D8 sono tracciati come
+lavoro futuro.
 
 ### D1 — Cicli top-level accettati — risolto
 
@@ -214,37 +220,51 @@ produrre una directory di configurazione apparentemente valida. Il comportamento
 Il lavoro futuro è tracciato in
 [#31 — Reject structurally invalid NNTree documents in convert.py](https://github.com/LucaSforza/NNModelling/issues/31).
 
-### D3 — Integrità della wheel non rivalidata al download
+### D3 — Integrità della wheel non rivalidata al download — risolto
 
-Spiegazione semplice: quando il backend costruisce la wheel, calcola una specie
-di “impronta digitale” del file, lo SHA-256, e la salva nel manifest. Se in
-seguito il file sul disco viene corrotto o sostituito, oggi l'endpoint di
-download lo consegna comunque senza confrontare nuovamente la sua impronta con
-quella originale.
+La decisione adottata è la doppia verifica: entrambi i lati eseguono il
+controllo.
 
-Il nuovo E2E verifica che, nel percorso normale, manifest, file e bytes HTTP
-coincidano. La decisione ancora aperta è chi debba proteggere il caso di
-alterazione successiva:
+Il server registra lo SHA-256 della wheel nel manifest
+`model_package.sha256` al momento dell'esportazione e lo ricalcola con una
+lettura streaming prima di ogni download (`_sha256_hex`, confronto in tempo
+costante). Se il digest dichiarato è mancante o malformato, o se i bytes su
+disco non coincidono più, l'endpoint risponde `409 Conflict` con codice
+`package_integrity_error` e non serve alcun byte; la risposta non rivela mai
+path del filesystem. In caso di successo il digest verificato è esposto
+nell'header `X-NNM-SHA256`, incluso negli `expose_headers` CORS.
 
-1. il server ricalcola il digest prima di ogni download e rifiuta file diversi;
-2. il client scarica e controlla il digest;
-3. entrambi eseguono il controllo.
+Il browser considera autorevole il digest autenticato del job
+(`job.model_package.sha256`): verifica che l'header `X-NNM-SHA256` sia
+presente, ben formato e uguale al digest atteso, poi digesta i bytes
+scaricati con Web Crypto e offre il file soltanto se ogni controllo passa.
+Errori client: `package_digest_missing`, `package_digest_invalid`,
+`package_digest_mismatch`, `package_corrupted`.
 
-### D4 — Pesi mancanti nel percorso package legacy
+Commit: `4813042` (verifica lato server), `68074f6` (verifica lato browser).
+Regressioni in `test_remote_backend.py` (wheel sostituita, digest mancante,
+digest malformato, header esposto via CORS, ownership del download) e
+`trainingApi.test.ts` (header e body verificati prima di restituire il Blob).
 
-Spiegazione semplice: alcuni vecchi job possono avere terminato il training ma
-non possedere `weights.safetensors`, il formato sicuro necessario per costruire
-la wheel. Oggi il backend, in quel caso, non costruisce il package e non segnala
-chiaramente un errore di packaging. Il training può quindi sembrare riuscito,
-ma il client non trova alcun package da scaricare e non riceve una ragione
-esplicita.
+### D4 — Pesi mancanti nel percorso package legacy — risolto
 
-Le opzioni da decidere sono:
+La decisione adottata è la politica strict current-project senza fallback
+legacy: la wheel è un output promesso di ogni job riuscito, quindi un job
+senza `weights.safetensors` non è un successo silenzioso.
 
-1. training riuscito ma package `skipped/unavailable`, con motivazione visibile;
-2. job o fase package marcata `package_failed`;
-3. migrazione esplicita dei vecchi pesi, se tecnicamente e sicuramente
-   possibile.
+Il manager esporta la wheel prima di persistere `succeeded`: l'ordine degli
+eventi felici è `package_ready` poi `succeeded`. Se l'esportazione fallisce —
+pesi sicuri mancanti o corrotti (file non apribile come contenitore
+safetensors o contenitore vuoto), adapter non supportato, eccezione
+dell'exporter — il job registra `package_error`, emette l'evento
+`package_failed` e transita allo stato terminale `failed` con la stessa
+transizione atomica degli altri failure. Artefatti, log ed errore restano
+visibili al proprietario e all'amministratore; il job fallito non ha manifest
+e il download risponde `404`.
+
+Commit: `cf3f677`. Regressioni in `test_negative_cases.py` (config mancante,
+config corrotta, pesi corrotti, pesi mancanti, eccezione exporter, superficie
+API) e in `test_remote_backend.py` per l'ordine `package_ready < succeeded`.
 
 ### D5 — Job fallito ancora presente in coda — risolto
 
@@ -320,8 +340,7 @@ La Milestone B resta bloccata. Prima dell'elisione sono ancora richiesti:
 
 1. esecuzione verde dei sei job GitHub dopo autorizzazione a commit/push;
 2. presentazione di questo report all'utente;
-3. decisione sui soli bug ancora aperti D3 e D4;
-4. seconda approvazione esplicita dell'utente.
+3. seconda approvazione esplicita dell'utente.
 
 La review locale è conclusa con verdetto **Approved locally pending remote
 CI** e senza finding locali aperti.

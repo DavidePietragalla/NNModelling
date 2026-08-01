@@ -123,6 +123,16 @@ the job row and install the downloaded file in a Python 3.12+ environment:
 
    pip install ./nnm_mnist_classifier-0.1.0-py3-none-any.whl
 
+The file is offered only after the download is verified twice. The backend
+records the wheel's SHA-256 digest when it builds the package, recomputes it
+immediately before serving the download, refuses to serve bytes that no
+longer match, and returns the verified digest in the ``X-NNM-SHA256``
+response header. The browser already holds the same digest in the
+authenticated job state; it checks that the header is present, well-formed,
+and equal to that digest, then digests the downloaded bytes itself before
+offering the file. A missing, malformed, or mismatched digest on either side
+cancels the download without saving a file.
+
 The wheel contains the resolved graph, safe ``safetensors`` weights and its
 declared input adapter. It does not need the training backend, W&B, Lightning
 or the training dataset. Every model offers a universal tensor API:
@@ -144,6 +154,18 @@ saved Hugging Face tokenizer name and maximum length. The first inference may
 download that tokenizer unless it is already available in the local Hugging
 Face cache; install the wheel's ``transformers`` dependency and provision the
 tokenizer cache in offline environments.
+
+Wheel download troubleshooting
+~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+
+If verification fails, the sidebar shows a message instead of saving a file.
+A header that is missing, malformed, or different from the job manifest, or a
+body whose digest does not match, is usually transient: retry the download,
+or retrain the job if it keeps failing. A ``409`` ``package_integrity_error``
+means the server itself refused to serve the wheel because the bytes on disk
+no longer match the recorded digest — contact the backend administrator. Jobs
+whose packaging failed (for example because safe weights are missing or
+corrupt) end as ``failed`` and offer no download at all.
 
 Dataset class metadata
 -----------------------
