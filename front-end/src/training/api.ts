@@ -178,12 +178,48 @@ export class TrainingApiClient {
     return this.request(`/jobs/${encodeURIComponent(jobId)}/logs/tail?${query}`);
   }
 
-  async downloadModelPackage(jobId: string): Promise<Blob> {
+  /**
+   * Download the authenticated job's wheel, verifying its integrity before any
+   * byte is returned.
+   *
+   * The authoritative digest comes from the job manifest (`expectedSha256`).
+   * The server recomputes and exposes the digest of the bytes it serves
+   * through the `X-NNM-SHA256` response header; the header must be present,
+   * well-formed and equal to the expected digest. The body is then digested
+   * client-side with Web Crypto and must match the expected digest too, so a
+   * corrupted or substituted response is never trusted on the header alone.
+   *
+   * @throws {BackendApiError} On a missing token, a non-OK response, or any
+   *   missing/malformed/mismatched header or body digest. No Blob is produced
+   *   unless every check passes.
+   */
+  async downloadModelPackage(jobId: string, expectedSha256: string): Promise<Blob> {
+    const expected = requireSha256Hex(expectedSha256, 400, "invalid_expected_digest",
+      "Il digest SHA-256 atteso dal manifest del job non è valido");
     const response = await fetch(`${this.baseUrl}/jobs/${encodeURIComponent(jobId)}/package`, {
       headers: this.authHeaders(),
     });
     if (!response.ok) throw await responseError(response);
-    return await response.blob();
+
+    const header = response.headers.get("x-nnm-sha256");
+    if (header === null) {
+      throw new BackendApiError(502, "package_digest_missing",
+        "Il server non ha restituito il digest SHA-256 del package; il download è stato annullato");
+    }
+    const declared = requireSha256Hex(header, 502, "package_digest_invalid",
+      "Il digest SHA-256 restituito dal server non è valido; il download è stato annullato");
+    if (declared !== expected) {
+      throw new BackendApiError(502, "package_digest_mismatch",
+        "Il digest SHA-256 restituito dal server non corrisponde al manifest del job; il download è stato annullato");
+    }
+
+    const bytes = new Uint8Array(await response.arrayBuffer());
+    const bodyDigest = await sha256Hex(bytes);
+    if (bodyDigest !== expected) {
+      throw new BackendApiError(502, "package_corrupted",
+        "Il package scaricato non ha superato la verifica di integrità SHA-256; il download è stato annullato. Riprova o rigenera il job");
+    }
+    return new Blob([bytes], { type: "application/octet-stream" });
   }
 
   async subscribeTrainingEvents(
@@ -282,6 +318,20 @@ async function responseError(response: Response): Promise<BackendApiError> {
       ? detail.message
       : response.statusText;
   return new BackendApiError(response.status, code, `${response.status}: ${message}`);
+}
+
+const SHA256_HEX = /^[0-9a-fA-F]{64}$/;
+
+/** Return the lowercase hex form of a well-formed SHA-256 digest or throw. */
+function requireSha256Hex(value: string, status: number, code: string, message: string): string {
+  if (!SHA256_HEX.test(value)) throw new BackendApiError(status, code, message);
+  return value.toLowerCase();
+}
+
+/** Compute the lowercase hex SHA-256 digest of bytes with Web Crypto. */
+async function sha256Hex(bytes: Uint8Array<ArrayBuffer>): Promise<string> {
+  const digest = await crypto.subtle.digest("SHA-256", bytes);
+  return Array.from(new Uint8Array(digest), (byte) => byte.toString(16).padStart(2, "0")).join("");
 }
 
 function abortableDelay(milliseconds: number, signal: AbortSignal): Promise<void> {

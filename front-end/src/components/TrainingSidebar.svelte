@@ -415,7 +415,7 @@
   async function downloadModelPackage(job: TrainingJobStatus) {
     if (!job.model_package) return;
     try {
-      const blob = await requireApi().downloadModelPackage(job.id);
+      const blob = await requireApi().downloadModelPackage(job.id, job.model_package.sha256);
       const url = URL.createObjectURL(blob);
       const link = document.createElement("a");
       link.href = url;
