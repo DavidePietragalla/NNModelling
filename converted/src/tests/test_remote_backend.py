@@ -349,6 +349,218 @@ def test_manager_recovery_records_terminal_event_for_interrupted_job(tmp_path):
     assert manager.events(queued.id, owner_connection_id=OWNER)[-1]["type"] == "failed"
 
 
+def test_recovery_failed_job_is_removed_from_queue_and_contract_preserved(tmp_path):
+    """D5: a failed job must not remain claimable; metadata/events/logs stay.
+
+    A crash after enqueue but before the claim persisted leaves the record
+    marked ``running`` with its queue entry still present. Recovery fails the
+    job and must clean the queue entry without deleting the job or its audit
+    trail.
+    """
+
+    store = InMemoryJobStore()
+    manager = JobManager(store, tmp_path, [ImmediateExecutor()])
+    queued = manager.submit(submission(), owner_connection_id=OWNER)
+    record = store.get_job(queued.id)
+    assert record is not None
+    record["status"] = "running"
+    store.save_job(queued.id, record)
+    assert queued.id in store.queue
+
+    manager._recover()
+
+    recovered = manager.status(queued.id, owner_connection_id=OWNER)
+    assert recovered.status == "failed"
+    assert recovered.finished_at is not None
+    # Queue invariants: entry removed, not claimable, nothing left to drain.
+    assert store.queue == {}
+    assert store.claim_next() is None
+    # Visibility contracts: list/get/events/logs remain available.
+    assert [job.id for job in manager.list_status(owner_connection_id=OWNER)] == [queued.id]
+    assert manager.events(queued.id, owner_connection_id=OWNER)[-1]["type"] == "failed"
+    assert manager.logs(queued.id, owner_connection_id=OWNER) == {"stdout": "", "stderr": ""}
+
+
+def test_recovery_keeps_queued_jobs_claimable(tmp_path):
+    """D5: recovery re-enqueues queued jobs; only failed jobs leave the queue."""
+
+    store = InMemoryJobStore()
+    manager = JobManager(store, tmp_path, [ImmediateExecutor()])
+    queued = manager.submit(submission(), owner_connection_id=OWNER)
+    assert queued.id in store.queue
+
+    manager._recover()
+
+    assert manager.status(queued.id, owner_connection_id=OWNER).status == "queued"
+    assert store.claim_next() == queued.id
+
+
+def test_failed_job_is_not_claimable_after_executor_failure(tmp_path):
+    """D5: the real execution failure path leaves no claimable queue entry."""
+
+    class FailingExecutor(ImmediateExecutor):
+        name = "failing"
+
+        def submit(self, job, artifact_dir, on_heartbeat, on_finished):
+            stdout = Path(artifact_dir, "stdout.log")
+            stderr = Path(artifact_dir, "stderr.log")
+            stdout.write_text("started\n", encoding="utf-8")
+            stderr.write_text("Traceback\nboom\n", encoding="utf-8")
+            on_finished(1, {"stdout": str(stdout), "stderr": str(stderr)})
+            return {"stdout": str(stdout), "stderr": str(stderr)}
+
+    store = InMemoryJobStore()
+    manager = JobManager(store, tmp_path, [FailingExecutor()])
+    queued = manager.submit(submission(), owner_connection_id=OWNER)
+    assert queued.id in store.queue
+
+    assert manager.run_once() is True
+
+    failed = manager.status(queued.id, owner_connection_id=OWNER)
+    assert failed.status == "failed"
+    assert store.queue == {}
+    assert store.claim_next() is None
+    assert manager.logs(queued.id, owner_connection_id=OWNER)["stderr"] == "Traceback\nboom\n"
+
+
+class _FailingMarkFailedStore(InMemoryJobStore):
+    """In-memory store whose atomic failed transition always raises."""
+
+    def mark_failed(self, job_id, changes):
+        del job_id, changes
+        raise RuntimeError("injected persistence failure")
+
+
+class _FlakyMarkFailedStore(InMemoryJobStore):
+    """In-memory store whose atomic failed transition fails N times first."""
+
+    def __init__(self, failures_before_success: int) -> None:
+        super().__init__()
+        self.remaining = failures_before_success
+
+    def mark_failed(self, job_id, changes):
+        if self.remaining > 0:
+            self.remaining -= 1
+            raise RuntimeError("injected transient persistence failure")
+        return super().mark_failed(job_id, changes)
+
+
+class _PassiveExecutor:
+    """Executor double that never reports completion on its own."""
+
+    name = "passive"
+    kind = "local"
+
+    def can_run(self, resources):
+        del resources
+        return True
+
+    def describe(self):
+        return {"id": self.name, "kind": self.kind, "capacity": {}, "enabled": True}
+
+    def submit(self, job, artifact_dir, on_heartbeat, on_finished):
+        del job, artifact_dir, on_heartbeat, on_finished
+        return {"passive": True}
+
+    def cancel(self, job_id):
+        del job_id
+        return True
+
+
+def _recover_with_working_store(record, tmp_path, *, owner=OWNER):
+    """Simulate a restart: a fresh manager over a fresh working store."""
+    working = InMemoryJobStore()
+    working.save_job(record["id"], record)
+    working.enqueue(record["id"], int(record["priority"]), record["created_at"])
+    manager = JobManager(working, tmp_path, [ImmediateExecutor()])
+    manager._recover()
+    return manager, working
+
+
+def test_recovery_store_failure_leaves_no_partial_state(tmp_path, monkeypatch):
+    """H1: a failed atomic transition must leave neither failed+queued nor
+    dequeued+running state, and the manager must surface the failure."""
+
+    monkeypatch.setattr("backend.manager.FAILED_TRANSITION_BACKOFF_SECONDS", 0)
+    store = _FailingMarkFailedStore()
+    manager = JobManager(store, tmp_path, [ImmediateExecutor()])
+    queued = manager.submit(submission(), owner_connection_id=OWNER)
+    record = store.get_job(queued.id)
+    assert record is not None
+    record["status"] = "running"
+    store.save_job(queued.id, record)
+    assert queued.id in store.queue
+
+    with pytest.raises(RuntimeError, match="injected persistence failure"):
+        manager._recover()
+
+    # Atomic contract: neither the record nor the queue changed.
+    assert store.get_job(queued.id)["status"] == "running"
+    assert queued.id in store.queue
+    # No failed event was emitted (the transition never committed).
+    assert all(event["type"] != "failed" for event in store.get_events(queued.id))
+
+    # Restart recovery over the same persisted state reconciles cleanly.
+    reconciled, working = _recover_with_working_store(record, tmp_path)
+    assert reconciled.status(queued.id, owner_connection_id=OWNER).status == "failed"
+    assert working.queue == {}
+    assert working.claim_next() is None
+
+
+def test_failed_transition_retries_and_heals_transient_store_failure(tmp_path, monkeypatch):
+    """H1: a transient store failure on the failed transition is retried."""
+
+    monkeypatch.setattr("backend.manager.FAILED_TRANSITION_BACKOFF_SECONDS", 0)
+    store = _FlakyMarkFailedStore(failures_before_success=1)
+    manager = JobManager(store, tmp_path, [ImmediateExecutor()])
+    queued = manager.submit(submission(), owner_connection_id=OWNER)
+    record = store.get_job(queued.id)
+    assert record is not None
+    record["status"] = "running"
+    store.save_job(queued.id, record)
+    assert queued.id in store.queue
+
+    manager._recover()
+
+    recovered = manager.status(queued.id, owner_connection_id=OWNER)
+    assert recovered.status == "failed"
+    assert store.queue == {}
+    assert store.claim_next() is None
+    assert manager.events(queued.id, owner_connection_id=OWNER)[-1]["type"] == "failed"
+
+
+def test_terminal_persistence_failure_keeps_recoverable_running_state(tmp_path, monkeypatch):
+    """H1: a store failure after executor completion must not be masked.
+
+    The job stays a tracked ``running`` job (active entry retained) with no
+    partial failed transition, so stop()/restart can reconcile it.
+    """
+
+    monkeypatch.setattr("backend.manager.FAILED_TRANSITION_BACKOFF_SECONDS", 0)
+    store = _FailingMarkFailedStore()
+    manager = JobManager(store, tmp_path, [_PassiveExecutor()])
+    queued = manager.submit(submission(), owner_connection_id=OWNER)
+    assert manager.run_once() is True
+    assert manager.status(queued.id, owner_connection_id=OWNER).status == "running"
+    assert queued.id in manager._active
+
+    with pytest.raises(RuntimeError, match="injected persistence failure"):
+        manager._finished(queued.id, 1, {"stdout": "x", "stderr": "y"})
+
+    # No partial transition: still running, still tracked, no failed event.
+    assert manager.status(queued.id, owner_connection_id=OWNER).status == "running"
+    assert queued.id in manager._active
+    assert all(event["type"] != "failed" for event in store.get_events(queued.id))
+
+    # Restart recovery reconciles the same persisted record.
+    record = store.get_job(queued.id)
+    assert record is not None
+    reconciled, working = _recover_with_working_store(record, tmp_path)
+    assert reconciled.status(queued.id, owner_connection_id=OWNER).status == "failed"
+    assert working.queue == {}
+    assert reconciled.events(queued.id, owner_connection_id=OWNER)[-1]["type"] == "failed"
+
+
 def test_manager_cancel_queued_job_emits_cancelled_event(tmp_path):
     """Queued and running cancellations must have the same observable transition."""
 

@@ -26,6 +26,11 @@ import pytest
 PROJECT_ROOT = Path(__file__).resolve().parent.parent.parent  # converted/
 FIXTURES_DIR = PROJECT_ROOT.parent / "examples" / "nntrees"
 
+# These tests train a real epoch through main.py on the real MNIST dataset
+# (network download when not cached). They are NOT part of the canonical
+# fast/service/e2e gates; run them explicitly with -m legacy_e2e.
+pytestmark = pytest.mark.legacy_e2e
+
 
 def test_autoencoder_inference(tmp_path):
     """Full pipeline: convert -> train 1 epoch -> infer -> validate output."""
@@ -44,25 +49,26 @@ def test_autoencoder_inference(tmp_path):
     )
 
     # 2. Train for 1 epoch (weights.pt lands in PROJECT_ROOT)
-    result = subprocess.run([
-        "uv", "run", "python", "src/main.py",
-        "--config-path", str(cfg_dir),
-        "--config-name", "base",
-        "trainer.max_epochs=1",
-        "trainer.accelerator=cpu",
-        "+trainer.enable_progress_bar=false",
-        "+wandb.mode=disabled",
-        "dataset.num_workers=2",
-    ], capture_output=True, text=True, timeout=600, cwd=str(PROJECT_ROOT))
-    assert result.returncode == 0, (
-        f"main.py failed:\nSTDERR:\n{result.stderr}\nSTDOUT (last 2000):\n{result.stdout[-2000:]}"
-    )
-
-    # 3. Verify checkpoint exists
     weights_path = PROJECT_ROOT / "weights.pt"
-    assert weights_path.exists(), f"No weights.pt found at {weights_path}"
-
+    weights_safetensors_path = PROJECT_ROOT / "weights.safetensors"
     try:
+        result = subprocess.run([
+            "uv", "run", "python", "src/main.py",
+            "--config-path", str(cfg_dir),
+            "--config-name", "base",
+            "trainer.max_epochs=1",
+            "trainer.accelerator=cpu",
+            "+trainer.enable_progress_bar=false",
+            "+wandb.mode=disabled",
+            "dataset.num_workers=2",
+        ], capture_output=True, text=True, timeout=600, cwd=str(PROJECT_ROOT))
+        assert result.returncode == 0, (
+            f"main.py failed:\nSTDERR:\n{result.stderr}\nSTDOUT (last 2000):\n{result.stdout[-2000:]}"
+        )
+
+        # 3. Verify checkpoint exists
+        assert weights_path.exists(), f"No weights.pt found at {weights_path}"
+
         # 4. Run inference
         output_path = tmp_path / "predictions.json"
         result = subprocess.run([
@@ -88,9 +94,9 @@ def test_autoencoder_inference(tmp_path):
         assert "target" in first, "Missing 'target' key in prediction entry"
         assert "prediction" in first, "Missing 'prediction' key in prediction entry"
     finally:
-        # Clean up weights.pt
-        if weights_path.exists():
-            weights_path.unlink()
+        # Clean up weights.pt and weights.safetensors even after failures
+        weights_path.unlink(missing_ok=True)
+        weights_safetensors_path.unlink(missing_ok=True)
 
 
 def test_mnist_classifier_inference(tmp_path):
@@ -110,25 +116,26 @@ def test_mnist_classifier_inference(tmp_path):
     )
 
     # 2. Train for 1 epoch (weights.pt lands in PROJECT_ROOT)
-    result = subprocess.run([
-        "uv", "run", "python", "src/main.py",
-        "--config-path", str(cfg_dir),
-        "--config-name", "base",
-        "trainer.max_epochs=1",
-        "trainer.accelerator=cpu",
-        "+trainer.enable_progress_bar=false",
-        "+wandb.mode=disabled",
-        "dataset.num_workers=2",
-    ], capture_output=True, text=True, timeout=600, cwd=str(PROJECT_ROOT))
-    assert result.returncode == 0, (
-        f"main.py failed:\nSTDERR:\n{result.stderr}\nSTDOUT (last 2000):\n{result.stdout[-2000:]}"
-    )
-
-    # 3. Verify checkpoint exists
     weights_path = PROJECT_ROOT / "weights.pt"
-    assert weights_path.exists(), f"No weights.pt found at {weights_path}"
-
+    weights_safetensors_path = PROJECT_ROOT / "weights.safetensors"
     try:
+        result = subprocess.run([
+            "uv", "run", "python", "src/main.py",
+            "--config-path", str(cfg_dir),
+            "--config-name", "base",
+            "trainer.max_epochs=1",
+            "trainer.accelerator=cpu",
+            "+trainer.enable_progress_bar=false",
+            "+wandb.mode=disabled",
+            "dataset.num_workers=2",
+        ], capture_output=True, text=True, timeout=600, cwd=str(PROJECT_ROOT))
+        assert result.returncode == 0, (
+            f"main.py failed:\nSTDERR:\n{result.stderr}\nSTDOUT (last 2000):\n{result.stdout[-2000:]}"
+        )
+
+        # 3. Verify checkpoint exists
+        assert weights_path.exists(), f"No weights.pt found at {weights_path}"
+
         # 4. Run inference
         output_path = tmp_path / "predictions.json"
         result = subprocess.run([
@@ -154,6 +161,6 @@ def test_mnist_classifier_inference(tmp_path):
         assert "target" in first, "Missing 'target' key in prediction entry"
         assert "prediction" in first, "Missing 'prediction' key in prediction entry"
     finally:
-        # Clean up weights.pt
-        if weights_path.exists():
-            weights_path.unlink()
+        # Clean up weights.pt and weights.safetensors even after failures
+        weights_path.unlink(missing_ok=True)
+        weights_safetensors_path.unlink(missing_ok=True)

@@ -65,6 +65,18 @@ class JobSubmission(BaseModel):
     priority: int = Field(default=0, ge=0, le=1_000_000)
     package_name: str | None = Field(default=None, max_length=100)
 
+    @field_validator("schema_version")
+    @classmethod
+    def only_supported_schema_version(cls, value: int) -> int:
+        """Reject unsupported request schema versions explicitly.
+
+        Only schema version 1 is defined; any other value must fail loudly
+        instead of being persisted as if it were understood.
+        """
+        if value != 1:
+            raise ValueError("schema_version must be 1; other versions are not supported")
+        return value
+
     @field_validator("package_name")
     @classmethod
     def package_name_has_required_prefix(cls, value: str | None) -> str | None:

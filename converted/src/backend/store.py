@@ -32,6 +32,8 @@ class JobStore(Protocol):
 
     def claim_next(self) -> str | None: ...
 
+    def mark_failed(self, job_id: str, changes: dict[str, Any]) -> dict[str, Any] | None: ...
+
     def append_event(self, job_id: str, event: dict[str, Any]) -> None: ...
 
     def get_events(self, job_id: str, after: EventCursor = None) -> list[dict[str, Any]]: ...
@@ -74,6 +76,26 @@ class InMemoryJobStore:
             job_id = min(self.queue, key=self.queue.__getitem__)
             self.queue.pop(job_id)
             return job_id
+
+    def mark_failed(self, job_id: str, changes: dict[str, Any]) -> dict[str, Any] | None:
+        """Atomically persist a failed job and remove it from the runnable queue.
+
+        The record update and the queue removal happen under the store lock, so
+        an observer can never see a job both failed and still queued, nor a
+        dequeued job still running. Returns the updated record, or None when
+        the job does not exist. Persistence failures raise and leave the
+        previous state untouched.
+        """
+        with self._lock:
+            data = self.jobs.get(job_id)
+            if data is None:
+                return None
+            updated = json.loads(json.dumps(data))
+            updated.update(json.loads(json.dumps(changes)))
+            updated["status"] = "failed"
+            self.jobs[job_id] = json.loads(json.dumps(updated))
+            self.queue.pop(job_id, None)
+            return json.loads(json.dumps(updated))
 
     def append_event(self, job_id: str, event: dict[str, Any]) -> None:
         with self._lock:
@@ -166,6 +188,42 @@ class ValkeyJobStore:
             self.queue_prefix,
         )
         return str(result) if result else None
+
+    def mark_failed(self, job_id: str, changes: dict[str, Any]) -> dict[str, Any] | None:
+        """Atomically persist a failed job and remove it from the runnable queue.
+
+        The record update, the priority-bucket removal, and the priority-index
+        cleanup execute as a single Lua script, so a failed job can never be
+        observed both failed and still queued, nor dequeued while still
+        running. Returns the updated record, or None when the job does not
+        exist. A script or transport failure aborts before any write and
+        raises, leaving the previous state untouched.
+        """
+        record = self.client.eval(
+            """
+            local record = redis.call('GET', KEYS[1])
+            if not record then return nil end
+            local job = cjson.decode(record)
+            local changes = cjson.decode(ARGV[1])
+            for key, value in pairs(changes) do job[key] = value end
+            job['status'] = 'failed'
+            redis.call('SET', KEYS[1], cjson.encode(job))
+            local priority = tostring(job['priority'])
+            local queue = KEYS[2] .. priority
+            redis.call('ZREM', queue, ARGV[2])
+            if redis.call('ZCARD', queue) == 0 then
+                redis.call('ZREM', KEYS[3], priority)
+            end
+            return cjson.encode(job)
+            """,
+            3,
+            f"job:{job_id}",
+            self.queue_prefix,
+            self.queue_priorities,
+            json.dumps(changes),
+            job_id,
+        )
+        return json.loads(record) if record else None
 
     def append_event(self, job_id: str, event: dict[str, Any]) -> None:
         self.client.xadd(f"job:{job_id}:events", {"event": json.dumps(event)}, maxlen=1000)

@@ -6,6 +6,7 @@ import json
 import os
 import re
 import threading
+import time
 import uuid
 from pathlib import Path
 from typing import Any
@@ -18,6 +19,13 @@ from model_package.exporter import build_model_wheel
 
 
 TERMINAL_STATES = {"succeeded", "failed", "cancelled"}
+
+# The failed transition is persisted atomically by the store (record update +
+# queue removal in one operation). A bounded retry heals transient store
+# failures; a persistent failure raises so the job keeps a recoverable running
+# state instead of a partial transition.
+FAILED_TRANSITION_ATTEMPTS = 3
+FAILED_TRANSITION_BACKOFF_SECONDS = 0.2
 
 
 class JobManager:
@@ -285,10 +293,10 @@ class JobManager:
         self._event(job_id, "heartbeat", details)
 
     def _finished(self, job_id: str, return_code: int, details: dict[str, Any]) -> None:
-        with self._lock:
-            self._active.pop(job_id, None)
         job = self.store.get_job(job_id)
         if job is None or job.get("status") in TERMINAL_STATES:
+            with self._lock:
+                self._active.pop(job_id, None)
             return
         wandb_url = _find_wandb_url(job)
         publish_wandb_url = wandb_url is not None and wandb_url != job.get("wandb_url")
@@ -300,6 +308,7 @@ class JobManager:
                 error=None,
                 wandb_url=wandb_url,
             )
+            self._drop_active(job_id)
             if publish_wandb_url:
                 self._event(job_id, "wandb_ready", {"wandb_url": wandb_url})
             self._export_model_package(job_id)
@@ -313,9 +322,20 @@ class JobManager:
                 error=error,
                 wandb_url=wandb_url,
             )
+            self._drop_active(job_id)
             if publish_wandb_url:
                 self._event(job_id, "wandb_ready", {"wandb_url": wandb_url})
             self._event(job_id, "failed", {"error": error, **details})
+
+    def _drop_active(self, job_id: str) -> None:
+        """Remove a finished job from the active set.
+
+        Called only after the terminal state was persisted: keeping the entry
+        on a store failure leaves the job as a tracked, recoverable ``running``
+        state that stop()/cancellation or restart recovery can reconcile.
+        """
+        with self._lock:
+            self._active.pop(job_id, None)
 
     def _failure_text(self, job: dict[str, Any], details: dict[str, Any]) -> str:
         """Build a compact error while retaining full logs on disk."""
@@ -439,12 +459,33 @@ class JobManager:
         return JobStatus.model_validate({key: job.get(key) for key in JobStatus.model_fields})
 
     def _set_status(self, job_id: str, status: str, **changes: Any) -> None:
+        if status == "failed":
+            self._persist_failed(job_id, changes)
+            return
         job = self.store.get_job(job_id)
         if job is None:
             return
         job["status"] = status
         job.update(changes)
         self.store.save_job(job_id, job)
+
+    def _persist_failed(self, job_id: str, changes: dict[str, Any]) -> None:
+        """Atomically persist the failed transition, retrying transient failures.
+
+        Uses the store's ``mark_failed`` so the record update and the queue
+        removal are one atomic operation. A persistence failure is never
+        swallowed: after a bounded number of attempts the exception propagates,
+        leaving the job in its previous recoverable state rather than a partial
+        transition (``failed``+queued or dequeued+``running``).
+        """
+        for attempt in range(FAILED_TRANSITION_ATTEMPTS):
+            try:
+                self.store.mark_failed(job_id, changes)
+                return
+            except Exception:
+                if attempt == FAILED_TRANSITION_ATTEMPTS - 1:
+                    raise
+                time.sleep(FAILED_TRANSITION_BACKOFF_SECONDS)
 
     def _event(self, job_id: str, event_type: str, details: dict[str, Any]) -> None:
         self.store.append_event(job_id, {"type": event_type, "at": utc_now(), **details})
