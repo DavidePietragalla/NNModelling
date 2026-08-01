@@ -1,7 +1,8 @@
 # Fase di elisione e semplificazione
 
-**Stato:** decisioni D1/D3/D4/D5/D7 implementate; review finale in corso;
-esecuzione CI remota in attesa di push; Milestone B non autorizzata
+**Stato:** decisioni D1/D3/D4/D5/D7 implementate; review locale approvata;
+CI remota verde su [PR #33](https://github.com/LucaSforza/NNModelling/pull/33)
+(sei gate); Milestone B non autorizzata e non iniziata
 
 **Data:** 2026-08-01
 

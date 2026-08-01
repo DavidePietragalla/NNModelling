@@ -1,7 +1,8 @@
 # Milestone A — Testing foundation: risultati e bug register
 
-**Stato:** decisioni D1/D3/D4/D5/D7 implementate; review finale in corso;
-esecuzione CI remota in attesa di push
+**Stato:** decisioni D1/D3/D4/D5/D7 implementate; review locale approvata;
+CI remota verde su [PR #33](https://github.com/LucaSforza/NNModelling/pull/33);
+Milestone B non autorizzata e non iniziata
 
 **Branch:** `milestone-a-testing-foundation`
 
@@ -161,8 +162,22 @@ Il workflow definisce sei gate:
 5. `backend-e2e`, serializzato, con Valkey reale, CPU e W&B disabilitato;
 6. `mcp-ci`.
 
-I comandi sono stati riprodotti localmente. Il workflow GitHub non è stato
-eseguito da remoto perché non sono stati richiesti commit o push.
+I comandi sono stati riprodotti localmente e poi eseguiti da remoto: il run
+[30703415396](https://github.com/LucaSforza/NNModelling/actions/runs/30703415396)
+della [PR #33](https://github.com/LucaSforza/NNModelling/pull/33) (head
+`382651c`) è concluso con successo su tutti e sei i gate in circa 2 minuti e
+8 secondi:
+
+| Gate | Esito | Durata |
+| --- | --- | --- |
+| `frontend-ci` (check · unit · build) | success | 27 s |
+| `frontend-integration` (mninst + autoencoder_mnist) | success | 2 min 5 s |
+| `backend-fast` (`-m fast`) | success | 1 min 22 s |
+| `backend-service` (Valkey reale) | success | 1 min 32 s |
+| `backend-e2e` (serializzato, Valkey reale) | success | 2 min 1 s |
+| `mcp-ci` | success | 24 s |
+
+La PR #33 resta aperta; non è stato richiesto o effettuato alcun merge.
 
 ## 4. Evidenza di validazione locale
 
@@ -387,7 +402,9 @@ futuro è tracciato in
 
 ## 7. Limiti e rischi residui
 
-- Il workflow CI è stato validato localmente ma non eseguito su GitHub.
+- Il workflow CI è stato eseguito da remoto: tutti e sei i gate sono verdi sul
+  run [30703415396](https://github.com/LucaSforza/NNModelling/actions/runs/30703415396)
+  della [PR #33](https://github.com/LucaSforza/NNModelling/pull/33).
 - Quattro E2E Python legacy continuano a usare MNIST reale e possono dipendere
   dal download; sono esclusi dai gate CI obbligatori e restano manuali.
 - La matrice obbligatoria copre soltanto il classificatore MNIST e
@@ -401,11 +418,17 @@ futuro è tracciato in
 
 ## 8. Gate verso la Milestone B
 
-La Milestone B resta bloccata. Prima dell'elisione sono ancora richiesti:
+La Milestone B resta bloccata e non è iniziata. Prima dell'elisione sono
+ancora richiesti:
 
-1. esecuzione verde dei sei job GitHub dopo autorizzazione a commit/push;
+1. ~~esecuzione verde dei sei job GitHub dopo autorizzazione a commit/push~~
+   **COMPLETATO:** tutti e sei i gate sono verdi sul run
+   [30703415396](https://github.com/LucaSforza/NNModelling/actions/runs/30703415396)
+   della [PR #33](https://github.com/LucaSforza/NNModelling/pull/33). La CI
+   remota non è più in attesa.
 2. presentazione di questo report all'utente;
 3. seconda approvazione esplicita dell'utente.
 
-La review locale è conclusa con verdetto **Approved locally pending remote
-CI** e senza finding locali aperti.
+La review locale è conclusa con verdetto **Approved** e senza finding locali
+aperti. Il qualificatore "pending remote CI" del verdetto precedente è
+decaduto perché la CI remota è ora verde.
