@@ -13,12 +13,16 @@ Run with::
 
 from __future__ import annotations
 
+import asyncio
 import json
 import threading
 from datetime import UTC, datetime, timedelta
+from pathlib import Path
 
+import httpx
 import pytest
 
+from backend.app import create_app
 from backend.auth import AuthError, AuthService, ValkeyAuthStore
 from backend.manager import JobManager
 from backend.store import ValkeyJobStore
@@ -350,6 +354,133 @@ def test_valkey_mark_failed_failure_leaves_no_partial_state_and_recovery_reconci
     assert clean_valkey.zscore("queue:priorities", "10") is None
     assert ValkeyJobStore(url).claim_next() is None
     assert restarted.events(queued.id, owner_connection_id=OWNER)[-1]["type"] == "failed"
+
+
+class _SucceedingExecutor:
+    """Executor double that reports success without writing safe weights.
+
+    The real exporter then fails deterministically on the missing
+    ``weights.safetensors``, which is exactly the D4 packaging-failure path
+    this service test must exercise against the real store: no exporter is
+    monkeypatched, no network is involved, and only the executor — the
+    component that normally produces the weights — is a double.
+    """
+
+    name = "fake"
+    kind = "local"
+
+    def can_run(self, resources):
+        del resources
+        return True
+
+    def describe(self):
+        return {"id": self.name, "kind": self.kind, "capacity": {}, "enabled": True}
+
+    def submit(self, job, artifact_dir, on_heartbeat, on_finished):
+        del job, on_heartbeat
+        root = Path(artifact_dir)
+        (root / "stdout.log").write_text("training ok\n", encoding="utf-8")
+        (root / "stderr.log").write_text("", encoding="utf-8")
+        on_finished(
+            0,
+            {"stdout": str(root / "stdout.log"), "stderr": str(root / "stderr.log")},
+        )
+        return {"worker": "fake"}
+
+    def cancel(self, job_id):
+        del job_id
+        return True
+
+
+def test_package_export_failure_on_real_valkey_fails_job_atomically(tmp_path, clean_valkey):
+    """D4 on the real store: a missing wheel output fails the job atomically.
+
+    A job whose training finished (return code 0) but whose wheel export
+    cannot run — here because the executor never wrote safe weights — must
+    record a client-visible ``package_error``, emit ``package_failed`` before
+    the terminal ``failed`` event, persist the failed record and the
+    queue/bucket/index cleanup in the same atomic Valkey transition, keep
+    job/list/events/error/logs visible to its owner, and never expose a
+    downloadable package (the API answers ``404``).
+    """
+    url = get_test_valkey_url()
+    store = ValkeyJobStore(url)
+    auth = AuthService(ValkeyAuthStore(url))
+    pairing = auth.create_pairing("D4 service owner", client_host="127.0.0.1")
+    auth.approve(pairing.request_id)
+    owner = pairing.connection_id
+
+    manager = JobManager(store, tmp_path / "jobs", [_SucceedingExecutor()])
+    queued = manager.submit(classification_submission(), owner_connection_id=owner)
+    assert clean_valkey.zscore("queue:priority:10", queued.id) is not None
+    assert clean_valkey.zscore("queue:priorities", "10") is not None
+
+    assert manager.run_once() is True
+
+    status = manager.status(queued.id, owner_connection_id=owner)
+    assert status.status == "failed"
+    assert status.finished_at is not None
+    assert status.model_package is None
+    assert "weights.safetensors" in (status.package_error or "")
+    assert "weights.safetensors" in (status.error or "")
+
+    # D4/D5: the failed record and the queue/bucket/index cleanup committed on
+    # the real store; nothing is claimable and no manifest was ever written.
+    assert store.get_job(queued.id)["status"] == "failed"
+    assert clean_valkey.zscore("queue:priority:10", queued.id) is None
+    assert clean_valkey.zcard("queue:priority:10") == 0
+    assert clean_valkey.zscore("queue:priorities", "10") is None
+    assert store.claim_next() is None
+    assert not (Path(status.artifact_dir) / "model-package.json").exists()
+
+    # Event contract: package_failed precedes failed.
+    events = manager.events(queued.id, owner_connection_id=owner)
+    types = [event["type"] for event in events]
+    assert types.index("package_failed") < types.index("failed")
+
+    # Ownership visibility: job, list, events, error, and logs stay available.
+    assert [job.id for job in manager.list_status(owner_connection_id=owner)] == [queued.id]
+    assert manager.logs(queued.id, owner_connection_id=owner)["stdout"] == "training ok\n"
+    assert Path(status.artifact_dir).is_dir()
+
+    # API surface with the real auth store: the owner sees the failed job,
+    # its events and logs, and the download answers 404.
+    app = create_app(manager, auth_service=auth, admin_token="admin-secret")
+
+    async def exercise_api() -> None:
+        transport = httpx.ASGITransport(app=app)
+        async with app.router.lifespan_context(app):
+            async with httpx.AsyncClient(transport=transport, base_url="http://test") as client:
+                headers = {"authorization": f"Bearer {pairing.token}"}
+                job_response = await client.get(f"/jobs/{queued.id}", headers=headers)
+                assert job_response.status_code == 200
+                body = job_response.json()
+                assert body["status"] == "failed"
+                assert body["model_package"] is None
+                assert body["package_error"] is not None
+                assert "weights.safetensors" in body["package_error"]
+
+                listed = await client.get("/jobs", headers=headers)
+                assert [job["id"] for job in listed.json()] == [queued.id]
+
+                events_response = await client.get(f"/jobs/{queued.id}/events", headers=headers)
+                assert events_response.status_code == 200
+                event_types = [
+                    json.loads(line.removeprefix("data: "))["type"]
+                    for line in events_response.text.splitlines()
+                    if line.startswith("data: ")
+                ]
+                assert "failed" in event_types
+                assert event_types.index("package_failed") < event_types.index("failed")
+
+                logs = await client.get(f"/jobs/{queued.id}/logs", headers=headers)
+                assert logs.status_code == 200
+                assert logs.json()["stdout"] == "training ok\n"
+
+                package = await client.get(f"/jobs/{queued.id}/package", headers=headers)
+                assert package.status_code == 404
+
+    asyncio.run(exercise_api())
 
 
 def test_required_valkey_mode_flag_reflects_environment(clean_valkey, monkeypatch):
