@@ -16,20 +16,16 @@ import { readFileSync } from "node:fs";
 import { resolve } from "node:path";
 import { Diagram } from "../../Diagram.svelte";
 import { NNTree } from "../../conversion/nnTree";
-import type { SequentialData, SubflowData } from "../../conversion/nnTree";
 import { stubWindow, unstubWindow } from "../helpers";
 import {
   loadManifest,
   getTargetDiagrams,
   DIAGRAMS_DIR,
+  parseNNTree,
+  assertNNTreeReferenceIntegrity,
   type Tier,
   type NamedEntry,
 } from "./helpers";
-
-interface ParsedNode {
-  data?: { type?: string; children?: string[]; [key: string]: unknown };
-  children?: string[];
-}
 
 // ---------------------------------------------------------------------------
 // Setup
@@ -58,12 +54,14 @@ function compileDiagram(name: string): string {
   return nnTree.toJson();
 }
 
-function parseTree(jsonStr: string): {
-  root: string;
-  lossNode: unknown;
-  nodes: Record<string, unknown>;
-} {
-  return JSON.parse(jsonStr);
+/** Import a diagram and run the TypeEngine, returning the raw result. */
+function refreshTypesFor(name: string) {
+  const filePath = resolve(DIAGRAMS_DIR, `${name}.json`);
+  const content = readFileSync(filePath, "utf-8");
+
+  const diagram = new Diagram();
+  diagram.importFromJson(content);
+  return diagram.refreshTypes();
 }
 
 // ---------------------------------------------------------------------------
@@ -76,7 +74,7 @@ if (shouldRun) {
   describe.each(targets)("Smoke: $name", ({ name }: NamedEntry) => {
     it("compiles diagram without errors", () => {
       const jsonStr = compileDiagram(name);
-      const tree = parseTree(jsonStr);
+      const tree = parseNNTree(jsonStr);
 
       expect(tree).toBeTypeOf("object");
       expect(tree.root).toBeTypeOf("string");
@@ -87,22 +85,18 @@ if (shouldRun) {
     });
 
     it("root references a valid node ID", () => {
-      const jsonStr = compileDiagram(name);
-      const tree = parseTree(jsonStr);
+      const tree = parseNNTree(compileDiagram(name));
 
       expect(tree.nodes[tree.root]).toBeDefined();
     });
 
     it("all node children reference valid node IDs", () => {
-      const jsonStr = compileDiagram(name);
-      const tree = parseTree(jsonStr);
+      const tree = parseNNTree(compileDiagram(name));
 
-      for (const [id, node] of Object.entries(
-        tree.nodes as Record<string, ParsedNode>,
-      )) {
-        const data = node.data;
+      for (const [id, node] of Object.entries(tree.nodes)) {
+        const data = (node as { data?: { type?: string } }).data;
         if (data && data.type === "sequential") {
-          for (const childId of node.children ?? []) {
+          for (const childId of (node as { children?: string[] }).children ?? []) {
             expect(tree.nodes[childId]).toBeDefined();
           }
         }
@@ -110,8 +104,7 @@ if (shouldRun) {
     });
 
     it("lossNode has required fields", () => {
-      const jsonStr = compileDiagram(name);
-      const tree = parseTree(jsonStr);
+      const tree = parseNNTree(compileDiagram(name));
 
       const loss = tree.lossNode as Record<string, unknown> | null;
       const entry = manifest.diagrams[name];
@@ -127,44 +120,11 @@ if (shouldRun) {
     });
 
     it("no orphan layers (every referenced node exists in tree)", () => {
-      const jsonStr = compileDiagram(name);
-      const tree = parseTree(jsonStr);
-
-      for (const [id, node] of Object.entries(
-        tree.nodes as Record<string, ParsedNode>,
-      )) {
-        const data = node.data;
-        if (data) {
-          if (data.type === "sequential") {
-            for (const childId of node.children ?? []) {
-              expect(tree.nodes[childId]).toBeDefined();
-            }
-          }
-          if (data.type === "subflow") {
-            // Subflow children are references to the tree-level children
-            for (const childId of node.children ?? []) {
-              expect(tree.nodes[childId]).toBeDefined();
-            }
-            // Internal nodes in subflow's own graph should have valid child refs
-            const sfData = data as unknown as SubflowData;
-            if (sfData.nodes) {
-              for (const [intId, intNode] of Object.entries(sfData.nodes)) {
-                for (const childId of intNode.children) {
-                  // Internal child can be either another internal node or a tree-level child
-                  const isInternal = childId in sfData.nodes;
-                  const isTreeChild = tree.nodes[childId] !== undefined;
-                  expect(isInternal || isTreeChild).toBe(true);
-                }
-              }
-            }
-          }
-        }
-      }
+      assertNNTreeReferenceIntegrity(parseNNTree(compileDiagram(name)));
     });
 
     it("lossNode is not part of tree nodes map", () => {
-      const jsonStr = compileDiagram(name);
-      const tree = parseTree(jsonStr);
+      const tree = parseNNTree(compileDiagram(name));
 
       const loss = tree.lossNode as Record<string, unknown> | null;
       if (loss && loss.name) {
@@ -175,6 +135,23 @@ if (shouldRun) {
         expect(loss).toBeDefined();
       }
     });
+  });
+
+  // Models that declare refreshTypesClean: true must pass TypeEngine
+  // inference with no hard errors. Only the selected models (mninst and
+  // autoencoder_mnist) declare this invariant; other diagrams with known
+  // pre-existing hard type errors are intentionally not asserted here.
+  describe("Smoke: type-check invariant", () => {
+    const cleanModels = targets.filter((t) => t.entry.refreshTypesClean === true);
+
+    it.each(cleanModels.map((t) => t.name))(
+      "%s has no hard type errors after import",
+      (name) => {
+        const result = refreshTypesFor(name);
+        const hardErrors = result.errors.filter((e) => e.severity === "error");
+        expect(hardErrors).toEqual([]);
+      },
+    );
   });
 } else {
   describe.skip("Smoke tier disabled", () => {

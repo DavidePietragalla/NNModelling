@@ -14,16 +14,14 @@
 import { describe, it, expect, afterAll, afterEach } from "vitest";
 import { readFileSync, writeFileSync, existsSync } from "node:fs";
 import { resolve, join } from "node:path";
-import { Diagram } from "../../Diagram.svelte";
-import { NNTree } from "../../conversion/nnTree";
 import { stubWindow, unstubWindow } from "../helpers";
 import {
   loadManifest,
   getTargetDiagrams,
-  DIAGRAMS_DIR,
   tempDir,
   conditionalCleanup,
   runConvert,
+  compileDiagramToFile,
   EXPECTED_YAML_FILES,
   type Tier,
   type NamedEntry,
@@ -39,36 +37,6 @@ const shouldRun = tier === "all" || tier === "convert";
 
 stubWindow();
 afterAll(() => unstubWindow());
-
-// ---------------------------------------------------------------------------
-// Helpers
-// ---------------------------------------------------------------------------
-
-/** Compile a diagram and save the NNTree JSON to a temp file. Returns the path. */
-function compileToTempFile(name: string, outDir: string): string {
-  const diagramPath = resolve(DIAGRAMS_DIR, `${name}.json`);
-  const content = readFileSync(diagramPath, "utf-8");
-
-  const diagram = new Diagram();
-  diagram.importFromJson(content);
-
-  const nnTree = new NNTree(diagram);
-  const jsonStr = nnTree.toJson();
-
-  // debug: check tree structure
-  const parsed = JSON.parse(jsonStr);
-  if (!parsed.root || Object.keys(parsed.nodes).length === 0) {
-    console.error(
-      `[DEBUG] Empty NNTree for ${name}:`,
-      JSON.stringify(parsed).substring(0, 300),
-    );
-    console.error(`[DEBUG] Diagram had ${diagram.nodes.length} nodes`);
-  }
-
-  const jsonPath = join(outDir, `${name}.json`);
-  writeFileSync(jsonPath, jsonStr, "utf-8");
-  return jsonPath;
-}
 
 // ---------------------------------------------------------------------------
 // Tests
@@ -87,14 +55,15 @@ if (shouldRun) {
     });
 
     it("convert.py produces valid Hydra config directory", { timeout: 120_000 }, () => {
-      // Compile diagram -> NNTree JSON
       const workDir = tempDir();
       tmpDirs.push(workDir);
-      const jsonPath = compileToTempFile(name, workDir);
+      const jsonPath = compileDiagramToFile(name, workDir);
 
-      // Run convert.py
+      // Run convert.py with the manifest-declared dataset and class count so
+      // the generated config matches the model's real training contract.
       const cfgDir = runConvert(jsonPath, {
         numClasses: entry.numClasses,
+        dataset: entry.dataset,
       });
 
       // Verify expected YAML files exist
@@ -105,41 +74,80 @@ if (shouldRun) {
           `Expected ${yamlFile} to exist at ${yamlPath}`,
         ).toBe(true);
       }
+
+      // The generated net config must reference the compiled NNTree root node
+      // (file presence alone would accept a malformed conversion).
+      const netYaml = readFileSync(resolve(cfgDir, "net", "custom_sequence.yaml"), "utf-8");
+      const compiled = JSON.parse(readFileSync(jsonPath, "utf-8")) as { root: string };
+      expect(netYaml).toContain(`root: ${compiled.root}`);
+
+      // Classification models must carry the declared class count.
+      if (entry.taskType === "classification") {
+        expect(netYaml).toContain(`num_classes: ${entry.numClasses}`);
+      }
     });
 
-    it("convert.py accepts --dataset option", { timeout: 120_000 }, () => {
+    it("convert.py honors the manifest dataset target", { timeout: 120_000 }, () => {
       const workDir = tempDir();
       tmpDirs.push(workDir);
-      const jsonPath = compileToTempFile(name, workDir);
+      const jsonPath = compileDiagramToFile(name, workDir);
 
-      // Run convert.py with dataset option
+      const dataset = entry.dataset ?? "dataset.mnist.MNISTDataset";
       const cfgDir = runConvert(jsonPath, {
         numClasses: entry.numClasses,
-        dataset: "mnist",
+        dataset,
+      });
+
+      const datasetYaml = readFileSync(resolve(cfgDir, "dataset", "dataset.yaml"), "utf-8");
+      expect(datasetYaml).toContain(`_target_: ${dataset}`);
+    });
+
+    it("convert.py accepts the --dataset option", { timeout: 120_000 }, () => {
+      const workDir = tempDir();
+      tmpDirs.push(workDir);
+      const jsonPath = compileDiagramToFile(name, workDir);
+
+      // Explicit --dataset option (manifest dataset or the MNIST default).
+      const cfgDir = runConvert(jsonPath, {
+        numClasses: entry.numClasses,
+        dataset: entry.dataset ?? "dataset.mnist.MNISTDataset",
       });
 
       // Verify base.yaml exists
       expect(existsSync(resolve(cfgDir, "base.yaml"))).toBe(true);
     });
 
-    it("convert.py handles incomplete JSON gracefully", () => {
-      // convert.py gracefully accepts many JSON shapes (returns 0),
-      // but we verify it at least produces output
-      const workDir = tempDir();
-      tmpDirs.push(workDir);
-      const incompleteJsonPath = join(workDir, "incomplete.json");
-      writeFileSync(
-        incompleteJsonPath,
-        '{"not": "valid nntree"}',
-        "utf-8",
-      );
+    it(
+      "convert.py accepts a structurally invalid NNTree (documented defect)",
+      { timeout: 120_000 },
+      () => {
+        // Characterization of CURRENT behavior — do not fix, see bug table.
+        //
+        // Intended contract (docs/designs/code-elision/plan.md §T5): a
+        // structurally invalid NNTree must not silently produce an
+        // apparently-valid configuration. Current convert.py returns exit 0
+        // and emits config files for `{"not": "valid nntree"}`. This test pins
+        // the current behavior so elision work cannot change it unnoticed; the
+        // defect is tracked as unresolved-design (backend/convert.py is out of
+        // scope for this milestone's frontend task).
+        const workDir = tempDir();
+        tmpDirs.push(workDir);
+        const incompleteJsonPath = join(workDir, "incomplete.json");
+        writeFileSync(
+          incompleteJsonPath,
+          '{"not": "valid nntree"}',
+          "utf-8",
+        );
 
-      // Should not throw — convert.py handles incomplete JSON
-      let cfgDir: string;
-      expect(() => {
-        cfgDir = runConvert(incompleteJsonPath);
-      }).not.toThrow();
-    });
+        let cfgDir: string;
+        expect(() => {
+          cfgDir = runConvert(incompleteJsonPath);
+        }).not.toThrow();
+
+        // Evidence of the defect: config output is produced for invalid input.
+        expect(existsSync(resolve(cfgDir, "base.yaml"))).toBe(true);
+      },
+    );
   });
 } else {
   describe.skip("Convert tier disabled", () => {

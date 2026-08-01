@@ -12,21 +12,19 @@
  */
 
 import { describe, it, expect, afterAll, afterEach } from "vitest";
-import { readFileSync, writeFileSync, existsSync } from "node:fs";
+import { writeFileSync } from "node:fs";
 import { resolve, join } from "node:path";
-import { Diagram } from "../../Diagram.svelte";
-import { NNTree } from "../../conversion/nnTree";
 import { stubWindow, unstubWindow } from "../helpers";
 import {
   loadManifest,
   getTargetDiagrams,
-  DIAGRAMS_DIR,
   CONVERTED_DIR,
   tempDir,
   conditionalCleanup,
   runConvert,
+  compileDiagramToFile,
+  requirePython,
   uvRun,
-  isPythonAvailable,
   type Tier,
   type NamedEntry,
 } from "./helpers";
@@ -39,7 +37,7 @@ const manifest = loadManifest();
 const tier = (process.env.NNM_TIER || "all") as Tier;
 const shouldRun = tier === "all" || tier === "forward";
 
-const PYTHON_AVAILABLE = isPythonAvailable();
+const PYTHON_AVAILABLE = requirePython();
 
 stubWindow();
 afterAll(() => unstubWindow());
@@ -47,21 +45,6 @@ afterAll(() => unstubWindow());
 // ---------------------------------------------------------------------------
 // Helpers
 // ---------------------------------------------------------------------------
-
-function compileToTempFile(name: string, outDir: string): string {
-  const diagramPath = resolve(DIAGRAMS_DIR, `${name}.json`);
-  const content = readFileSync(diagramPath, "utf-8");
-
-  const diagram = new Diagram();
-  diagram.importFromJson(content);
-
-  const nnTree = new NNTree(diagram);
-  const jsonStr = nnTree.toJson();
-
-  const jsonPath = join(outDir, `${name}.json`);
-  writeFileSync(jsonPath, jsonStr, "utf-8");
-  return jsonPath;
-}
 
 /**
  * Generate a Python script that hydrates the model and runs a forward pass.
@@ -72,7 +55,6 @@ function generateForwardScript(convertedSrcPath: string): string {
   return `
 import sys
 import json
-from omegaconf import OmegaConf
 from hydra import compose, initialize_config_dir
 import torch
 
@@ -104,6 +86,7 @@ with torch.no_grad():
 
 result = {
     "output_shape": list(output.shape),
+    "output_dtype": str(output.dtype),
     "requires_grad": output.requires_grad,
     "has_nan": bool(torch.isnan(output).any().item()),
     "has_inf": bool(torch.isinf(output).any().item()),
@@ -113,14 +96,54 @@ print(json.dumps(result))
 `;
 }
 
+/** Run a single forward pass against a compiled+converted diagram. */
+function runForwardPass(
+  name: string,
+  entry: NamedEntry["entry"],
+  workDir: string,
+  shape: number[],
+): { output_shape: number[]; output_dtype: string; has_nan: boolean; has_inf: boolean } {
+  const jsonPath = compileDiagramToFile(name, workDir);
+  const cfgDir = runConvert(jsonPath, {
+    numClasses: entry.numClasses,
+    dataset: entry.dataset,
+  });
+
+  const scriptPath = join(workDir, "forward.py");
+  writeFileSync(
+    scriptPath,
+    generateForwardScript(resolve(CONVERTED_DIR, "src")),
+    "utf-8",
+  );
+
+  const inputShapeJson = JSON.stringify(shape);
+  const inputType = entry.inputType || "float";
+  const result = uvRun(
+    ["python", scriptPath, cfgDir, inputShapeJson, inputType],
+    { timeout: 120_000 },
+  );
+
+  if (result.exitCode !== 0) {
+    throw new Error(
+      `Forward script failed for ${name} (exit ${result.exitCode}):\n` +
+        `STDERR:\n${result.stderr}\nSTDOUT:\n${result.stdout}`,
+    );
+  }
+
+  const output = JSON.parse(result.stdout.trim());
+  if (!output.success) {
+    throw new Error(`Forward script reported failure for ${name}`);
+  }
+  return output;
+}
+
 // ---------------------------------------------------------------------------
 // Tests
 // ---------------------------------------------------------------------------
 
 if (shouldRun) {
-  // Only test trainable diagrams for forward pass (no gradients needed,
-  // but non-trainable diagrams may have missing dependencies like
-  // non-standard ops)
+  // Only test trainable diagrams for forward pass (non-trainable diagrams may
+  // have missing dependencies like non-standard ops).
   const allTargets = getTargetDiagrams(manifest, "forward");
   const targets = allTargets.filter((t) => t.entry.trainable);
 
@@ -144,55 +167,24 @@ if (shouldRun) {
           "forward pass produces correct output shape",
           { timeout: 300_000 },
           () => {
-            // Compile diagram -> NNTree JSON
             const workDir = tempDir();
             tmpDirs.push(workDir);
-            const jsonPath = compileToTempFile(name, workDir);
+            const output = runForwardPass(name, entry, workDir, entry.inputShape);
 
-            // Run convert.py
-            const cfgDir = runConvert(jsonPath, {
-              numClasses: entry.numClasses,
-            });
-
-            // Write forward script
-            const scriptPath = join(workDir, "forward.py");
-            writeFileSync(
-              scriptPath,
-              generateForwardScript(resolve(CONVERTED_DIR, "src")),
-              "utf-8",
-            );
-
-            // Run forward pass
-            const inputShapeJson = JSON.stringify(entry.inputShape);
-            const inputType = entry.inputType || "float";
-            const result = uvRun(
-              [
-                "python",
-                scriptPath,
-                cfgDir,
-                inputShapeJson,
-                inputType,
-              ],
-              { timeout: 120_000 },
-            );
-
-            if (result.exitCode !== 0) {
-              console.error(
-                `Forward script failed for ${name}:\n` +
-                  `STDERR:\n${result.stderr}\nSTDOUT:\n${result.stdout}`,
-              );
-            }
-            expect(result.exitCode).toBe(0);
-
-            // Parse output JSON
-            const output = JSON.parse(result.stdout.trim());
-            expect(output.success).toBe(true);
+            expect(Array.isArray(output.output_shape)).toBe(true);
+            expect(output.output_shape.length).toBeGreaterThan(0);
             expect(output.has_nan).toBe(false);
             expect(output.has_inf).toBe(false);
 
-            // Output must be a tensor (1D or more)
-            expect(Array.isArray(output.output_shape)).toBe(true);
-            expect(output.output_shape.length).toBeGreaterThan(0);
+            // Exact shape/dtype contract is only asserted for models that
+            // declare it (mninst and autoencoder_mnist).
+            if (entry.outputShape) {
+              const expectedShape = [entry.inputShape[0], ...entry.outputShape];
+              expect(output.output_shape).toEqual(expectedShape);
+              if (entry.outputDtype) {
+                expect(output.output_dtype).toBe(`torch.${entry.outputDtype}`);
+              }
+            }
           },
         );
 
@@ -200,42 +192,20 @@ if (shouldRun) {
           "forward pass with different batch size works",
           { timeout: 300_000 },
           () => {
-            // Same as above but with batch_size=4 for variable batch
             const workDir = tempDir();
             tmpDirs.push(workDir);
-            const jsonPath = compileToTempFile(name, workDir);
-            const cfgDir = runConvert(jsonPath, {
-              numClasses: entry.numClasses,
-            });
 
-            const scriptPath = join(workDir, "forward2.py");
-            writeFileSync(
-              scriptPath,
-              generateForwardScript(resolve(CONVERTED_DIR, "src")),
-              "utf-8",
-            );
-
-            // Modify batch size
             const shape = [...entry.inputShape];
             shape[0] = 4;
-            const inputShapeJson = JSON.stringify(shape);
-            const inputType = entry.inputType || "float";
+            const output = runForwardPass(name, entry, workDir, shape);
 
-            const result = uvRun(
-              [
-                "python",
-                scriptPath,
-                cfgDir,
-                inputShapeJson,
-                inputType,
-              ],
-              { timeout: 120_000 },
-            );
-
-            expect(result.exitCode).toBe(0);
-            const output = JSON.parse(result.stdout.trim());
-            expect(output.success).toBe(true);
             expect(output.has_nan).toBe(false);
+            expect(output.has_inf).toBe(false);
+
+            if (entry.outputShape) {
+              const expectedShape = [4, ...entry.outputShape];
+              expect(output.output_shape).toEqual(expectedShape);
+            }
           },
         );
       },
