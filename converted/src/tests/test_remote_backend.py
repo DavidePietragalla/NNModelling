@@ -77,6 +77,43 @@ class ImmediateExecutor:
         return True
 
 
+def _write_fake_wheel_manifest(
+    artifact_dir: str | Path,
+    *,
+    package_name: str,
+    version: str = "0.1.0",
+) -> Path:
+    """Write a fake wheel and its manifest into an artifact directory."""
+    root = Path(artifact_dir)
+    wheel = root / "dist" / "model.whl"
+    wheel.parent.mkdir()
+    wheel.write_bytes(b"wheel")
+    (root / "model-package.json").write_text(
+        json.dumps(
+            {
+                "schema_version": 1,
+                "package_name": package_name,
+                "version": version,
+                "wheel": "dist/model.whl",
+                "sha256": hashlib.sha256(b"wheel").hexdigest(),
+                "input_adapter": {"kind": "tensor", "version": 1},
+            }
+        ),
+        encoding="utf-8",
+    )
+    return wheel
+
+
+@pytest.fixture()
+def packaged_export(monkeypatch):
+    """Monkeypatch the wheel exporter so a finished job exports successfully."""
+
+    def fake_export(artifact_dir, *, package_name, version="0.1.0"):
+        return _write_fake_wheel_manifest(artifact_dir, package_name=package_name, version=version)
+
+    monkeypatch.setattr("backend.manager.build_model_wheel", fake_export)
+
+
 def test_normalize_training_config_accepts_dataset_target_string():
     normalized = normalize_training_config({"dataset": "dataset.mnist.MNISTDataset"})
     assert normalized["dataset"] == {"_target_": "dataset.mnist.MNISTDataset"}
@@ -157,10 +194,12 @@ def test_valkey_event_cursor_continues_after_retention_limit():
     assert [event["sequence"] for event in following_batch] == [1_000]
 
 
-def test_manager_builds_job_artifacts_and_finishes(tmp_path):
+def test_manager_builds_job_artifacts_and_finishes(tmp_path, packaged_export):
     manager = JobManager(InMemoryJobStore(), tmp_path, [ImmediateExecutor()])
     queued = manager.submit(submission(), owner_connection_id=OWNER)
     assert queued.status == "queued"
+    # A current successful job writes safe weights before packaging.
+    Path(queued.artifact_dir, "weights.safetensors").write_bytes(b"safe-weights")
     assert manager.run_once() is True
     finished = manager.status(queued.id, owner_connection_id=OWNER)
     assert finished.status == "succeeded"
@@ -172,27 +211,7 @@ def test_manager_builds_job_artifacts_and_finishes(tmp_path):
     assert manager.logs(queued.id, owner_connection_id=OWNER)["stdout"] == "ok\n"
 
 
-def test_manager_exports_a_model_wheel_after_a_successful_job(tmp_path, monkeypatch):
-    def fake_export(artifact_dir, *, package_name, version):
-        wheel = Path(artifact_dir) / "dist" / "model.whl"
-        wheel.parent.mkdir()
-        wheel.write_bytes(b"wheel")
-        (Path(artifact_dir) / "model-package.json").write_text(
-            json.dumps(
-                {
-                    "schema_version": 1,
-                    "package_name": package_name,
-                    "version": version,
-                    "wheel": "dist/model.whl",
-                    "sha256": hashlib.sha256(b"wheel").hexdigest(),
-                    "input_adapter": {"kind": "tensor", "version": 1},
-                }
-            ),
-            encoding="utf-8",
-        )
-        return wheel
-
-    monkeypatch.setattr("backend.manager.build_model_wheel", fake_export)
+def test_manager_exports_a_model_wheel_after_a_successful_job(tmp_path, packaged_export):
     manager = JobManager(InMemoryJobStore(), tmp_path, [ImmediateExecutor()])
     queued = manager.submit(
         submission().model_copy(update={"package_name": "nnm_mnist_classifier"}),
@@ -203,9 +222,14 @@ def test_manager_exports_a_model_wheel_after_a_successful_job(tmp_path, monkeypa
     manager.run_once()
 
     status = manager.status(queued.id, owner_connection_id=OWNER)
+    assert status.status == "succeeded"
     assert status.model_package is not None
     assert status.model_package.package_name == "nnm_mnist_classifier"
-    assert any(event["type"] == "package_ready" for event in manager.events(queued.id, owner_connection_id=OWNER))
+    events = manager.events(queued.id, owner_connection_id=OWNER)
+    types = [event["type"] for event in events]
+    assert any(event["type"] == "package_ready" for event in events)
+    assert "succeeded" in types
+    assert types.index("package_ready") < types.index("succeeded")
 
 
 def test_manager_tails_only_new_log_bytes_and_resets_a_stale_offset(tmp_path):
@@ -256,7 +280,7 @@ def test_manager_publishes_wandb_url_as_soon_as_a_heartbeat_sees_it(tmp_path):
     )
 
 
-def test_manager_publishes_wandb_url_when_a_short_job_finishes_before_heartbeat(tmp_path):
+def test_manager_publishes_wandb_url_when_a_short_job_finishes_before_heartbeat(tmp_path, packaged_export):
     class WandbImmediateExecutor(ImmediateExecutor):
         def submit(self, job, artifact_dir, on_heartbeat, on_finished):
             stdout = Path(artifact_dir, "stdout.log")
@@ -266,9 +290,11 @@ def test_manager_publishes_wandb_url_when_a_short_job_finishes_before_heartbeat(
 
     manager = JobManager(InMemoryJobStore(), tmp_path, [WandbImmediateExecutor()])
     queued = manager.submit(submission(), owner_connection_id=OWNER)
+    Path(queued.artifact_dir, "weights.safetensors").write_bytes(b"safe-weights")
 
     manager.run_once()
 
+    assert manager.status(queued.id, owner_connection_id=OWNER).status == "succeeded"
     assert any(
         event["type"] == "wandb_ready"
         and event["wandb_url"] == "https://wandb.ai/team/project/runs/quick-run"
@@ -276,7 +302,7 @@ def test_manager_publishes_wandb_url_when_a_short_job_finishes_before_heartbeat(
     )
 
 
-def test_manager_skips_incompatible_high_priority_job(tmp_path):
+def test_manager_skips_incompatible_high_priority_job(tmp_path, packaged_export):
     """A blocked high-priority job must not starve a runnable lower-priority job."""
 
     class CpuOnlyExecutor(ImmediateExecutor):
@@ -296,6 +322,7 @@ def test_manager_skips_incompatible_high_priority_job(tmp_path):
         ),
         owner_connection_id=OWNER,
     )
+    Path(runnable.artifact_dir, "weights.safetensors").write_bytes(b"safe-weights")
 
     assert manager.run_once() is True
     assert manager.status(blocked.id, owner_connection_id=OWNER).status == "queued"
@@ -422,6 +449,63 @@ def test_failed_job_is_not_claimable_after_executor_failure(tmp_path):
     assert store.queue == {}
     assert store.claim_next() is None
     assert manager.logs(queued.id, owner_connection_id=OWNER)["stderr"] == "Traceback\nboom\n"
+
+
+class _StatusRecordingStore(InMemoryJobStore):
+    """In-memory store that records every persisted status transition."""
+
+    def __init__(self) -> None:
+        super().__init__()
+        self.saved_statuses: list[str] = []
+
+    def save_job(self, job_id, data):
+        self.saved_statuses.append(data["status"])
+        super().save_job(job_id, data)
+
+    def mark_failed(self, job_id, changes):
+        updated = super().mark_failed(job_id, changes)
+        if updated is not None:
+            self.saved_statuses.append(updated["status"])
+        return updated
+
+
+def test_package_failure_never_persists_a_succeeded_status(tmp_path, monkeypatch):
+    """D4: a packaging failure must never persist a transient succeeded status."""
+
+    def exploding_export(artifact_dir, *, package_name, version):
+        del artifact_dir, package_name, version
+        raise RuntimeError("exporter crashed")
+
+    monkeypatch.setattr("backend.manager.build_model_wheel", exploding_export)
+    store = _StatusRecordingStore()
+    manager = JobManager(store, tmp_path, [ImmediateExecutor()])
+    queued = manager.submit(submission(), owner_connection_id=OWNER)
+    Path(queued.artifact_dir, "weights.safetensors").write_bytes(b"safe-weights")
+
+    manager.run_once()
+
+    assert manager.status(queued.id, owner_connection_id=OWNER).status == "failed"
+    assert store.saved_statuses[-1] == "failed"
+    assert "succeeded" not in store.saved_statuses
+
+
+def test_happy_path_persists_succeeded_only_after_successful_export(tmp_path, packaged_export):
+    """D4: the happy chain persists running, then succeeded after package_ready."""
+    store = _StatusRecordingStore()
+    manager = JobManager(store, tmp_path, [ImmediateExecutor()])
+    queued = manager.submit(submission(), owner_connection_id=OWNER)
+    Path(queued.artifact_dir, "weights.safetensors").write_bytes(b"safe-weights")
+
+    manager.run_once()
+
+    status = manager.status(queued.id, owner_connection_id=OWNER)
+    assert status.status == "succeeded"
+    assert status.model_package is not None
+    assert store.saved_statuses[-1] == "succeeded"
+    events = manager.events(queued.id, owner_connection_id=OWNER)
+    types = [event["type"] for event in events]
+    assert "succeeded" in types
+    assert types.index("package_ready") < types.index("succeeded")
 
 
 class _FailingMarkFailedStore(InMemoryJobStore):

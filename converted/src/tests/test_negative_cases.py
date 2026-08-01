@@ -3,14 +3,17 @@
 These tests document and lock the backend's rejection behavior for documents
 and artifacts that must never be silently accepted: unsupported request
 schema versions, missing model packages, and wheel exports blocked by missing
-or corrupt configuration. They use in-memory stores and executor doubles so
-they stay fast; the *real* job failure path is covered by the E2E suite.
+safe weights, missing or corrupt configuration, or exporter exceptions. A
+packaging failure is a terminal job failure whose events and logs stay
+visible. They use in-memory stores and executor doubles so they stay fast;
+the *real* job failure path is covered by the E2E suite.
 """
 
 from __future__ import annotations
 
 import asyncio
 import json
+import struct
 from pathlib import Path
 from typing import Any
 
@@ -25,6 +28,15 @@ from backend.store import InMemoryJobStore
 from tests.backend_helpers import mninst_nntree
 
 OWNER = "negative-connection"
+
+
+def _write_minimal_safetensors(path: Path) -> None:
+    """Write a valid single-tensor safetensors container without torch."""
+    header = json.dumps(
+        {"tensor0": {"dtype": "F32", "shape": [1], "data_offsets": [0, 4]}},
+        separators=(",", ":"),
+    ).encode("utf-8")
+    path.write_bytes(len(header).to_bytes(8, "little") + header + struct.pack("<f", 0.0))
 
 
 def _payload(**changes: Any) -> dict[str, Any]:
@@ -109,9 +121,14 @@ def test_missing_model_package_has_no_download(tmp_path):
     auth = AuthService(InMemoryAuthStore())
     pairing = auth.create_pairing("Browser", client_host="127.0.0.1")
     auth.approve(pairing.request_id)
-    job = manager.submit(JobSubmission(**_payload()), owner_connection_id=OWNER)
+    job = manager.submit(JobSubmission(**_payload()), owner_connection_id=pairing.connection_id)
     manager.run_once()
     app = create_app(manager, auth_service=auth, admin_token="admin-secret")
+
+    # Without safe weights the job is a packaging failure, so a package can
+    # never be downloaded from a job that did not export one.
+    status = manager.status(job.id, owner_connection_id=pairing.connection_id)
+    assert status.status == "failed"
 
     async def exercise_api() -> None:
         transport = httpx.ASGITransport(app=app)
@@ -125,44 +142,170 @@ def test_missing_model_package_has_no_download(tmp_path):
     asyncio.run(exercise_api())
 
 
-def test_wheel_export_failure_records_package_error_and_event(tmp_path):
-    """A missing resolved config blocks export but keeps a coherent job state."""
+def test_wheel_export_failure_records_package_error_and_fails_job(tmp_path):
+    """A missing resolved config blocks export and fails the job coherently."""
     store = InMemoryJobStore()
     manager = JobManager(store, tmp_path, [_SucceedingExecutor()])
     queued = manager.submit(JobSubmission(**_payload()), owner_connection_id=OWNER)
     artifact = Path(queued.artifact_dir)
     # The fake executor never writes weights; simulate a job that trained.
-    (artifact / "weights.safetensors").write_bytes(b"fake-safe-weights")
+    _write_minimal_safetensors(artifact / "weights.safetensors")
     (artifact / "resolved_config.yaml").unlink(missing_ok=True)
 
     manager.run_once()
 
     status = manager.status(queued.id, owner_connection_id=OWNER)
-    assert status.status == "succeeded"
+    assert status.status == "failed"
+    assert status.finished_at is not None
     assert status.model_package is None
     assert status.package_error is not None
     assert "resolved_config" in (status.package_error or "").lower()
+    assert "resolved_config" in (status.error or "").lower()
     events = manager.events(queued.id, owner_connection_id=OWNER)
+    types = [event["type"] for event in events]
     assert any(event["type"] == "package_failed" for event in events)
+    assert "failed" in types
+    assert types.index("package_failed") < types.index("failed")
+    # Training logs and the artifact root remain visible after the failure.
+    assert manager.logs(queued.id, owner_connection_id=OWNER)["stdout"] == "ok\n"
+    assert Path(status.artifact_dir).is_dir()
 
 
-def test_corrupt_resolved_config_blocks_wheel_export(tmp_path):
+def test_corrupt_resolved_config_blocks_wheel_export_and_fails_job(tmp_path):
     """Invalid configuration YAML is a coherent export failure, not a crash."""
     store = InMemoryJobStore()
     manager = JobManager(store, tmp_path, [_SucceedingExecutor()])
     queued = manager.submit(JobSubmission(**_payload()), owner_connection_id=OWNER)
     artifact = Path(queued.artifact_dir)
-    (artifact / "weights.safetensors").write_bytes(b"fake-safe-weights")
+    _write_minimal_safetensors(artifact / "weights.safetensors")
     (artifact / "resolved_config.yaml").write_text("net: [unclosed", encoding="utf-8")
 
     manager.run_once()
 
     status = manager.status(queued.id, owner_connection_id=OWNER)
-    assert status.status == "succeeded"
+    assert status.status == "failed"
+    assert status.finished_at is not None
     assert status.package_error is not None
     assert status.model_package is None
     events = manager.events(queued.id, owner_connection_id=OWNER)
+    types = [event["type"] for event in events]
     assert any(event["type"] == "package_failed" for event in events)
+    assert "failed" in types
+    assert types.index("package_failed") < types.index("failed")
+    assert manager.logs(queued.id, owner_connection_id=OWNER)["stdout"] == "ok\n"
+
+
+def test_corrupt_safe_weights_fail_job_with_package_error(tmp_path):
+    """Garbage in weights.safetensors is a packaging failure, not a success."""
+    store = InMemoryJobStore()
+    manager = JobManager(store, tmp_path, [_SucceedingExecutor()])
+    queued = manager.submit(JobSubmission(**_payload()), owner_connection_id=OWNER)
+    (Path(queued.artifact_dir) / "weights.safetensors").write_bytes(b"not-a-safetensors-file")
+
+    manager.run_once()
+
+    status = manager.status(queued.id, owner_connection_id=OWNER)
+    assert status.status == "failed"
+    assert status.finished_at is not None
+    assert status.model_package is None
+    assert status.package_error is not None
+    events = manager.events(queued.id, owner_connection_id=OWNER)
+    types = [event["type"] for event in events]
+    assert "failed" in types
+    assert any(event["type"] == "package_failed" for event in events)
+    assert types.index("package_failed") < types.index("failed")
+    assert manager.logs(queued.id, owner_connection_id=OWNER)["stdout"] == "ok\n"
+
+
+def test_missing_safe_weights_fails_job_with_package_error(tmp_path):
+    """A job without safe weights is a packaging failure, not a silent success."""
+    store = InMemoryJobStore()
+    manager = JobManager(store, tmp_path, [_SucceedingExecutor()])
+    queued = manager.submit(JobSubmission(**_payload()), owner_connection_id=OWNER)
+
+    manager.run_once()
+
+    status = manager.status(queued.id, owner_connection_id=OWNER)
+    assert status.status == "failed"
+    assert status.finished_at is not None
+    assert status.model_package is None
+    assert "weights.safetensors" in (status.package_error or "")
+    events = manager.events(queued.id, owner_connection_id=OWNER)
+    types = [event["type"] for event in events]
+    assert "failed" in types
+    assert any(event["type"] == "package_failed" for event in events)
+    assert types.index("package_failed") < types.index("failed")
+    assert manager.logs(queued.id, owner_connection_id=OWNER)["stdout"] == "ok\n"
+
+
+def test_exporter_exception_fails_job_and_preserves_logs(tmp_path, monkeypatch):
+    """An exporter exception is a terminal packaging failure with logs intact."""
+    def exploding_export(artifact_dir, *, package_name, version):
+        del artifact_dir, package_name, version
+        raise ValueError("unsupported input adapter kind: 'weird'")
+
+    monkeypatch.setattr("backend.manager.build_model_wheel", exploding_export)
+    store = InMemoryJobStore()
+    manager = JobManager(store, tmp_path, [_SucceedingExecutor()])
+    queued = manager.submit(JobSubmission(**_payload()), owner_connection_id=OWNER)
+    # A current successful job has safe weights; the exporter still fails.
+    _write_minimal_safetensors(Path(queued.artifact_dir) / "weights.safetensors")
+
+    manager.run_once()
+
+    status = manager.status(queued.id, owner_connection_id=OWNER)
+    assert status.status == "failed"
+    assert status.finished_at is not None
+    assert status.model_package is None
+    assert "unsupported input adapter" in (status.package_error or "")
+    assert "unsupported input adapter" in (status.error or "")
+    events = manager.events(queued.id, owner_connection_id=OWNER)
+    types = [event["type"] for event in events]
+    assert any(event["type"] == "package_failed" for event in events)
+    assert "failed" in types
+    assert types.index("package_failed") < types.index("failed")
+    assert manager.logs(queued.id, owner_connection_id=OWNER)["stdout"] == "ok\n"
+
+
+def test_api_surfaces_package_failure_as_failed_job_with_events_and_logs(tmp_path):
+    """The API exposes failed status, package_error, events, and preserved logs."""
+    manager = JobManager(InMemoryJobStore(), tmp_path, [_SucceedingExecutor()])
+    auth = AuthService(InMemoryAuthStore())
+    pairing = auth.create_pairing("Browser", client_host="127.0.0.1")
+    auth.approve(pairing.request_id)
+    job = manager.submit(JobSubmission(**_payload()), owner_connection_id=pairing.connection_id)
+    manager.run_once()
+    app = create_app(manager, auth_service=auth, admin_token="admin-secret")
+
+    async def exercise_api() -> None:
+        transport = httpx.ASGITransport(app=app)
+        async with app.router.lifespan_context(app):
+            async with httpx.AsyncClient(transport=transport, base_url="http://test") as client:
+                headers = {"authorization": f"Bearer {pairing.token}"}
+                status_response = await client.get(f"/jobs/{job.id}", headers=headers)
+                assert status_response.status_code == 200
+                body = status_response.json()
+                assert body["status"] == "failed"
+                assert body["model_package"] is None
+                assert body["package_error"] is not None
+                assert "weights.safetensors" in (body["package_error"] or "")
+                assert (await client.get(f"/jobs/{job.id}/package", headers=headers)).status_code == 404
+
+                events_response = await client.get(f"/jobs/{job.id}/events", headers=headers)
+                assert events_response.status_code == 200
+                types = [
+                    json.loads(line.removeprefix("data: "))["type"]
+                    for line in events_response.text.splitlines()
+                    if line.startswith("data: ")
+                ]
+                assert "failed" in types
+                assert types.index("package_failed") < types.index("failed")
+
+                logs = await client.get(f"/jobs/{job.id}/logs", headers=headers)
+                assert logs.status_code == 200
+                assert logs.json()["stdout"] == "ok\n"
+
+    asyncio.run(exercise_api())
 
 
 def test_manifest_digest_verifies_wheel_bytes_when_exported(tmp_path):

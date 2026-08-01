@@ -316,18 +316,35 @@ class JobManager:
         wandb_url = _find_wandb_url(job)
         publish_wandb_url = wandb_url is not None and wandb_url != job.get("wandb_url")
         if return_code == 0:
-            self._set_status(
-                job_id,
-                "succeeded",
-                finished_at=utc_now(),
-                error=None,
-                wandb_url=wandb_url,
-            )
-            self._drop_active(job_id)
             if publish_wandb_url:
                 self._event(job_id, "wandb_ready", {"wandb_url": wandb_url})
-            self._export_model_package(job_id)
-            self._event(job_id, "succeeded", details)
+            # The wheel is part of the promised output of a successful job:
+            # the job is never persisted as ``succeeded`` before the package
+            # export committed. A packaging failure (missing/corrupt safe
+            # weights, unsupported adapter, exporter exception) transitions
+            # the job to terminal ``failed`` through the same atomic failed
+            # transition as any other failure, keeping artifacts and logs.
+            if self._export_model_package(job_id):
+                self._set_status(
+                    job_id,
+                    "succeeded",
+                    finished_at=utc_now(),
+                    error=None,
+                    wandb_url=wandb_url,
+                )
+                self._drop_active(job_id)
+                self._event(job_id, "succeeded", details)
+            else:
+                error = self._package_failure_text(job_id)
+                self._set_status(
+                    job_id,
+                    "failed",
+                    finished_at=utc_now(),
+                    error=error,
+                    wandb_url=wandb_url,
+                )
+                self._drop_active(job_id)
+                self._event(job_id, "failed", {"error": error, **details})
         else:
             error = self._failure_text(job, details)
             self._set_status(
@@ -525,17 +542,31 @@ class JobManager:
     def _event(self, job_id: str, event_type: str, details: dict[str, Any]) -> None:
         self.store.append_event(job_id, {"type": event_type, "at": utc_now(), **details})
 
-    def _export_model_package(self, job_id: str) -> None:
-        """Create a portable wheel without turning export failures into train failures."""
+    def _package_failure_text(self, job_id: str) -> str:
+        """Build the client-visible error for a job whose package export failed."""
+
+        job = self.store.get_job(job_id)
+        package_error = job.get("package_error") if job is not None else None
+        if package_error:
+            return f"Model package export failed: {package_error}"
+        return "Model package export failed"
+
+    def _export_model_package(self, job_id: str) -> bool:
+        """Export the portable wheel for a finished job.
+
+        Returns True when the wheel was built and its manifest persisted.
+        On any failure — missing or corrupt safe weights, an unsupported
+        input adapter, or an exporter exception — the job record keeps a
+        client-visible ``package_error``, the ``package_failed`` event is
+        emitted, and False is returned so the caller can transition the job
+        to the terminal ``failed`` state. A job without safe weights is a
+        packaging failure, never a silent success.
+        """
 
         job = self.store.get_job(job_id)
         if job is None:
-            return
+            return False
         artifact_dir = Path(job["artifact_dir"])
-        if not (artifact_dir / "weights.safetensors").is_file():
-            # Executors used by unit tests and artifacts created before the
-            # portable-export feature do not contain safe weights.
-            return
         package_name = job["submission"].get("package_name") or f"nnm_job_{job_id.replace('-', '')}"
         try:
             build_model_wheel(artifact_dir, package_name=package_name, version="0.1.0")
@@ -545,11 +576,12 @@ class JobManager:
             job["package_error"] = str(exc)
             self.store.save_job(job_id, job)
             self._event(job_id, "package_failed", {"error": str(exc)})
-            return
+            return False
         job["model_package"] = manifest
         job["package_error"] = None
         self.store.save_job(job_id, job)
         self._event(job_id, "package_ready", manifest)
+        return True
 
 
 def _read_text(path: Path) -> str:

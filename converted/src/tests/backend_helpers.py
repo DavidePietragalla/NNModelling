@@ -137,9 +137,9 @@ def wait_for_package(
 ) -> JobStatus:
     """Wait until a succeeded job exported its wheel and emitted its terminal event.
 
-    The manager marks the job ``succeeded`` before exporting the wheel and
-    appends the ``succeeded`` stream event only after the export, so waiting
-    for both guarantees the model package is fully materialized.
+    The manager persists ``succeeded`` only after the wheel export committed
+    and appends the ``succeeded`` stream event last, so waiting for both
+    guarantees the model package is fully materialized.
     """
     deadline = time.monotonic() + timeout
     while time.monotonic() < deadline:
