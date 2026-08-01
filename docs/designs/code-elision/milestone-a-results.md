@@ -173,20 +173,21 @@ eseguito da remoto perché non sono stati richiesti commit o push.
 | Frontend unit | 329 passed, 5 skipped |
 | Frontend build | passed |
 | Frontend integration completa | 151 passed, 3 skipped, circa 192 s (non rieseguita dopo le modifiche client-only) |
-| Backend fast (`-m fast`) | 184 passed, circa 9 s |
+| Backend fast (`-m fast`) | 188 passed, circa 9 s |
 | Backend service, Valkey reale | 13 passed, circa 4 s |
 | Backend E2E canonico | 3 passed, circa 27 s |
 | Backend E2E legacy opzionale | 4 passed, circa 107 s |
 | MCP build | passed |
 | MCP test | 51 passed |
 
-I conteggi di backend fast (184), service (13), E2E canonico (3) e frontend
+I conteggi di backend fast (188), service (13), E2E canonico (3) e frontend
 unit (329 passed, 5 skipped) sono stati riconfermati localmente dopo le
-correzioni D3/D4. La suite di integrazione frontend completa (151 passed, 3
-skipped) non è stata rieseguita dopo le modifiche client-only
-(`524762c`/`e87789f`): mantiene il valore registrato in precedenza e deve
-essere etichettata come **non rieseguita** finché la validazione finale non la
-esegue di nuovo.
+correzioni D3/D4 e le riparazioni finali su ordinamento degli eventi terminali
+(`fd854f0`) e cleanup degli snapshot (`04b9564`). La suite di integrazione
+frontend completa (151 passed, 3 skipped) non è stata rieseguita dopo le
+modifiche client-only (`524762c`/`e87789f`): mantiene il valore registrato in
+precedenza e deve essere etichettata come **non rieseguita** finché la
+validazione finale non la esegue di nuovo.
 
 Sono stati verificati cleanup di processi e directory temporanee. Pesi,
 prediction JSON, credenziali e processi Valkey/training non sono rimasti nel
@@ -213,6 +214,7 @@ Queste correzioni non hanno richiesto decisioni architetturali.
 | F13 | Il cleanup dei pesi legacy non era garantito dopo un'asserzione fallita | Training, assertion e rimozione di entrambi i file sono protetti da `try/finally` |
 | F14 | Il workflow conservava soltanto il log aggregato in caso di E2E fallito | Contratto `NNM_E2E_ARTIFACT_DIR` e upload failure-only di log e artifact diagnostici senza token/Valkey data |
 | F15 | Risposte di refresh training in ritardo potevano sovrascrivere lo stato corrente dopo forget/riconnessione | `RefreshGate` (epoch della connessione + sequenza richieste) in `front-end/src/training/refreshGate.ts`; `TrainingSidebar` invalida il gate su cleanup/attivazione e applica job/errori/loading soltanto dalla richiesta corrente; 6 regressioni dedicate (`refreshGate.test.ts`) |
+| F16 | Un executor che completava sincronicamente dentro `submit()` lasciava un evento `running` stantio dopo la catena terminale | L'evento `running` viene emesso prima di invocare `executor.submit()`; se il record risulta già terminale al ritorno, il manager non scrive `executor_details`, non registra l'esecuzione come active e non emette alcun `running` successivo. L'ordine contratto è `queued < running < package_ready < succeeded` (o `... < package_failed < failed`), con l'evento terminale sempre per ultimo. Regressioni sincrone (`ImmediateExecutor`) in `test_remote_backend.py` e su Valkey reale in `test_service_valkey.py` (`fd854f0`) |
 
 ## 6. Decisioni sui bug di design
 
@@ -284,7 +286,10 @@ browser), `de32677` (snapshot immutabile lato server), `e87789f` (contesto
 sicuro richiesto lato browser).
 Regressioni in `test_remote_backend.py` (wheel sostituita, digest mancante,
 digest malformato, header esposto via CORS, ownership del download, snapshot
-pinnato ai bytes verificati, `409` senza body e cleanup dello snapshot) e
+pinnato ai bytes verificati, `409` senza body, cleanup dello snapshot,
+rimozione dello snapshot quando `send` fallisce durante lo streaming del body
+con permessi privati `0600` verificati su POSIX e rimozione dello snapshot
+quando il task di download viene cancellato a metà stream — `04b9564`) e
 `trainingApi.test.ts` (header e body verificati prima di restituire il Blob,
 Web Crypto assente e digest rifiutato mappati su
 `package_verification_unavailable`).
@@ -309,16 +314,19 @@ Commit: `cf3f677`. Regressioni in `test_negative_cases.py` (config mancante,
 config corrotta, pesi corrotti, pesi mancanti, eccezione exporter, superficie
 API) e in `test_remote_backend.py` per l'ordine `package_ready < succeeded`.
 
-Evidenza service su Valkey reale (`a9fb6e4`): il nuovo test
+Evidenza service su Valkey reale (`a9fb6e4`, rafforzata da `fd854f0`): il
+nuovo test
 `test_service_valkey.py::test_package_export_failure_on_real_valkey_fails_job_atomically`
 esercita il percorso D4 contro lo store e l'auth Valkey reali, senza
 monkeypatch dell'exporter: un executor double riporta successo senza scrivere
 `weights.safetensors`, l'exporter fallisce deterministicamente sui pesi
 mancanti. Il test verifica lo stato `failed` con `finished_at` valorizzato e
 `model_package` None, `package_error` e `error` visibili, la rimozione
-atomica dalla coda/indici sullo store reale, l'ordine degli eventi
-`package_failed` prima di `failed`, la visibilità di job/list/events/logs al
-proprietario e il download `404` sull'API reale (ASGI).
+atomica dalla coda/indici sullo store reale, l'ordine completo degli eventi
+`queued < running < package_failed < failed` con il terminale per ultimo
+(sia sul registro eventi sia sullo stream SSE), la visibilità di
+job/list/events/logs al proprietario e il download `404` sull'API reale
+(ASGI).
 
 ### D5 — Job fallito ancora presente in coda — risolto
 
