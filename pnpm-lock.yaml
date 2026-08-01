@@ -53,9 +53,6 @@ importers:
       '@modelcontextprotocol/sdk':
         specifier: ^1.0.0
         version: 1.29.0(zod@3.25.76)
-      '@nnmodelling/front-end':
-        specifier: workspace:*
-        version: link:../front-end
       ws:
         specifier: ^8.18.0
         version: 8.21.0

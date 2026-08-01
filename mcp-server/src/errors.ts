@@ -31,23 +31,9 @@ export class MCPServerError extends Error {
     super(message);
     this.name = "MCPServerError";
   }
-
-  toJSON() {
-    return {
-      code: this.code,
-      message: this.message,
-      details: this.details,
-    };
-  }
 }
 
 // ── Pipeline Errors ────────────────────────────
-
-export class CompilationFailedError extends MCPServerError {
-  constructor(reason: string) {
-    super("COMPILATION_FAILED", reason);
-  }
-}
 
 export class ConversionFailedError extends MCPServerError {
   constructor(reason: string) {

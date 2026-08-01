@@ -17,7 +17,6 @@
   },
   "dependencies": {
     "@modelcontextprotocol/sdk": "^1.0.0",
-    "@nnmodelling/front-end": "workspace:*",
     "ws": "^8.18.0",
     "zod": "^3.23.0",
     "zod-to-json-schema": "^3.25.2"
