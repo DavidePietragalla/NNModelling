@@ -41,8 +41,10 @@ export class Diagram extends DiagramCore {
     this._undoStack = [];
     this._redoStack = [];
 
-    // Force Svelte 5 reactivity when the Core state is mutated via RPC
-    this.events.on("graph_changed", () => {
+    // Force Svelte 5 reactivity when the Core state is mutated via RPC.
+    // The subscription is synchronous: typeResult is refreshed before the
+    // RPC handler returns.
+    this.onGraphChanged(() => {
       this.nodes = [...this.nodes];
       this.edges = [...this.edges];
       this.refreshTypes();

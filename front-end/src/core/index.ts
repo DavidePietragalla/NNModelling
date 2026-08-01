@@ -12,10 +12,8 @@
  */
 
 export { DiagramCore } from './DiagramCore';
-export { EventBus } from './EventBus';
 export { StereotypeCore } from './StereotypeCore';
 export type {
-  DomainEvent,
   Position,
   NodeConfig,
   JoinNodeConfig,

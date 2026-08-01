@@ -129,8 +129,8 @@ describe("BrowserRPCHandler", () => {
 
     dispatch("connect", "connect_nodes", { source: inputId, target: linearId });
 
-    // graph_changed is synchronous, so the hover state is ready as soon as
-    // the remote mutation completes.
+    // The graph-change notification is synchronous, so the hover state is
+    // ready as soon as the remote mutation completes.
     const liveAnnotation = diagram.typeResult?.annotations.get(linearId);
     expect(liveAnnotation?.outputType.shape).toEqual([
       { kind: "symbolic", name: "B" },

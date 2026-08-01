@@ -99,7 +99,7 @@ MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.
 
   // Forziamo il ricalcolo della vista su ogni cambiamento strutturale
   $effect(() => {
-    const unsubscribe = diagram.events.on("graph_changed", () => {
+    const unsubscribe = diagram.onGraphChanged(() => {
       fitView({ maxZoom: 1, padding: 0.2 });
     });
     return unsubscribe;

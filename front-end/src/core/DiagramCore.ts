@@ -15,20 +15,39 @@
 // Pure TypeScript business logic — no Svelte dependencies.
 // Extracted from Diagram.svelte.ts with:
 //   - $state.raw → plain arrays
-//   - EventBus integration (emit after every mutation)
+//   - Dedicated synchronous graph-change subscription (onGraphChanged)
 //   - New methods: addEdge, removeEdge, reconnectEdge, moveNode, moveNodes,
 //     getSnapshot, restoreSnapshot, initStereotypes, selectNodes, clearSelection,
 //     getSelectedNodes, getSelectedEdges
 
 import { type Node, type Edge } from "@xyflow/svelte";
 import { StereotypeCore } from "./StereotypeCore";
-import { EventBus } from "./EventBus";
 import { checkValidConnection as coreCheckValidConnection } from "./validation";
 import type { DiagramCoreSnapshot, NodeConfig, JoinNodeConfig } from "./types";
 
+/**
+ * Deep equality for JSON-comparable parameter objects ({ value, position }
+ * wrappers and nested plain objects/arrays). Arrays are distinguished from
+ * plain objects so `["a","b"]` never compares equal to `{ 0:"a", 1:"b" }`.
+ * Used to detect no-op updates before undo capture and graph notification.
+ */
+function sameParams(a: unknown, b: unknown): boolean {
+  if (a === b) return true;
+  if (typeof a !== "object" || typeof b !== "object" || a === null || b === null) return false;
+  if (Array.isArray(a) !== Array.isArray(b)) return false;
+  const aKeys = Object.keys(a as Record<string, unknown>);
+  const bKeys = Object.keys(b as Record<string, unknown>);
+  if (aKeys.length !== bKeys.length) return false;
+  for (const key of aKeys) {
+    if (!sameParams((a as Record<string, unknown>)[key], (b as Record<string, unknown>)[key])) {
+      return false;
+    }
+  }
+  return true;
+}
+
 export class DiagramCore {
   public stereotypes!: StereotypeCore[];
-  public readonly events: EventBus;
 
   // nodes/edges are declared but NOT initialized with `= []` here.
   // Diagram.svelte.ts overrides them with $state.raw reactive arrays.
@@ -37,12 +56,68 @@ export class DiagramCore {
   declare public nodes: Node[];
   declare public edges: Edge[];
 
+  private graphChangeHandlers = new Set<() => void>();
+  private _notifying = false;
+
   constructor() {
     // NOTE: nodes and edges are NOT initialized here.
     // The Diagram subclass initializes them with $state.raw.
     // When used standalone (MCP server), call initStereotypes() then
     // manually set nodes/edges before any operations.
-    this.events = new EventBus();
+  }
+
+  // ── Reentrancy guard ────────────────────────────────────────────
+
+  /**
+   * Reject any graph mutation issued while graph-change listeners are being
+   * synchronously notified. Centralized in the undo-capture path (plus
+   * explicit guards on undo/redo/restoreSnapshot, which bypass capture): a
+   * listener that attempts to mutate is reported by notifyGraphChanged()
+   * (which catches and logs the error), so the already-applied mutation/RPC
+   * still succeeds and no recursion occurs.
+   */
+  private _assertNotNotifying(): void {
+    if (this._notifying) {
+      throw new Error("Graph mutation attempted during graph-change notification");
+    }
+  }
+
+  // ── Graph change subscription ────────────────────────────────────
+
+  /**
+   * Subscribe to graph changes. The handler is invoked synchronously once
+   * after every successful public mutation (add/update/delete/move/edge
+   * operations, undo/redo, snapshot restore, reset and import). Rejected
+   * connections and no-op operations do not notify. Returns an unsubscribe
+   * function; unsubscribing is safe even from inside a handler.
+   */
+  public onGraphChanged(handler: () => void): () => void {
+    this.graphChangeHandlers.add(handler);
+    return () => {
+      this.graphChangeHandlers.delete(handler);
+    };
+  }
+
+  /**
+   * Synchronously notify graph-change subscribers (snapshot iteration).
+   * While dispatching, the reentrancy guard is active: a listener that tries
+   * to mutate the graph is rejected before any mutation/undo capture, logged
+   * locally, and does not stop peer listeners or turn an already-applied
+   * mutation into an RPC error.
+   */
+  protected notifyGraphChanged(): void {
+    this._notifying = true;
+    try {
+      for (const handler of [...this.graphChangeHandlers]) {
+        try {
+          handler();
+        } catch (error) {
+          console.error("[DiagramCore] graph-change listener error:", error);
+        }
+      }
+    } finally {
+      this._notifying = false;
+    }
   }
 
   // ── Undo/Redo ──────────────────────────────────────────────────
@@ -51,6 +126,7 @@ export class DiagramCore {
   private _captureEnabled = true;
 
   private _captureUndoState(): void {
+    this._assertNotNotifying();
     if (!this._captureEnabled) return;
     this._undoStack.push(this.getSnapshot());
     // Limit stack size to prevent memory issues
@@ -61,21 +137,31 @@ export class DiagramCore {
 
   /** Undo the last mutation. Returns true if an undo was performed. */
   public undo(): boolean {
+    this._assertNotNotifying();
     if (this._undoStack.length === 0) return false;
+    const previousCapture = this._captureEnabled;
     this._captureEnabled = false;
-    this._redoStack.push(this.getSnapshot());
-    this.restoreSnapshot(this._undoStack.pop()!);
-    this._captureEnabled = true;
+    try {
+      this._redoStack.push(this.getSnapshot());
+      this.restoreSnapshot(this._undoStack.pop()!);
+    } finally {
+      this._captureEnabled = previousCapture;
+    }
     return true;
   }
 
   /** Redo the last undone mutation. Returns true if a redo was performed. */
   public redo(): boolean {
+    this._assertNotNotifying();
     if (this._redoStack.length === 0) return false;
+    const previousCapture = this._captureEnabled;
     this._captureEnabled = false;
-    this._undoStack.push(this.getSnapshot());
-    this.restoreSnapshot(this._redoStack.pop()!);
-    this._captureEnabled = true;
+    try {
+      this._undoStack.push(this.getSnapshot());
+      this.restoreSnapshot(this._redoStack.pop()!);
+    } finally {
+      this._captureEnabled = previousCapture;
+    }
     return true;
   }
 
@@ -144,16 +230,7 @@ export class DiagramCore {
     // 3. Add the node to state
     this.nodes = [...this.nodes, newNode];
 
-    this.events.emit("node_created", {
-      nodeId: newNode.id,
-      name: finalName,
-      type: "custom",
-      stereotype: stereotype.name,
-    });
-    this.events.emit("graph_changed", {
-      nodeCount: this.nodes.length,
-      edgeCount: this.edges.length,
-    });
+    this.notifyGraphChanged();
   }
 
   public addJoinNode(
@@ -181,27 +258,25 @@ export class DiagramCore {
 
     this.nodes = [...this.nodes, newJoinNode];
 
-    this.events.emit("node_created", {
-      nodeId: newJoinNode.id,
-      name: stereotype.name,
-      type: "join",
-      stereotype: stereotype.name,
-    });
-    this.events.emit("graph_changed", {
-      nodeCount: this.nodes.length,
-      edgeCount: this.edges.length,
-    });
+    this.notifyGraphChanged();
   }
 
-  public addSubGraph(x: number, y: number) {
+  /**
+   * Create a subflow node. Accepts an optional label applied during creation,
+   * producing exactly one undo snapshot and one graph notification. Returns
+   * the created node.
+   */
+  public addSubGraph(x: number, y: number, label?: string): Node {
     this._captureUndoState();
     const id = `subflow_${Date.now()}`;
+    const finalLabel = label ?? id;
     const newSubgraph: Node = {
       id,
       type: "subflow",
       position: { x, y },
       data: {
-        label: `${id}`,
+        name: finalLabel,
+        label: finalLabel,
         isCollapsed: false,
         oldWidth: 400,
         oldHeight: 300,
@@ -212,31 +287,40 @@ export class DiagramCore {
     };
     this.nodes = [...this.nodes, newSubgraph];
 
-    this.events.emit("node_created", {
-      nodeId: id,
-      name: id,
-      type: "subflow",
-      stereotype: "SubFlow",
-    });
-    this.events.emit("graph_changed", {
-      nodeCount: this.nodes.length,
-      edgeCount: this.edges.length,
-    });
+    this.notifyGraphChanged();
+    return newSubgraph;
   }
 
   public updateModule(
     id: string,
     config: { name?: string; label?: string; color?: string; width?: number; height?: number; params?: any; stereotype?: string }
   ) {
+    const node = this.nodes.find(n => n.id === id);
+    if (!node) return; // no-op: unknown node
+
+    // Semantic no-op: skip undo capture + notification when nothing changes.
+    const nextParams = config.params !== undefined
+      ? JSON.parse(JSON.stringify(config.params))
+      : node.data.params;
+    // Normalize existing params safely: fresh subflows have no params object
+    // until the sidebar assigns a stereotype (JSON.parse(undefined) throws).
+    const existingParams = node.data.params === undefined ? undefined : JSON.parse(JSON.stringify(node.data.params));
+    const nameChanged = config.name !== undefined && config.name !== node.data.name;
+    const labelChanged = config.label !== undefined && config.label !== node.data.label;
+    const colorChanged = config.color !== undefined && config.color !== node.data.color;
+    const stereotypeChanged = config.stereotype !== undefined && config.stereotype !== node.data.stereotype;
+    const widthChanged = config.width !== undefined && config.width !== node.width;
+    const heightChanged = config.height !== undefined && config.height !== node.height;
+    const paramsChanged = config.params !== undefined && !sameParams(
+      existingParams,
+      nextParams,
+    );
+    if (!nameChanged && !labelChanged && !colorChanged && !stereotypeChanged &&
+        !widthChanged && !heightChanged && !paramsChanged) {
+      return;
+    }
+
     this._captureUndoState();
-    const changes: Record<string, unknown> = {};
-    if (config.name !== undefined) changes.name = config.name;
-    if (config.label !== undefined) changes.label = config.label;
-    if (config.color !== undefined) changes.color = config.color;
-    if (config.width !== undefined) changes.width = config.width;
-    if (config.height !== undefined) changes.height = config.height;
-    if (config.params !== undefined) changes.params = config.params;
-    if (config.stereotype !== undefined) changes.stereotype = config.stereotype;
 
     this.nodes = this.nodes.map(node => {
       if (node.id === id) {
@@ -250,7 +334,7 @@ export class DiagramCore {
             label: config.label ?? node.data.label,
             color: config.color ?? node.data.color,
             stereotype: config.stereotype ?? node.data.stereotype,
-            params: config.params ? JSON.parse(JSON.stringify(config.params)) : node.data.params,
+            params: config.params !== undefined ? JSON.parse(JSON.stringify(config.params)) : node.data.params,
             oldWidth: config.width ?? node.data.oldWidth,
             oldHeight: config.height ?? node.data.oldHeight,
           }
@@ -259,11 +343,7 @@ export class DiagramCore {
       return node;
     });
 
-    this.events.emit("node_updated", { nodeId: id, changes });
-    this.events.emit("graph_changed", {
-      nodeCount: this.nodes.length,
-      edgeCount: this.edges.length,
-    });
+    this.notifyGraphChanged();
   }
 
   public deleteNode(id: string) {
@@ -271,14 +351,13 @@ export class DiagramCore {
   }
 
   public deleteNodes(ids: string[]) {
+    if (ids.length === 0) return; // no-op: empty selection
+    const targetIds = ids.filter(id => this.nodes.some(n => n.id === id));
+    if (targetIds.length === 0) return; // no-op: no matching nodes
     this._captureUndoState();
     // 1. Use a Set for fast lookups and a Map of ALL nodes before deletion
-    const nodesToDelete = new Set(ids);
+    const nodesToDelete = new Set(targetIds);
     const allNodesMap = new Map(this.nodes.map(n => [n.id, n]));
-
-    // Capture edges attached to deleted nodes
-    const removedEdges = this.edges.filter(e => nodesToDelete.has(e.source) || nodesToDelete.has(e.target));
-    const removedEdgeIds = removedEdges.map(e => e.id);
 
     // 2. Filter out deleted nodes and recompute ancestry
     this.nodes = this.nodes
@@ -318,39 +397,31 @@ export class DiagramCore {
       (e) => !nodesToDelete.has(e.source) && !nodesToDelete.has(e.target)
     );
 
-    this.events.emit("node_deleted", { nodeIds: ids, removedEdgeIds });
-    if (removedEdgeIds.length > 0) {
-      this.events.emit("edge_deleted", { edgeIds: removedEdgeIds });
-    }
-    this.events.emit("graph_changed", {
-      nodeCount: this.nodes.length,
-      edgeCount: this.edges.length,
-    });
+    this.notifyGraphChanged();
   }
 
   public deleteEdges(edgesIds: string[]) {
+    if (edgesIds.length === 0) return; // no-op: empty selection
+    if (!edgesIds.some(id => this.edges.some(e => e.id == id))) return; // no-op: no matches
     this._captureUndoState();
     this.edges = this.edges.filter((e) => edgesIds.find(id => id == e.id) === undefined);
-    this.events.emit("edge_deleted", { edgeIds: edgesIds });
-    this.events.emit("graph_changed", {
-      nodeCount: this.nodes.length,
-      edgeCount: this.edges.length,
-    });
+    this.notifyGraphChanged();
   }
 
   public deleteEdge(edgeId: string) {
+    if (!this.edges.some(e => e.id === edgeId)) return; // no-op: unknown edge
     this._captureUndoState();
     this.edges = this.edges.filter((e) => e.id !== edgeId);
-    this.events.emit("edge_deleted", { edgeIds: [edgeId] });
-    this.events.emit("graph_changed", {
-      nodeCount: this.nodes.length,
-      edgeCount: this.edges.length,
-    });
+    this.notifyGraphChanged();
   }
 
   public toggleSubflow(parentId: string, willCollapse: boolean) {
+    const parent = this.nodes.find(n => n.id === parentId);
+    if (!parent || parent.type !== "subflow") return; // no-op: not a subflow
+    if (parent.data?.isCollapsed === willCollapse) return; // no-op: already in state
     this._captureUndoState();
     this._toggleSubflowRecursive(parentId, willCollapse);
+    this.notifyGraphChanged();
   }
 
   private _toggleSubflowRecursive(parentId: string, willCollapse: boolean) {
@@ -412,12 +483,6 @@ export class DiagramCore {
 
       return edge;
     });
-
-    this.events.emit("subflow_toggled", { nodeId: parentId, collapsed: willCollapse });
-    this.events.emit("graph_changed", {
-      nodeCount: this.nodes.length,
-      edgeCount: this.edges.length,
-    });
   }
 
   // ── Selection ──────────────────────────────────────────────────
@@ -427,16 +492,11 @@ export class DiagramCore {
       ...n,
       selected: ids.includes(n.id),
     }));
-    this.events.emit("selection_changed", {
-      nodeIds: ids,
-      edgeIds: this.getSelectedEdges().map(e => e.id),
-    });
   }
 
   public clearSelection(): void {
     this.nodes = this.nodes.map(n => ({ ...n, selected: false }));
     this.edges = this.edges.map(e => ({ ...e, selected: false }));
-    this.events.emit("selection_changed", { nodeIds: [], edgeIds: [] });
   }
 
   public getSelectedNodes(): Node[] {
@@ -471,37 +531,23 @@ export class DiagramCore {
     };
 
     this.edges = [...this.edges, newEdge];
-    this.events.emit("edge_created", {
-      edgeId: newEdge.id,
-      source,
-      target,
-      sourceHandle,
-      targetHandle,
-    });
-    this.events.emit("graph_changed", {
-      nodeCount: this.nodes.length,
-      edgeCount: this.edges.length,
-    });
+    this.notifyGraphChanged();
 
     return newEdge;
   }
 
   public removeEdge(source: string, target: string, targetHandle?: string): void {
-    this._captureUndoState();
     const removedEdges = this.edges.filter(e =>
       e.source === source &&
       e.target === target &&
       (targetHandle === undefined || e.targetHandle === targetHandle)
     );
-    const removedEdgeIds = removedEdges.map(e => e.id);
+    if (removedEdges.length === 0) return; // no-op: no matching edge
+    this._captureUndoState();
 
     this.edges = this.edges.filter(e => !removedEdges.some(r => r.id === e.id));
 
-    this.events.emit("edge_deleted", { edgeIds: removedEdgeIds });
-    this.events.emit("graph_changed", {
-      nodeCount: this.nodes.length,
-      edgeCount: this.edges.length,
-    });
+    this.notifyGraphChanged();
   }
 
   public reconnectEdge(
@@ -511,61 +557,182 @@ export class DiagramCore {
     newSourceHandle?: string,
     newTargetHandle?: string
   ): void {
+    const edge = this.edges.find(e => e.id === edgeId);
+    if (!edge) return; // no-op: unknown edge
+    const source = newSource ?? edge.source;
+    const target = newTarget ?? edge.target;
+    const sourceHandle = newSourceHandle ?? edge.sourceHandle;
+    const targetHandle = newTargetHandle ?? edge.targetHandle;
+    // no-op: equivalent reconnect (no field actually changes)
+    if (source === edge.source && target === edge.target &&
+        sourceHandle === edge.sourceHandle && targetHandle === edge.targetHandle) {
+      return;
+    }
     this._captureUndoState();
     this.edges = this.edges.map(e => {
       if (e.id === edgeId) {
-        return {
-          ...e,
-          source: newSource ?? e.source,
-          target: newTarget ?? e.target,
-          sourceHandle: newSourceHandle ?? e.sourceHandle,
-          targetHandle: newTargetHandle ?? e.targetHandle,
-        };
+        return { ...e, source, target, sourceHandle, targetHandle };
       }
       return e;
     });
 
-    this.events.emit("edge_reconnected", {
-      edgeId,
-      source: newSource,
-      target: newTarget,
-      sourceHandle: newSourceHandle,
-      targetHandle: newTargetHandle,
-    });
-    this.events.emit("graph_changed", {
-      nodeCount: this.nodes.length,
-      edgeCount: this.edges.length,
-    });
+    this.notifyGraphChanged();
+  }
+
+  /**
+   * Duplicate the given nodes plus the edges between them as one atomic graph
+   * operation. Every source node and stereotype is prevalidated before any
+   * mutation; all copies are constructed off-state, then exactly one undo
+   * capture, one array replacement and one notification are performed.
+   * Subflow nodes are skipped (not an error). Returns the mapping of
+   * originalId -> newId.
+   */
+  public duplicateNodes(
+    nodeIds: string[],
+    offset: { x: number; y: number } = { x: 50, y: 50 },
+  ): Array<{ originalId: string; newId: string }> {
+    // Normalize to unique IDs preserving first-occurrence order before any
+    // prevalidation, subflow filtering, construction, edge selection or
+    // returned mapping. Repeating an ID must create exactly one copy.
+    const uniqueIds: string[] = [];
+    const seen = new Set<string>();
+    for (const id of nodeIds) {
+      if (!seen.has(id)) {
+        seen.add(id);
+        uniqueIds.push(id);
+      }
+    }
+
+    // Prevalidate every source node and its stereotype before mutating.
+    const originals: Array<{ node: Node; stereo: StereotypeCore }> = [];
+    for (const id of uniqueIds) {
+      const node = this.getNodeById(id);
+      if (!node) throw new Error(`Node not found: ${id}`);
+      if (node.type === "subflow") continue; // skipped, not an error
+      const nd = node.data as Record<string, unknown>;
+      const stereo = this.getStereotype(nd.stereotype as string);
+      if (!stereo) throw new Error(`Stereotype not found for node ${id}`);
+      originals.push({ node, stereo });
+    }
+
+    // No-op: nothing to duplicate (empty selection or only subflows).
+    if (originals.length === 0) return [];
+
+    // Edges with both endpoints in the selection are copied too.
+    const edgesBetweenSelected = this.edges.filter(
+      (e) => uniqueIds.includes(e.source) && uniqueIds.includes(e.target),
+    );
+
+    // Construct every copy off-state (no capture/notify yet). The final node
+    // id is decided first so oldToNew, the created node and the copied edges
+    // all reference the same id (joins are prefixed `join_`, matching the
+    // established addJoinNode id scheme).
+    const oldToNew = new Map<string, string>();
+    const newNodes: Node[] = [];
+    for (const { node, stereo } of originals) {
+      const nd = node.data as Record<string, unknown>;
+      const isJoin = node.type === "join" || stereo.isJoin;
+      const rawId = crypto.randomUUID();
+      const finalId = isJoin ? `join_${rawId}` : rawId;
+      oldToNew.set(node.id, finalId);
+      const newPos = {
+        x: node.position.x + offset.x,
+        y: node.position.y + offset.y,
+      };
+      const sharedParams = nd.params as
+        | Record<string, string | { value: string; position?: string }>
+        | undefined;
+      if (isJoin) {
+        newNodes.push({
+          id: finalId,
+          type: "join",
+          position: newPos,
+          parentId: node.parentId,
+          data: {
+            stereotype: stereo.name,
+            name: stereo.name,
+            inputsCount: (nd.inputsCount as number | undefined) ?? 2,
+            color: (nd.color as string | undefined) ?? stereo.view?.color ?? "#333",
+            params: this._mergeNodeParams(stereo, sharedParams),
+          },
+        });
+      } else {
+        const isInput = stereo.isInput;
+        newNodes.push({
+          id: finalId,
+          type: "custom",
+          position: newPos,
+          width: node.width ?? stereo.view?.width ?? 140,
+          height: node.height ?? stereo.view?.height ?? 60,
+          parentId: node.parentId,
+          data: {
+            stereotype: stereo.name,
+            name: (nd.name as string | undefined) ?? `${stereo.name}_copy`,
+            color: (nd.color as string | undefined) ?? stereo.view?.color ?? "#ffffff",
+            params: this._mergeNodeParams(stereo, sharedParams),
+            isInput,
+            isLoss: stereo.isLoss,
+          },
+        });
+      }
+    }
+
+    const newEdges: Edge[] = [];
+    for (const edge of edgesBetweenSelected) {
+      const newSource = oldToNew.get(edge.source);
+      const newTarget = oldToNew.get(edge.target);
+      if (newSource && newTarget) {
+        newEdges.push({
+          id: `edge_${crypto.randomUUID()}`,
+          source: newSource,
+          target: newTarget,
+          sourceHandle: edge.sourceHandle ?? "out",
+          targetHandle: edge.targetHandle ?? "in",
+        });
+      }
+    }
+
+    // One atomic operation: one capture, one array replacement, one notify.
+    this._captureUndoState();
+    this.nodes = [...this.nodes, ...newNodes];
+    this.edges = [...this.edges, ...newEdges];
+    this.notifyGraphChanged();
+
+    return [...oldToNew].map(([originalId, newId]) => ({ originalId, newId }));
   }
 
   // ── Position / Movement ──────────────────────────────────────
 
   public moveNode(id: string, x: number, y: number): void {
+    const node = this.nodes.find(n => n.id === id);
+    if (!node) return; // no-op: unknown node
+    if (node.position.x === x && node.position.y === y) return; // no-op: same position
     this._captureUndoState();
     this.nodes = this.nodes.map(n =>
       n.id === id ? { ...n, position: { x, y } } : n
     );
-    this.events.emit("node_moved", { nodeId: id, position: { x, y } });
-    this.events.emit("graph_changed", {
-      nodeCount: this.nodes.length,
-      edgeCount: this.edges.length,
-    });
+    this.notifyGraphChanged();
   }
 
   public moveNodes(positions: Array<{ id: string; x: number; y: number }>): void {
-    this._captureUndoState();
+    if (positions.length === 0) return; // no-op: empty selection
     const posMap = new Map(positions.map(p => [p.id, { x: p.x, y: p.y }]));
+    // no-op: no node actually changes position
+    let moved = false;
+    for (const n of this.nodes) {
+      const pos = posMap.get(n.id);
+      if (pos && (n.position.x !== pos.x || n.position.y !== pos.y)) {
+        moved = true;
+        break;
+      }
+    }
+    if (!moved) return;
+    this._captureUndoState();
     this.nodes = this.nodes.map(n => {
       const pos = posMap.get(n.id);
       return pos ? { ...n, position: pos } : n;
     });
-    for (const p of positions) {
-      this.events.emit("node_moved", { nodeId: p.id, position: { x: p.x, y: p.y } });
-    }
-    this.events.emit("graph_changed", {
-      nodeCount: this.nodes.length,
-      edgeCount: this.edges.length,
-    });
+    this.notifyGraphChanged();
   }
 
   // ── Snapshots ─────────────────────────────────────────────────
@@ -575,13 +742,25 @@ export class DiagramCore {
   }
 
   public restoreSnapshot(snapshot: DiagramCoreSnapshot): void {
+    this._assertNotNotifying();
     this.nodes = [...snapshot.nodes];
     this.edges = [...snapshot.edges];
-    this.events.emit("diagram_reset", { nodes: this.nodes, edges: this.edges });
-    this.events.emit("graph_changed", {
-      nodeCount: this.nodes.length,
-      edgeCount: this.edges.length,
-    });
+    this.notifyGraphChanged();
+  }
+
+  /**
+   * Clear the diagram (reset_diagram RPC). Reassigns fresh arrays so the
+   * Svelte reactivity bridge observes the change, captures one undo snapshot
+   * (undo restores the previous diagram) and synchronously notifies graph
+   * subscribers exactly once. An already-empty diagram is a no-op (zero
+   * undo entries, zero notifications).
+   */
+  public reset(): void {
+    if (this.nodes.length === 0 && this.edges.length === 0) return; // no-op
+    this._captureUndoState();
+    this.nodes = [];
+    this.edges = [];
+    this.notifyGraphChanged();
   }
 
   // ── Connection Validation ────────────────────────────────────
@@ -684,11 +863,7 @@ export class DiagramCore {
       return false;
     }
 
-    this.events.emit("diagram_imported", { nodes: this.nodes, edges: this.edges });
-    this.events.emit("graph_changed", {
-      nodeCount: this.nodes.length,
-      edgeCount: this.edges.length,
-    });
+    this.notifyGraphChanged();
     return true;
   }
 }
