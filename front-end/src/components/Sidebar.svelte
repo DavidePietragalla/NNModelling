@@ -14,7 +14,7 @@ MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.
 <script lang="ts">
   import SDropdown from "./SDropdown.svelte";
   import type { Diagram } from "../Diagram.svelte";
-  import type { Stereotype } from "../stereotype";
+  import type { StereotypeCore } from "../core/StereotypeCore";
   import type { Node } from "@xyflow/svelte";
   import type { TypeSuggestion } from "../conversion/tensortypes";
 
@@ -37,7 +37,7 @@ MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.
     params: {} as Record<string, any>,
   });
 
-  let selection = $state<Stereotype | null>(null);
+  let selection = $state<StereotypeCore | null>(null);
   let isEditing = $derived(selectedNode !== null);
   let isSubflow = $derived(selectedNode?.type === "subflow"); // <-- Rileva se è un sottografo
   let subflowStereotypes = $derived(diagram.stereotypes.filter(s => s.isSubFlow));
@@ -132,7 +132,7 @@ MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.
     form.params = {};
   }
 
-  function onStereotypeChange(newStereotype: Stereotype | null) {
+  function onStereotypeChange(newStereotype: StereotypeCore | null) {
     selection = newStereotype;
     if (!newStereotype) {
       form.params = {};

@@ -13,12 +13,12 @@ MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.
 
 <script lang="ts">
   import type { Diagram } from "../Diagram.svelte";
-  import type { Stereotype } from "../stereotype";
+  import type { StereotypeCore } from "../core/StereotypeCore";
 
   interface Props {
-    selectedStereotype: Stereotype | null;
+    selectedStereotype: StereotypeCore | null;
     diagram: Diagram;
-    onSelectedChange: (stereotype: Stereotype | null) => void;
+    onSelectedChange: (stereotype: StereotypeCore | null) => void;
   }
 
   let { selectedStereotype, diagram, onSelectedChange }: Props = $props();

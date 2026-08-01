@@ -102,9 +102,6 @@ export class DiagramCore {
     return this.stereotypes.find(s => s.name === name);
   }
 
-  get layerStereotypes() { return this.stereotypes.filter(s => !s.isJoin); }
-  get joinStereotypes() { return this.stereotypes.filter(s => s.isJoin); }
-
   public addModule(
     stereotype: StereotypeCore,
     x: number,

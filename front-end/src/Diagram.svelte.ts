@@ -17,7 +17,7 @@
 
 import { type Node, type Edge } from "@xyflow/svelte";
 import { DiagramCore } from "./core/DiagramCore";
-import { Stereotype } from "./stereotype";
+import { StereotypeCore } from "./core/StereotypeCore";
 import { TypeEngine } from "./conversion/typeEngine";
 import type { TypeResult } from "./conversion/tensortypes";
 
@@ -30,7 +30,7 @@ export class Diagram extends DiagramCore {
 
   constructor() {
     super();
-    this.initStereotypes(Stereotype.loadFromDirectory());
+    this.initStereotypes(StereotypeCore.loadFromDirectory());
     const inputStereotype = this.stereotypes.find(s => s.isInput);
     if (inputStereotype && this.nodes.length === 0) {
       const centerX = (typeof window !== "undefined" ? window.innerWidth : 1024) / 2 - 15;

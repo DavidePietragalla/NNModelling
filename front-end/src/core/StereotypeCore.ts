@@ -31,7 +31,6 @@ export interface StereotypeJson {
   category?: string;
   pythonClassName?: string;
   taskType?: "classification" | "regression";
-  expr?: string;
   view?: Partial<StereotypeView>;
   params?: Record<string, ModuleParameter>;
   type_signature?: TypeSignature;
@@ -43,7 +42,6 @@ export class StereotypeCore {
   public readonly category: string;
   public readonly pythonClassName: string;
   public readonly taskType: string;
-  public readonly expr: string;
   public readonly parameters: Record<string, ModuleParameter>;
   public readonly view: StereotypeView;
   public readonly typeSignature?: TypeSignature;
@@ -64,7 +62,6 @@ export class StereotypeCore {
     this.category = data.category || "Uncategorized";
     this.pythonClassName = data.pythonClassName || "";
     this.taskType = data.taskType || "";
-    this.expr = data.expr || "";
 
     this.parameters = {};
     if (data.params) {
@@ -109,38 +106,6 @@ export class StereotypeCore {
       }
     }
 
-    return loaded.sort((a, b) => a.name.localeCompare(b.name));
-  }
-
-  // ── Node.js loader (MCP server) ────────────────
-  // Uses fs.readdirSync + JSON.parse for Node.js environments.
-  // The stereotypesDir parameter is an absolute path to the Stereotypes/ directory.
-  public static loadFromDirectoryNode(stereotypesDir: string): StereotypeCore[] {
-    // Dynamic import to avoid bundling 'fs' and 'path' in the browser build
-    const fs = require("fs") as typeof import("fs");
-    const path = require("path") as typeof import("path");
-
-    const loaded: StereotypeCore[] = [];
-
-    function walkDir(dir: string): void {
-      const entries = fs.readdirSync(dir, { withFileTypes: true });
-      for (const entry of entries) {
-        const fullPath = path.join(dir, entry.name);
-        if (entry.isDirectory()) {
-          walkDir(fullPath);
-        } else if (entry.name.endsWith(".json")) {
-          try {
-            const content = fs.readFileSync(fullPath, "utf-8");
-            const jsonData = JSON.parse(content);
-            loaded.push(new StereotypeCore(fullPath, jsonData));
-          } catch (e) {
-            console.error(`Error loading stereotype from ${fullPath}:`, e);
-          }
-        }
-      }
-    }
-
-    walkDir(stereotypesDir);
     return loaded.sort((a, b) => a.name.localeCompare(b.name));
   }
 
