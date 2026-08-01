@@ -5,6 +5,8 @@ from __future__ import annotations
 import asyncio
 import hashlib
 import json
+import os
+import stat
 from pathlib import Path
 from typing import Any
 
@@ -1065,6 +1067,126 @@ def test_api_pins_served_bytes_to_the_verified_snapshot(tmp_path):
         assert served == original
         assert served != wheel.read_bytes()
         # The verified snapshot is removed after the response completed.
+        assert list(snapshot_dir.iterdir()) == []
+
+    asyncio.run(exercise_api())
+
+
+def test_api_removes_snapshot_when_send_fails_during_body_streaming(tmp_path):
+    """D3 cleanup: a mid-stream failure must not leak the verified snapshot.
+
+    Starlette invokes a FileResponse ``background`` callback only after a
+    fully successful transfer, so a plain FileResponse would skip cleanup when
+    the client connection drops and ``send`` raises while the body is being
+    streamed. The endpoint wraps the response so the private snapshot is
+    removed on every outcome. This test drives the real ASGI app with a
+    ``send`` that raises exactly after ``http.response.start`` — verification
+    and snapshot creation already finished, but the transfer did not — and
+    asserts both the propagated exception and the cleanup.
+    """
+    app, store, job, owner, _other = _download_context(tmp_path)
+    original = b"original-wheel-bytes"
+    _materialize_package(store, job, wheel_bytes=original)
+    manager = app.state.manager
+    snapshot_dir = manager.package_snapshot_dir
+    assert snapshot_dir is not None
+
+    class StreamInterrupted(Exception):
+        """Sentinel for the connection loss a server raises from ``send``."""
+
+    snapshot_modes: list[int] = []
+
+    async def exercise_api() -> None:
+        async def send(message: dict[str, Any]) -> None:
+            if message["type"] == "http.response.start":
+                # The verified snapshot exists while the response is served;
+                # record its private permissions for the 0600 check.
+                snapshots = list(snapshot_dir.iterdir())
+                assert len(snapshots) == 1
+                snapshot_modes.append(snapshots[0].stat().st_mode)
+            elif message["type"] == "http.response.body":
+                raise StreamInterrupted("connection lost while streaming body")
+
+        async def receive() -> dict[str, Any]:
+            return {"type": "http.disconnect"}
+
+        scope = {
+            "type": "http",
+            "asgi": {"version": "3.0"},
+            "http_version": "1.1",
+            "method": "GET",
+            "headers": [(b"authorization", f"Bearer {owner.token}".encode())],
+            "scheme": "http",
+            "path": f"/jobs/{job.id}/package",
+            "raw_path": f"/jobs/{job.id}/package".encode(),
+            "query_string": b"",
+            "server": ("test", 80),
+            "client": ("127.0.0.1", 1234),
+            "root_path": "",
+        }
+        with pytest.raises(StreamInterrupted, match="connection lost"):
+            await app(scope, receive, send)
+
+        # The verified private snapshot is gone even though the transfer failed.
+        assert list(snapshot_dir.iterdir()) == []
+
+    asyncio.run(exercise_api())
+    if os.name == "posix":
+        assert len(snapshot_modes) == 1
+        assert stat.S_IMODE(snapshot_modes[0]) == 0o600
+
+
+def test_api_removes_snapshot_when_download_task_is_cancelled(tmp_path):
+    """D3 cleanup: cancelling the streaming task must also remove the snapshot.
+
+    Uvicorn cancels the request task when the client transport goes away or
+    during shutdown; the cancellation lands at an await inside the response.
+    The cleanup wrapper still runs its ``finally`` before the CancelledError
+    escapes, so a cancelled download never leaves the private snapshot behind.
+    The test blocks ``send`` on the first body message so the cancellation
+    deterministically lands mid-stream, after the verified snapshot exists.
+    """
+    app, store, job, owner, _other = _download_context(tmp_path)
+    _materialize_package(store, job, wheel_bytes=b"wheel-content")
+    manager = app.state.manager
+    snapshot_dir = manager.package_snapshot_dir
+    assert snapshot_dir is not None
+
+    async def exercise_api() -> None:
+        response_started = asyncio.Event()
+        hold_body = asyncio.Event()
+
+        async def send(message: dict[str, Any]) -> None:
+            if message["type"] == "http.response.start":
+                response_started.set()
+            elif message["type"] == "http.response.body":
+                await hold_body.wait()
+
+        async def receive() -> dict[str, Any]:
+            return {"type": "http.disconnect"}
+
+        scope = {
+            "type": "http",
+            "asgi": {"version": "3.0"},
+            "http_version": "1.1",
+            "method": "GET",
+            "headers": [(b"authorization", f"Bearer {owner.token}".encode())],
+            "scheme": "http",
+            "path": f"/jobs/{job.id}/package",
+            "raw_path": f"/jobs/{job.id}/package".encode(),
+            "query_string": b"",
+            "server": ("test", 80),
+            "client": ("127.0.0.1", 1234),
+            "root_path": "",
+        }
+        task = asyncio.create_task(app(scope, receive, send))
+        await response_started.wait()
+        # The response is now streaming the verified private snapshot.
+        assert list(snapshot_dir.iterdir())
+        task.cancel()
+        with pytest.raises(asyncio.CancelledError):
+            await task
+        # The verified private snapshot is removed after the cancelled transfer.
         assert list(snapshot_dir.iterdir()) == []
 
     asyncio.run(exercise_api())
