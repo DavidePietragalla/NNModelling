@@ -127,7 +127,6 @@ export class StereotypeCore {
         : (raw.input as ShapePattern).map((d) => StereotypeCore.stripDollar(d)),
       output: raw.output.map((d) => StereotypeCore.stripDollar(d)),
       dtype: raw.dtype ? { ...raw.dtype } : undefined,
-      constraints: raw.constraints ? { ...raw.constraints } : undefined,
       subflow: raw.subflow ? { ...raw.subflow } : undefined,
       join: raw.join ? { ...raw.join } : undefined,
       advisories: raw.advisories ? [...raw.advisories] : undefined,
@@ -138,18 +137,8 @@ export class StereotypeCore {
     if (dim.kind === "symbolic" && dim.name.startsWith("$")) {
       return { ...dim, name: dim.name.slice(1) };
     }
-    if (dim.kind === "computed") {
-      // For expr-based computed dims, don't strip $ from inside the expression
-      // string — the tokenizer handles $H, $*, etc.
-      if (dim.expr) {
-        return { ...dim, args: undefined };
-      }
-      // Legacy formula+args based computed dims: strip $ from args
-      return {
-        ...dim,
-        args: dim.args?.map((a) => (a.startsWith("$") ? a.slice(1) : a)),
-      };
-    }
+    // Computed dims carry an expression string; the `$` inside it is not a
+    // symbolic name but tokenizer syntax ($H, $*, ...) and is left untouched.
     return dim;
   }
 }

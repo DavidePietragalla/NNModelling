@@ -19,15 +19,16 @@
  * - `'symbolic'` — a named variable (e.g. batch size `B`, sequence length `S`).
  * - `'param_ref'` — references a node parameter (e.g. `in_features`).
  * - `'wildcard'` — matches zero or more arbitrary trailing dimensions.
- * - `'computed'` — a dimension computed by a formula (e.g. conv2d_hw).
- *   `value` is set when formula arguments have been fully resolved.
+ * - `'computed'` — a dimension computed by an expression string
+ *   (e.g. `floor(($H + 2*padding - dilation*(kernel_size - 1) - 1)/stride + 1)`).
+ *   `value` is set when the expression has been fully resolved.
  */
 export type ShapeDimension =
   | { kind: 'const'; value: number }
   | { kind: 'symbolic'; name: string }
   | { kind: 'param_ref'; name: string }
   | { kind: 'wildcard' }
-  | { kind: 'computed'; expr?: string; formula?: string; args?: string[]; value?: number }
+  | { kind: 'computed'; expr?: string; value?: number }
   | { kind: 'param_spread'; param: string; values?: number[] };
 
 // ─────────────────────────────────────────────────────────────────────────────
@@ -71,17 +72,18 @@ export interface TensorType {
  * The leading `$` from JSON symbolic names is stripped on load, so
  * `"$B"` becomes `{ kind: 'symbolic', name: 'B' }`.
  *
- * `'computed'` — a dimension whose size is determined by a named formula
- * (e.g. `conv2d_hw`) with arguments that reference symbolic dims (`$H`)
- * or node params (`kernel_size`).  Computed dimensions are resolved during
- * `resolvePattern` when all arguments are known.
+ * `'computed'` — a dimension whose size is determined by an expression
+ * string (e.g. `floor(($H + 2*padding - kernel_size)/stride + 1)`) that
+ * references symbolic dims (`$H`) or node params (`kernel_size`).
+ * Computed dimensions are resolved during `resolvePattern` when the
+ * expression can be evaluated.
  */
 export type ShapeDimPattern =
   | { kind: 'const'; value: number }
   | { kind: 'symbolic'; name: string }
   | { kind: 'param_ref'; name: string }
   | { kind: 'wildcard' }
-  | { kind: 'computed'; expr?: string; formula?: string; args?: string[] }
+  | { kind: 'computed'; expr?: string }
   | { kind: 'param_spread'; param: string };
 
 // ─────────────────────────────────────────────────────────────────────────────
@@ -162,10 +164,6 @@ export interface JoinConfig {
  *   and subflows; an array of `ShapePattern` for joins (one per input handle).
  * - `output`: shape pattern the node produces.
  * - `dtype`: optional dtype constraints on inputs and/or output.
- * - `constraints`: additional constraints on the type relationship between inputs.
- *   Currently supports:
- *   - `concat`: for Concat joins, specifies which dimension is concatenated.
- *     `dim` is a string like `"params.dim"` resolving to a parameter on the node.
  */
 export interface TypeSignature {
   /** 'module' | 'join' | 'subflow' */
@@ -194,13 +192,6 @@ export interface TypeSignature {
    * Declares join-specific action (concat, element_wise, etc.).
    */
   join?: JoinConfig;
-
-  /** Optional additional constraints (e.g. concat dimension).
-   *  @deprecated Use `join` or `subflow` instead.
-   */
-  constraints?: {
-    concat?: { dim: string };
-  };
 
   /**
    * Optional advisory warnings for this stereotype.
