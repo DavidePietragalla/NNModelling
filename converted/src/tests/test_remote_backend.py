@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import asyncio
+import hashlib
 import json
 from pathlib import Path
 from typing import Any
@@ -11,12 +12,12 @@ import httpx
 import pytest
 
 from backend.app import create_app
-from backend.auth import AuthService, InMemoryAuthStore
+from backend.auth import AuthService, InMemoryAuthStore, PairingGrant
 from backend.config_service import build_job_hydra_configs, normalize_training_config
 from backend.dataset_registry import discover_datasets
 from backend.executors import SlurmExecutor
 from backend.manager import JobManager
-from backend.models import JobSubmission, ResourceRequest
+from backend.models import JobStatus, JobSubmission, ResourceRequest
 from backend.store import InMemoryJobStore, ValkeyJobStore
 
 
@@ -183,7 +184,7 @@ def test_manager_exports_a_model_wheel_after_a_successful_job(tmp_path, monkeypa
                     "package_name": package_name,
                     "version": version,
                     "wheel": "dist/model.whl",
-                    "sha256": "checksum",
+                    "sha256": hashlib.sha256(b"wheel").hexdigest(),
                     "input_adapter": {"kind": "tensor", "version": 1},
                 }
             ),
@@ -679,7 +680,37 @@ def test_api_requires_pairing_and_scopes_jobs_to_their_connection(tmp_path):
     asyncio.run(exercise_api())
 
 
-def test_api_downloads_only_the_owner_model_wheel(tmp_path):
+def _materialize_package(
+    store: InMemoryJobStore,
+    job: JobStatus,
+    *,
+    wheel_bytes: bytes = b"wheel-content",
+    wheel_rel: str = "dist/nnm-model.whl",
+    sha256: str | None = None,
+) -> dict[str, Any]:
+    """Write a wheel and a matching manifest into a job's artifact directory."""
+    record = store.get_job(job.id)
+    assert record is not None
+    artifact = Path(record["artifact_dir"])
+    wheel = artifact / wheel_rel
+    wheel.parent.mkdir(parents=True, exist_ok=True)
+    wheel.write_bytes(wheel_bytes)
+    record["model_package"] = {
+        "schema_version": 1,
+        "package_name": "nnm-model",
+        "version": "0.1.0",
+        "wheel": wheel_rel,
+        "sha256": sha256 if sha256 is not None else hashlib.sha256(wheel_bytes).hexdigest(),
+        "input_adapter": {"kind": "tensor", "version": 1},
+    }
+    store.save_job(job.id, record)
+    return record
+
+
+def _download_context(
+    tmp_path: Path,
+) -> tuple[Any, InMemoryJobStore, JobStatus, PairingGrant, PairingGrant]:
+    """Build an authenticated app with one owner, one other, and a packaged job."""
     store = InMemoryJobStore()
     manager = JobManager(store, tmp_path, [ImmediateExecutor()])
     auth = AuthService(InMemoryAuthStore())
@@ -688,22 +719,14 @@ def test_api_downloads_only_the_owner_model_wheel(tmp_path):
     auth.approve(owner.request_id)
     auth.approve(other.request_id)
     job = manager.submit(submission(), owner_connection_id=owner.connection_id)
-    record = store.get_job(job.id)
-    assert record is not None
-    artifact = Path(record["artifact_dir"])
-    wheel = artifact / "dist" / "nnm-model.whl"
-    wheel.parent.mkdir()
-    wheel.write_bytes(b"wheel-content")
-    record["model_package"] = {
-        "schema_version": 1,
-        "package_name": "nnm-model",
-        "version": "0.1.0",
-        "wheel": "dist/nnm-model.whl",
-        "sha256": "checksum",
-        "input_adapter": {"kind": "tensor", "version": 1},
-    }
-    store.save_job(job.id, record)
     app = create_app(manager, auth_service=auth, admin_token="admin-secret")
+    return app, store, job, owner, other
+
+
+def test_api_downloads_only_the_owner_model_wheel(tmp_path):
+    app, store, job, owner, other = _download_context(tmp_path)
+    _materialize_package(store, job)
+    expected = hashlib.sha256(b"wheel-content").hexdigest()
 
     async def exercise_api() -> None:
         transport = httpx.ASGITransport(app=app)
@@ -714,8 +737,99 @@ def test_api_downloads_only_the_owner_model_wheel(tmp_path):
                 response = await client.get(f"/jobs/{job.id}/package", headers=owner_headers)
                 assert response.status_code == 200
                 assert response.content == b"wheel-content"
+                assert response.headers["x-nnm-sha256"] == expected
                 assert "attachment" in response.headers["content-disposition"]
                 assert (await client.get(f"/jobs/{job.id}/package", headers=other_headers)).status_code == 404
+
+    asyncio.run(exercise_api())
+
+
+def test_api_rejects_a_wheel_replaced_after_export(tmp_path):
+    """D3: bytes that no longer match the manifest digest are never served."""
+    app, store, job, owner, _other = _download_context(tmp_path)
+    _materialize_package(store, job, wheel_bytes=b"original")
+    record = store.get_job(job.id)
+    assert record is not None
+    wheel = Path(record["artifact_dir"]) / record["model_package"]["wheel"]
+    wheel.write_bytes(b"tampered-bytes")
+
+    async def exercise_api() -> None:
+        transport = httpx.ASGITransport(app=app)
+        async with app.router.lifespan_context(app):
+            async with httpx.AsyncClient(transport=transport, base_url="http://test") as client:
+                headers = {"authorization": f"Bearer {owner.token}"}
+                response = await client.get(f"/jobs/{job.id}/package", headers=headers)
+                assert response.status_code == 409
+                assert response.json()["detail"] == {
+                    "code": "package_integrity_error",
+                    "message": "Model package integrity check failed",
+                }
+                # A conflicted download must not leak where artifacts live.
+                assert str(tmp_path) not in response.text
+
+    asyncio.run(exercise_api())
+
+
+def test_api_rejects_a_missing_declared_digest(tmp_path):
+    """A manifest without a sha256 cannot be verified, so nothing is served."""
+    app, store, job, owner, _other = _download_context(tmp_path)
+    _materialize_package(store, job)
+    record = store.get_job(job.id)
+    assert record is not None
+    del record["model_package"]["sha256"]
+    store.save_job(job.id, record)
+
+    async def exercise_api() -> None:
+        transport = httpx.ASGITransport(app=app)
+        async with app.router.lifespan_context(app):
+            async with httpx.AsyncClient(transport=transport, base_url="http://test") as client:
+                headers = {"authorization": f"Bearer {owner.token}"}
+                response = await client.get(f"/jobs/{job.id}/package", headers=headers)
+                assert response.status_code == 409
+                assert response.json()["detail"] == {
+                    "code": "package_integrity_error",
+                    "message": "Model package integrity cannot be verified",
+                }
+                assert str(tmp_path) not in response.text
+
+    asyncio.run(exercise_api())
+
+
+def test_api_rejects_a_malformed_declared_digest(tmp_path):
+    """A non-hex manifest digest is corrupt state, not a downloadable package."""
+    app, store, job, owner, _other = _download_context(tmp_path)
+    _materialize_package(store, job, sha256="not-a-hex-digest")
+
+    async def exercise_api() -> None:
+        transport = httpx.ASGITransport(app=app)
+        async with app.router.lifespan_context(app):
+            async with httpx.AsyncClient(transport=transport, base_url="http://test") as client:
+                headers = {"authorization": f"Bearer {owner.token}"}
+                response = await client.get(f"/jobs/{job.id}/package", headers=headers)
+                assert response.status_code == 409
+                assert response.json()["detail"]["code"] == "package_integrity_error"
+                assert str(tmp_path) not in response.text
+
+    asyncio.run(exercise_api())
+
+
+def test_api_exposes_the_package_digest_header_via_cors(tmp_path):
+    """Browsers must be allowed to read X-NNM-SHA256 on the download response."""
+    app, store, job, owner, _other = _download_context(tmp_path)
+    _materialize_package(store, job)
+
+    async def exercise_api() -> None:
+        transport = httpx.ASGITransport(app=app)
+        async with app.router.lifespan_context(app):
+            async with httpx.AsyncClient(transport=transport, base_url="http://test") as client:
+                headers = {
+                    "authorization": f"Bearer {owner.token}",
+                    "origin": "http://127.0.0.1:5173",
+                }
+                response = await client.get(f"/jobs/{job.id}/package", headers=headers)
+                assert response.status_code == 200
+                assert response.headers["x-nnm-sha256"] == hashlib.sha256(b"wheel-content").hexdigest()
+                assert "X-NNM-SHA256" in response.headers.get("access-control-expose-headers", "")
 
     asyncio.run(exercise_api())
 

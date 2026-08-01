@@ -24,7 +24,7 @@ from backend.auth import (
     parse_duration,
 )
 from backend.dataset_registry import discover_datasets
-from backend.manager import JobManager
+from backend.manager import JobManager, PackageIntegrityError
 from backend.models import (
     JobStatus,
     JobSubmission,
@@ -75,6 +75,7 @@ def create_app(
         allow_credentials=False,
         allow_methods=["GET", "POST", "DELETE", "OPTIONS"],
         allow_headers=["Authorization", "Content-Type", "Last-Event-ID", "X-NNM-Admin-Token"],
+        expose_headers=["X-NNM-SHA256"],
     )
     app.state.manager = manager or JobManager.from_environment()
     app.state.auth = auth_service or _auth_from_environment(in_memory=injected_manager is not None)
@@ -244,15 +245,34 @@ def create_app(
         job_id: str,
         connection: dict[str, Any] = Depends(current_connection),
     ) -> FileResponse:
-        """Download the authenticated job's generated pip wheel."""
+        """Download the authenticated job's generated pip wheel.
+
+        The wheel digest is recomputed and verified against the manifest before
+        any byte is served; a corrupted or replaced wheel is rejected with
+        ``409 Conflict`` and never downloaded. On success the verified digest
+        is exposed through the ``X-NNM-SHA256`` response header.
+        """
 
         try:
-            path, filename = app.state.manager.package_path(job_id, owner_connection_id=connection["id"])
+            path, filename, digest = app.state.manager.package_download(
+                job_id,
+                owner_connection_id=connection["id"],
+            )
         except KeyError as exc:
             raise HTTPException(status_code=404, detail="Unknown job") from exc
         except FileNotFoundError as exc:
             raise HTTPException(status_code=404, detail="Model package is not available") from exc
-        return FileResponse(path, media_type="application/octet-stream", filename=filename)
+        except PackageIntegrityError as exc:
+            raise HTTPException(
+                status_code=409,
+                detail={"code": "package_integrity_error", "message": str(exc)},
+            ) from exc
+        return FileResponse(
+            path,
+            media_type="application/octet-stream",
+            filename=filename,
+            headers={"X-NNM-SHA256": digest},
+        )
 
     @app.get("/jobs/{job_id}/events")
     def get_events(

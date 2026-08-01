@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+import hashlib
+import hmac
 import json
 import os
 import re
@@ -26,6 +28,19 @@ TERMINAL_STATES = {"succeeded", "failed", "cancelled"}
 # state instead of a partial transition.
 FAILED_TRANSITION_ATTEMPTS = 3
 FAILED_TRANSITION_BACKOFF_SECONDS = 0.2
+
+# Authoritative wheel digests are lowercase hex SHA-256 strings. Anything else
+# is a corrupt manifest that must never be served.
+PACKAGE_SHA256_HEX = re.compile(r"[0-9a-fA-F]{64}\Z")
+
+
+class PackageIntegrityError(Exception):
+    """Raised when an exported wheel no longer matches its declared digest.
+
+    The message is deliberately generic: it never includes filesystem paths,
+    so the download endpoint can surface it to clients without leaking where
+    job artifacts are stored.
+    """
 
 
 class JobManager:
@@ -390,8 +405,22 @@ class JobManager:
             "stderr": _read_text(root / "stderr.log"),
         }
 
-    def package_path(self, job_id: str, *, owner_connection_id: str) -> tuple[Path, str]:
-        """Return the owned job's wheel path and its safe download filename."""
+    def package_download(self, job_id: str, *, owner_connection_id: str) -> tuple[Path, str, str]:
+        """Resolve and verify the owned job's wheel for download.
+
+        Returns the wheel path, its safe download filename, and the SHA-256
+        digest of the bytes currently on disk. The digest is recomputed with a
+        streaming read on every call and compared in constant time against the
+        authoritative ``model_package.sha256`` recorded at export time, so a
+        wheel that was corrupted or replaced after export is never served.
+
+        Raises:
+            KeyError: The job does not exist or is not owned by the connection.
+            FileNotFoundError: The job has no exported wheel or its declared
+                wheel path escapes the artifact root.
+            PackageIntegrityError: The declared manifest digest is missing or
+                malformed, or the wheel bytes no longer match it.
+        """
 
         job = self._owned_job(job_id, owner_connection_id)
         package = job.get("model_package")
@@ -401,7 +430,13 @@ class JobManager:
         wheel = (root / package["wheel"]).resolve()
         if root not in wheel.parents or not wheel.is_file() or wheel.suffix != ".whl":
             raise FileNotFoundError("Model package is not available")
-        return wheel, wheel.name
+        declared = package.get("sha256")
+        if not isinstance(declared, str) or not PACKAGE_SHA256_HEX.fullmatch(declared):
+            raise PackageIntegrityError("Model package integrity cannot be verified")
+        computed = _sha256_hex(wheel)
+        if not hmac.compare_digest(computed, declared.lower()):
+            raise PackageIntegrityError("Model package integrity check failed")
+        return wheel, wheel.name, computed
 
     def tail_logs(
         self,
@@ -524,6 +559,16 @@ def _read_text(path: Path) -> str:
         return path.read_text(encoding="utf-8", errors="replace")
     except FileNotFoundError:
         return ""
+
+
+def _sha256_hex(path: Path, *, chunk_size: int = 1024 * 1024) -> str:
+    """Return the SHA-256 hex digest of a file without loading it whole."""
+
+    digest = hashlib.sha256()
+    with path.open("rb") as stream:
+        for chunk in iter(lambda: stream.read(chunk_size), b""):
+            digest.update(chunk)
+    return digest.hexdigest()
 
 
 def _tail_text(path: Path, offset: int, *, limit: int = 64 * 1024) -> dict[str, str | int | bool]:

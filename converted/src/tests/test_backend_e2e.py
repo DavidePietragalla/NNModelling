@@ -166,6 +166,7 @@ def _run_real_job(
                 downloaded = await client.get(f"/jobs/{job_id}/package", headers=headers)
                 assert downloaded.status_code == 200
                 assert downloaded.content == wheel_path.read_bytes()
+                assert downloaded.headers["x-nnm-sha256"] == status.model_package.sha256
                 assert "attachment" in downloaded.headers["content-disposition"]
 
                 # Save the served bytes to a client-owned wheel file (named
