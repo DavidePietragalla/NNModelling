@@ -21,4 +21,4 @@ export type {
   JoinNodeConfig,
   DiagramCoreSnapshot,
 } from './types';
-export { checkValidConnection } from './validation';
+export { checkValidConnection, findDirectedCycle } from './validation';

@@ -12,6 +12,7 @@
  */
 
 import type { DiagramCore } from "../core/DiagramCore";
+import { findDirectedCycle } from "../core/validation";
 import { type Node } from "@xyflow/svelte";
 
 export class NNTree {
@@ -25,9 +26,38 @@ export class NNTree {
     if (inputNodes.length !== 1) {
       throw new Error("Expected exactly one input node, but found " + inputNodes.length);
     }
+    // Defense in depth: the editor validation rejects cycle-forming edges, but
+    // an imported diagram can still contain a directed cycle. Reject it here
+    // independently of the traversal below. Subflow-internal edges are
+    // validated by compileSubflowGraph (Kahn's topological sort) so the
+    // subflow-specific error message is preserved.
+    this.assertTopLevelAcyclic(diagram);
     let new_root = this.processNode(inputNodes[0], diagram, new Set());
     if (new_root === undefined) throw new Error("root is undefined");
     this.root = new_root;
+  }
+
+  /**
+   * Throw when the top-level graph (all nodes, edges that are not internal to
+   * a single subflow) contains a directed cycle.
+   */
+  private assertTopLevelAcyclic(diagram: DiagramCore): void {
+    const parentByNodeId = new Map<string, string | null | undefined>();
+    for (const n of diagram.nodes) parentByNodeId.set(n.id, n.parentId);
+
+    const isInternalToSameSubflow = (e: { source: string; target: string }): boolean => {
+      const parent = parentByNodeId.get(e.source);
+      return parent != null && parent === parentByNodeId.get(e.target);
+    };
+
+    const topLevelEdges = diagram.edges.filter((e) => !isInternalToSameSubflow(e));
+    const cycle = findDirectedCycle(
+      diagram.nodes.map((n) => n.id),
+      topLevelEdges,
+    );
+    if (cycle) {
+      throw new Error(`Graph contains a directed cycle: ${cycle.join(" -> ")}`);
+    }
   }
 
   private getPythonClassName(diagram: DiagramCore, node: Node): string {
@@ -233,7 +263,10 @@ export class NNTree {
 
   private processNode(node: Node, diagram: DiagramCore, visited: Set<string>): string | undefined {
     if (visited.has(node.id)) {
-      console.warn("Node with id " + node.id + "is visited, there is a loop");
+      // The node was already emitted into the tree. This is a legitimate DAG
+      // cross-edge — e.g. two branches reconverging on the same join — not a
+      // cycle: the constructor rejected any directed cycle before traversal,
+      // so a re-visit can only be a completed node reached again.
       return node.id;
     }
     visited.add(node.id);

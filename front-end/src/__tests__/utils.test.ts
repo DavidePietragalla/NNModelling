@@ -109,4 +109,37 @@ describe("checkValidConnection", () => {
     const conn = { source: "a", sourceHandle: "out", target: "c", targetHandle: "in-0" };
     expect(checkValidConnection(d, conn)).toBe(true);
   });
+
+  it("blocks a connection that would close a directed cycle", () => {
+    const d = new Diagram();
+    d.edges = [
+      { id: "e1", source: "a", target: "b", targetHandle: "in" } as Edge,
+      { id: "e2", source: "b", target: "c", targetHandle: "in" } as Edge,
+    ];
+    // c -> a closes a -> b -> c -> a.
+    const conn = { source: "c", sourceHandle: "out", target: "a", targetHandle: "in" };
+    expect(checkValidConnection(d, conn)).toBe(false);
+  });
+
+  it("allows a DAG reconvergence where two branches merge into a join", () => {
+    const d = new Diagram();
+    d.edges = [
+      { id: "e1", source: "a", target: "join", targetHandle: "in-0" } as Edge,
+    ];
+    // b -> join (free in-1 handle) merges two branches without forming a cycle.
+    const conn = { source: "b", sourceHandle: "out", target: "join", targetHandle: "in-1" };
+    expect(checkValidConnection(d, conn)).toBe(true);
+  });
+
+  it("allows a diamond closing edge (both branches feed the join)", () => {
+    const d = new Diagram();
+    d.edges = [
+      { id: "e1", source: "a", target: "b", targetHandle: "in" } as Edge,
+      { id: "e2", source: "a", target: "c", targetHandle: "in" } as Edge,
+      { id: "e3", source: "b", target: "join", targetHandle: "in-0" } as Edge,
+    ];
+    // c -> join merges the second diamond branch; no path from join back to c.
+    const conn = { source: "c", sourceHandle: "out", target: "join", targetHandle: "in-1" };
+    expect(checkValidConnection(d, conn)).toBe(true);
+  });
 });

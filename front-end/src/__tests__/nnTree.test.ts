@@ -368,8 +368,7 @@ describe("NNTree — error handling", () => {
     expect(() => new NNTree(d)).toThrow("Expected exactly one input node");
   });
 
-  it("warns on graph cycle but still produces a tree", () => {
-    const warnSpy = vi.spyOn(console, "warn").mockImplementation(() => {});
+  it("throws on a top-level directed cycle", () => {
     const d = new Diagram();
     d.nodes = [
       node("i", "Input", "Input_0", { out_features: { value: "10" } }, { isInput: true }),
@@ -382,15 +381,41 @@ describe("NNTree — error handling", () => {
       edge("e2", "a", "b"),
       edge("e3", "b", "a"),
     ];
-    const tree = new NNTree(d);
-    // Tree still produces output despite cycle
-    expect(tree.nodes.size).toBeGreaterThan(0);
-    expect(tree.root).toBeDefined();
-    // Warn about loop detected
-    expect(warnSpy).toHaveBeenCalledWith(
-      expect.stringContaining("is visited, there is a loop"),
-    );
-    warnSpy.mockRestore();
+    expect(() => new NNTree(d)).toThrow(/cycle/i);
+  });
+
+  it("compiles a DAG reconvergence into a join without a loop warning", () => {
+    const warnSpy = vi.spyOn(console, "warn").mockImplementation(() => {});
+    try {
+      const d = new Diagram();
+      d.nodes = [
+        node("i", "Input", "Input_0", {}, { isInput: true }),
+        node("a", "Linear", "A"),
+        node("b", "Linear", "B"),
+        node("j", "Addition", "Add", {}, { type: "join" }),
+        node("loss", "MSELoss", "Loss", {}, { isLoss: true }),
+      ];
+      // Two branches (i -> a -> j and a -> b -> j) reconverge on join j:
+      // a valid DAG, not a cycle.
+      d.edges = [
+        edge("e1", "i", "a"),
+        edge("e2", "a", "j", { targetHandle: "in-0" }),
+        edge("e3", "a", "b"),
+        edge("e4", "b", "j", { targetHandle: "in-1" }),
+        edge("e5", "j", "loss"),
+      ];
+      const tree = new NNTree(d);
+      expect(tree.nodes.size).toBeGreaterThan(0);
+      expect(tree.root).toBeDefined();
+      expect(warnSpy).not.toHaveBeenCalledWith(
+        expect.stringContaining("is visited"),
+      );
+      expect(warnSpy).not.toHaveBeenCalledWith(
+        expect.stringContaining("loop"),
+      );
+    } finally {
+      warnSpy.mockRestore();
+    }
   });
 });
 
