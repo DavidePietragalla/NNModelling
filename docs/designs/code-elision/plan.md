@@ -5,6 +5,11 @@ esecuzione CI remota in attesa di push; Milestone B non autorizzata
 
 **Data:** 2026-08-01
 
+**Emendamento di accettazione utente (Milestone A):** la matrice espansa
+obbligatoria è soltanto `mninst` + `autoencoder_mnist`; nessun modello
+Transformer e nessun modello con join non commutativo richiesto. D2 → #31,
+D6 → #30, D8 → #32 (vedi T2 e sezione 7).
+
 **Risultati Milestone A:** [milestone-a-results.md](milestone-a-results.md)
 
 **Vincolo di esecuzione:** nessuna modifica al codice prodotto deve iniziare
@@ -273,31 +278,46 @@ soltanto in una prova di assenza di crash.
 
 **Invarianti obbligatorie:**
 
-1. Tutti i diagrammi sorgente del manifest eseguono import, type check senza
-   errori hard e compilazione NNTree con riferimenti validi.
+1. La matrice obbligatoria (`mninst` e `autoencoder_mnist`) esegue import,
+   type check senza errori hard e compilazione NNTree con riferimenti validi.
+   ~~Tutti i diagrammi sorgente del manifest~~ **SUPERSEDUTO:** gli errori
+   hard preesistenti degli altri esempi del manifest sono rimandati a #30 (D6)
+   e non sono un gate della Milestone A.
 2. Il manifest dichiara forma e dtype di input e output attesi; il forward li
    verifica esattamente, insieme all'assenza di NaN/Inf.
-3. Almeno un diagramma con join non commutativo attraversa compilazione e
-   forward, verificando l'ordinamento per `targetHandle`.
+3. ~~Almeno un diagramma con join non commutativo attraversa compilazione e
+   forward, verificando l'ordinamento per targetHandle.~~ **SUPERSEDUTO
+   dall'emendamento di accettazione utente:** nessun modello con join non
+   commutativo è richiesto nella Milestone A; l'ordinamento per `targetHandle`
+   resta coperto dagli unit test Python esistenti.
 4. Un modello canonico esegue almeno un vero backward: loss e gradienti sono
    finiti, almeno un gradiente è non nullo e almeno un parametro cambia dopo
    l'optimizer step.
 5. Il training E2E produce gli artefatti attesi; il formato sicuro dei pesi è
    caricabile e l'output in `eval()` è equivalente prima e dopo il reload sullo
    stesso input deterministico.
-6. L'inferenza verifica schema, cardinalità, forma e dtype delle predizioni. Il
-   percorso immagini viene verificato per il dataset che lo supporta.
-7. I casi negativi includono almeno ciclo top-level, NNTree malformato,
-   parametro invalido e pesi mancanti.
+6. L'inferenza verifica schema, cardinalità e forma delle predizioni e il
+   dtype sul tensore prima della serializzazione JSON, che non lo conserva.
+   ~~...e dtype delle predizioni...~~ **SUPERSEDUTO (solo artefatto JSON):** il
+   metadata dtype dell'artefatto JSON è rimandato a #32 (D8). Il percorso
+   immagini viene verificato per il dataset che lo supporta.
+7. I casi negativi includono almeno ciclo top-level, parametro invalido e pesi
+   mancanti. ~~NNTree malformato~~ **SUPERSEDUTO:** il comportamento di
+   `convert.py` su un NNTree strutturalmente invalido è caratterizzato in
+   `convert.test.ts`, ma la correzione è rimandata a #31 (D2).
 
 Non è richiesto che la loss diminuisca in una singola epoca: sarebbe
 un'asserzione fragile. Sono invece obbligatorie loss finita, backward valido e
 modifica effettiva dei parametri.
 
-**Accettazione:** un diagramma sorgente canonico attraversa realmente
+**Accettazione:** un diagramma sorgente canonico della matrice obbligatoria
+(`mninst` o `autoencoder_mnist`) attraversa realmente
 `type check -> NNTree -> Hydra -> forward/backward -> training -> reload ->
-inference`; gli altri esempi coprono almeno type check, compilazione e le
-invarianti di forma dichiarate per il loro tier.
+inference`; gli esempi della matrice coprono type check, compilazione e le
+invarianti di forma dichiarate per il loro tier. ~~gli altri esempi coprono
+almeno type check, compilazione e le invarianti di forma dichiarate per il
+loro tier~~ **SUPERSEDUTO:** gli altri esempi con errori hard preesistenti
+sono rimandati a #30 (D6).
 
 #### T3 — Infrastruttura backend reale
 
@@ -574,7 +594,10 @@ pnpm run docs
 
 ### Prove focalizzate
 
-- Tutti i diagrammi del manifest superano type check e compilazione.
+- ~~Tutti i diagrammi del manifest superano type check e compilazione.~~
+  **SUPERSEDUTO dall'emendamento:** la matrice obbligatoria (`mninst`,
+  `autoencoder_mnist`) supera type check e compilazione; gli altri esempi con
+  errori hard preesistenti sono rimandati a #30 (D6).
 - Un modello canonico supera forward, backward, parameter update, training,
   reload e inferenza con invarianti numeriche esplicite.
 - Valkey reale supera persistenza, FIFO, atomic claim e stream cursor.

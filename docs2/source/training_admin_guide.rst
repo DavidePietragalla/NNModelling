@@ -177,14 +177,19 @@ Download verification
 
 The browser owner downloads the wheel through ``GET /jobs/{job_id}/package``;
 the endpoint does not accept a filesystem path and applies normal job
-ownership. Before serving a single byte, the backend recomputes the wheel's
-SHA-256 with a streaming read and compares it in constant time against the
-digest recorded in ``model-package.json`` at export time. A manifest whose
-digest is missing or malformed, or a wheel whose bytes no longer match it, is
-rejected with ``409 Conflict`` and ``{"code": "package_integrity_error"}``;
-the artifact is never served and the response never reveals filesystem paths.
-On success the verified digest is exposed through the ``X-NNM-SHA256``
-response header, which CORS explicitly allows browsers to read.
+ownership. Before serving a single byte, the backend opens the wheel once,
+copies it into a private immutable snapshot (``0600``, never exposed through
+an API path) while computing its SHA-256, and compares that digest in
+constant time against the digest recorded in ``model-package.json`` at export
+time. Only the verified snapshot is served — never the mutable artifact path
+— so bytes replaced on disk after verification cannot be transferred. A
+manifest whose digest is missing or malformed, or a snapshot whose bytes no
+longer match it, is rejected with ``409 Conflict`` and ``{"code":
+"package_integrity_error"}``; the artifact is never served and the response
+never reveals filesystem paths. The snapshot is removed after the response
+completes, errors, or is disconnected. On success the verified digest is
+exposed through the ``X-NNM-SHA256`` response header, which CORS explicitly
+allows browsers to read.
 
 Packaging failures are terminal
 ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
@@ -386,9 +391,11 @@ Security and current limitations
 * Local resource values are scheduling compatibility metadata; they do not
   create cgroup or container isolation.
 * The initial scheduler runs one job at a time.
-* The MCP remote-training HTTP client does not yet send browser pairing tokens.
-  Do not configure it against this protected backend until MCP authentication
-  is implemented.
+* The MCP remote-training HTTP client can use this protected backend when the
+  operator provisions a token externally (``NNM_BACKEND_TOKEN`` or an explicit
+  client token). It sends the same ``Bearer`` header as the browser client but
+  does not perform pairing or renewal itself: provisioning and rotation of the
+  MCP token are an operator responsibility.
 * Never expose the administrator token, its file, Valkey, or artifact paths
   through a web server.
 

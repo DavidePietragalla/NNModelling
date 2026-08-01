@@ -20,6 +20,20 @@ copertura model-to-training introdotta o rafforzata usa esclusivamente:
 Non sono stati modificati file, configurazioni, fixture, stereotype o metadata
 del Transformer. Non è iniziata alcuna tranche della Milestone B.
 
+**Emendamento di accettazione esplicito dell'utente:** la matrice espansa
+obbligatoria della Milestone A è composta soltanto da `mninst` e
+`autoencoder_mnist`. Non è richiesto alcun modello Transformer e nessun
+modello con join non commutativo come gate della milestone. I difetti rimasti
+aperti sono deferiti come lavoro futuro: D2 (NNTree malformato accettato da
+`convert.py`) a
+[#31](https://github.com/LucaSforza/NNModelling/issues/31), D6 (errori hard
+degli esempi fuori perimetro) a
+[#30](https://github.com/LucaSforza/NNModelling/issues/30) e D8 (dtype nel
+JSON di inference) a
+[#32](https://github.com/LucaSforza/NNModelling/issues/32). I criteri di
+accettazione del piano che richiedevano questi elementi nella Milestone A
+sono stati contrassegnati come superati in `plan.md` (T2 e sezione 7).
+
 `resolveConcatOutput()` rimane una primitiva semantica generica del type engine.
 La configurazione seleziona l'azione `concat`; il motore ne implementa la
 semantica senza controlli basati sul nome dello stereotype.
@@ -93,7 +107,9 @@ I test Valkey reali coprono:
 - claim Lua concorrente senza doppia assegnazione;
 - stream con più di 1.000 eventi e cursor reali;
 - pairing, approvazione, autenticazione e revoca;
-- recovery di job queued/running e coerenza dell'evento terminale.
+- recovery di job queued/running e coerenza dell'evento terminale;
+- fallimento dell'esportazione package su Valkey reale con stato/evento
+  terminale coerente (D4).
 
 Con `NNM_REQUIRE_VALKEY=1`, l'assenza del servizio fallisce il gate. In modalità
 locale non obbligatoria i test service possono essere saltati esplicitamente.
@@ -154,21 +170,23 @@ eseguito da remoto perché non sono stati richiesti commit o push.
 | --- | --- |
 | `git diff --check` | clean |
 | Frontend check | 0 errori, 11 warning preesistenti |
-| Frontend unit | 321 passed, 5 skipped |
+| Frontend unit | 329 passed, 5 skipped |
 | Frontend build | passed |
-| Frontend integration completa | 151 passed, 3 skipped, circa 192 s (non rieseguita in questa sessione) |
-| Backend fast (`-m fast`) | 182 passed, circa 9 s |
-| Backend service, Valkey reale | 12 passed, circa 3 s |
-| Backend E2E canonico | 3 passed, circa 28 s |
+| Frontend integration completa | 151 passed, 3 skipped, circa 192 s (non rieseguita dopo le modifiche client-only) |
+| Backend fast (`-m fast`) | 184 passed, circa 9 s |
+| Backend service, Valkey reale | 13 passed, circa 4 s |
+| Backend E2E canonico | 3 passed, circa 27 s |
 | Backend E2E legacy opzionale | 4 passed, circa 107 s |
 | MCP build | passed |
 | MCP test | 51 passed |
 
-I conteggi di backend fast (182), service (12), E2E canonico (3) e frontend
-unit (321 passed, 5 skipped) sono stati riconfermati localmente dopo le
-correzioni D3/D4. La suite di integrazione frontend completa non è stata
-rieseguita nella sessione di documentazione e mantiene il valore registrato
-in precedenza.
+I conteggi di backend fast (184), service (13), E2E canonico (3) e frontend
+unit (329 passed, 5 skipped) sono stati riconfermati localmente dopo le
+correzioni D3/D4. La suite di integrazione frontend completa (151 passed, 3
+skipped) non è stata rieseguita dopo le modifiche client-only
+(`524762c`/`e87789f`): mantiene il valore registrato in precedenza e deve
+essere etichettata come **non rieseguita** finché la validazione finale non la
+esegue di nuovo.
 
 Sono stati verificati cleanup di processi e directory temporanee. Pesi,
 prediction JSON, credenziali e processi Valkey/training non sono rimasti nel
@@ -194,6 +212,7 @@ Queste correzioni non hanno richiesto decisioni architetturali.
 | F12 | I quattro training MNIST legacy facevano parte del gate E2E canonico | Spostati in `legacy_e2e`, disponibile manualmente ma escluso dalla CI obbligatoria |
 | F13 | Il cleanup dei pesi legacy non era garantito dopo un'asserzione fallita | Training, assertion e rimozione di entrambi i file sono protetti da `try/finally` |
 | F14 | Il workflow conservava soltanto il log aggregato in caso di E2E fallito | Contratto `NNM_E2E_ARTIFACT_DIR` e upload failure-only di log e artifact diagnostici senza token/Valkey data |
+| F15 | Risposte di refresh training in ritardo potevano sovrascrivere lo stato corrente dopo forget/riconnessione | `RefreshGate` (epoch della connessione + sequenza richieste) in `front-end/src/training/refreshGate.ts`; `TrainingSidebar` invalida il gate su cleanup/attivazione e applica job/errori/loading soltanto dalla richiesta corrente; 6 regressioni dedicate (`refreshGate.test.ts`) |
 
 ## 6. Decisioni sui bug di design
 
@@ -222,29 +241,53 @@ Il lavoro futuro è tracciato in
 
 ### D3 — Integrità della wheel non rivalidata al download — risolto
 
-La decisione adottata è la doppia verifica: entrambi i lati eseguono il
-controllo.
+La decisione adottata è la doppia verifica su uno snapshot immutabile, senza
+overclaim TOCTOU: entrambi i lati eseguono il controllo e nessuno dei due
+serve bytes non verificati.
 
-Il server registra lo SHA-256 della wheel nel manifest
-`model_package.sha256` al momento dell'esportazione e lo ricalcola con una
-lettura streaming prima di ogni download (`_sha256_hex`, confronto in tempo
-costante). Se il digest dichiarato è mancante o malformato, o se i bytes su
-disco non coincidono più, l'endpoint risponde `409 Conflict` con codice
-`package_integrity_error` e non serve alcun byte; la risposta non rivela mai
-path del filesystem. In caso di successo il digest verificato è esposto
-nell'header `X-NNM-SHA256`, incluso negli `expose_headers` CORS.
+Il server, in `package_download`, apre il wheel una sola volta e lo copia in
+uno snapshot privato (`tempfile.mkstemp`, permessi `0600`, directory mai
+esposta via API) calcolando lo SHA-256 in un unico passaggio di lettura a
+blocchi di 1 MiB (`_create_package_snapshot`). Il digest dello snapshot viene
+confrontato in tempo costante con il digest autorevole
+`model_package.sha256` registrato all'esportazione. Viene servito soltanto lo
+snapshot verificato — mai il path dell'artefatto mutabile — quindi bytes
+sostituiti su disco dopo la verifica non possono influenzare il
+trasferimento. Se il digest dichiarato è mancante o malformato, o se i bytes
+copiati non coincidono, l'endpoint risponde `409 Conflict` con codice
+`package_integrity_error`, elimina lo snapshot e non serve alcun byte; la
+risposta non rivela mai path del filesystem. Lo snapshot viene rimosso al
+termine della risposta, anche in caso di errore di streaming o disconnessione
+del client (cleanup in `finally`, idempotente). In caso di successo il digest
+verificato è esposto nell'header `X-NNM-SHA256`, incluso negli
+`expose_headers` CORS.
 
-Il browser considera autorevole il digest autenticato del job
+Il browser richiede un contesto sicuro del frontend (HTTPS o localhost, dove
+Web Crypto è disponibile): se manca, il download viene rifiutato con
+`package_verification_unavailable` e nessun file è offerto. Con Web Crypto
+disponibile, il browser considera autorevole il digest autenticato del job
 (`job.model_package.sha256`): verifica che l'header `X-NNM-SHA256` sia
 presente, ben formato e uguale al digest atteso, poi digesta i bytes
 scaricati con Web Crypto e offre il file soltanto se ogni controllo passa.
-Errori client: `package_digest_missing`, `package_digest_invalid`,
+Non esiste un fallback non verificato: se un'operazione di digest fallisce o
+manca, l'errore punta al contesto del frontend, non a CORS o raggiungibilità
+del backend. Errori client: `package_verification_unavailable`,
+`package_digest_missing`, `package_digest_invalid`,
 `package_digest_mismatch`, `package_corrupted`.
 
-Commit: `4813042` (verifica lato server), `68074f6` (verifica lato browser).
+Nota di deployment: il backend può restare su HTTP quando la pagina del
+frontend è HTTPS o localhost e CORS consente l'Origin; la verifica lato
+browser dipende dal contesto del frontend, non dal protocollo del backend.
+
+Commit: `4813042` (digest all'esportazione), `68074f6` (verifica lato
+browser), `de32677` (snapshot immutabile lato server), `e87789f` (contesto
+sicuro richiesto lato browser).
 Regressioni in `test_remote_backend.py` (wheel sostituita, digest mancante,
-digest malformato, header esposto via CORS, ownership del download) e
-`trainingApi.test.ts` (header e body verificati prima di restituire il Blob).
+digest malformato, header esposto via CORS, ownership del download, snapshot
+pinnato ai bytes verificati, `409` senza body e cleanup dello snapshot) e
+`trainingApi.test.ts` (header e body verificati prima di restituire il Blob,
+Web Crypto assente e digest rifiutato mappati su
+`package_verification_unavailable`).
 
 ### D4 — Pesi mancanti nel percorso package legacy — risolto
 
@@ -265,6 +308,17 @@ e il download risponde `404`.
 Commit: `cf3f677`. Regressioni in `test_negative_cases.py` (config mancante,
 config corrotta, pesi corrotti, pesi mancanti, eccezione exporter, superficie
 API) e in `test_remote_backend.py` per l'ordine `package_ready < succeeded`.
+
+Evidenza service su Valkey reale (`a9fb6e4`): il nuovo test
+`test_service_valkey.py::test_package_export_failure_on_real_valkey_fails_job_atomically`
+esercita il percorso D4 contro lo store e l'auth Valkey reali, senza
+monkeypatch dell'exporter: un executor double riporta successo senza scrivere
+`weights.safetensors`, l'exporter fallisce deterministicamente sui pesi
+mancanti. Il test verifica lo stato `failed` con `finished_at` valorizzato e
+`model_package` None, `package_error` e `error` visibili, la rimozione
+atomica dalla coda/indici sullo store reale, l'ordine degli eventi
+`package_failed` prima di `failed`, la visibilità di job/list/events/logs al
+proprietario e il download `404` sull'API reale (ASGI).
 
 ### D5 — Job fallito ancora presente in coda — risolto
 
@@ -328,11 +382,14 @@ futuro è tracciato in
 - Il workflow CI è stato validato localmente ma non eseguito su GitHub.
 - Quattro E2E Python legacy continuano a usare MNIST reale e possono dipendere
   dal download; sono esclusi dai gate CI obbligatori e restano manuali.
-- La nuova matrice model-to-training copre il classificatore MNIST e
-  l'autoencoder richiesti, non join non commutativi o Transformer.
+- La matrice obbligatoria copre soltanto il classificatore MNIST e
+  l'autoencoder richiesti dall'emendamento di accettazione: join non
+  commutativi e Transformer non sono gate della Milestone A. I difetti
+  residuali sono tracciati come lavoro futuro (D2 → #31, D6 → #30, D8 → #32).
 - Slurm è contract-tested ma non viene inviato un job a un cluster reale.
-- Il token MCP può essere iniettato, ma pairing e rinnovo automatico per un
-  processo MCP restano responsabilità operativa e non sono stati ridisegnati.
+- Il client MCP trasporta un token fornito esternamente (`NNM_BACKEND_TOKEN`),
+  ma pairing e rinnovo automatico per un processo MCP restano responsabilità
+  operativa dell'operatore e non sono stati ridisegnati.
 
 ## 8. Gate verso la Milestone B
 

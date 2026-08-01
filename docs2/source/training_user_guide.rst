@@ -124,14 +124,19 @@ the job row and install the downloaded file in a Python 3.12+ environment:
    pip install ./nnm_mnist_classifier-0.1.0-py3-none-any.whl
 
 The file is offered only after the download is verified twice. The backend
-records the wheel's SHA-256 digest when it builds the package, recomputes it
-immediately before serving the download, refuses to serve bytes that no
-longer match, and returns the verified digest in the ``X-NNM-SHA256``
-response header. The browser already holds the same digest in the
-authenticated job state; it checks that the header is present, well-formed,
-and equal to that digest, then digests the downloaded bytes itself before
-offering the file. A missing, malformed, or mismatched digest on either side
-cancels the download without saving a file.
+records the wheel's SHA-256 digest when it builds the package. At download
+time it opens the wheel once, copies it into a private immutable snapshot
+while hashing it, refuses to serve bytes whose snapshot digest no longer
+matches the recorded digest, and returns the verified digest in the
+``X-NNM-SHA256`` response header. Only the verified snapshot is ever
+transferred, and it is deleted after the response ends. The browser already
+holds the same digest in the authenticated job state; it checks that the
+header is present, well-formed, and equal to that digest, then digests the
+downloaded bytes itself before offering the file. This second check needs Web
+Crypto, so the frontend must run in a secure context (HTTPS or localhost);
+the backend itself may remain on HTTP when that context and CORS allow it.
+A missing, malformed, or mismatched digest on either side cancels the
+download without saving a file.
 
 The wheel contains the resolved graph, safe ``safetensors`` weights and its
 declared input adapter. It does not need the training backend, W&B, Lightning
@@ -162,10 +167,13 @@ If verification fails, the sidebar shows a message instead of saving a file.
 A header that is missing, malformed, or different from the job manifest, or a
 body whose digest does not match, is usually transient: retry the download,
 or retrain the job if it keeps failing. A ``409`` ``package_integrity_error``
-means the server itself refused to serve the wheel because the bytes on disk
-no longer match the recorded digest — contact the backend administrator. Jobs
-whose packaging failed (for example because safe weights are missing or
-corrupt) end as ``failed`` and offer no download at all.
+means the server itself refused to serve the wheel because the bytes no
+longer match the recorded digest — contact the backend administrator. A
+``package_verification_unavailable`` error means the frontend page is not a
+secure context (HTTPS or localhost): open the frontend accordingly and retry;
+it is not a backend or CORS problem. Jobs whose packaging failed (for example
+because safe weights are missing or corrupt) end as ``failed`` and offer no
+download at all.
 
 Dataset class metadata
 -----------------------
@@ -240,6 +248,9 @@ browser is still trusted to submit training configuration. The current Hydra
 configuration surface remains broad; server-side allowlists for all Hydra
 targets and overrides are a separate hardening task.
 
-The MCP server's remote-training HTTP client does not yet implement this
-pairing token. Browser diagram tools remain usable, but MCP remote-training
-tools must not be pointed at the protected backend in this version.
+The MCP server's remote-training HTTP client can use a protected backend when
+the operator provisions a token externally, for example through the
+``NNM_BACKEND_TOKEN`` environment variable: it sends the same ``Bearer``
+header as the browser client on REST and authenticated SSE requests. It does
+not perform browser pairing or token renewal itself — token provisioning and
+rotation are an operator responsibility. Browser diagram tools are unaffected.
