@@ -1,4 +1,4 @@
-import { mkdtempSync, rmSync } from "node:fs";
+import { chmodSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join, resolve } from "node:path";
 import { describe, expect, it } from "vitest";
@@ -37,8 +37,23 @@ describe("buildTrainingArgs", () => {
 
   it("converts from the repository root, as the documented tsx development command does", async () => {
     const originalCwd = process.cwd();
+    const originalPath = process.env.PATH;
+    const markerEnvName = "NNM_PIPELINE_TEST_CWD_MARKER";
+    const originalMarker = process.env[markerEnvName];
     const repositoryRoot = resolve(import.meta.dirname, "../..");
+    const toolDir = mkdtempSync(join(tmpdir(), "nnm-pipeline-uv-"));
     const outputDir = mkdtempSync(join(tmpdir(), "nnm-pipeline-cwd-"));
+    const markerPath = join(toolDir, "cwd-marker");
+    const fakeUvPath = join(toolDir, "uv");
+    writeFileSync(
+      fakeUvPath,
+      `#!/bin/sh
+printf '%s' "$PWD" > "$${markerEnvName}"
+exit 0
+`,
+      "utf-8",
+    );
+    chmodSync(fakeUvPath, 0o755);
     const nntree = {
       root: "input",
       lossNode: {
@@ -65,13 +80,21 @@ describe("buildTrainingArgs", () => {
     };
 
     try {
+      process.env.PATH = `${toolDir}:${originalPath ?? ""}`;
+      process.env[markerEnvName] = markerPath;
       process.chdir(repositoryRoot);
       await expect(executeConversion(JSON.stringify(nntree), { outputDir })).resolves.toMatchObject({
         success: true,
         taskType: "classification",
       });
+      expect(readFileSync(markerPath, "utf-8")).toBe(resolve(repositoryRoot, "converted"));
     } finally {
       process.chdir(originalCwd);
+      if (originalPath === undefined) delete process.env.PATH;
+      else process.env.PATH = originalPath;
+      if (originalMarker === undefined) delete process.env[markerEnvName];
+      else process.env[markerEnvName] = originalMarker;
+      rmSync(toolDir, { recursive: true, force: true });
       rmSync(outputDir, { recursive: true, force: true });
     }
   });
