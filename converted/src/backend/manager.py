@@ -265,6 +265,12 @@ class JobManager:
                         executor=executor.kind,
                         compute_unit=executor.name,
                     )
+                    # The running event is emitted before the executor can
+                    # invoke any callback: an executor that completes
+                    # synchronously inside submit() (or a very fast Local or
+                    # Slurm completion) must never leave a stale running event
+                    # after its terminal events.
+                    self._event(job_id, "running", {"executor": executor.name})
                     try:
                         handle = executor.submit(
                             job,
@@ -277,11 +283,16 @@ class JobManager:
                         self._event(job_id, "failed", {"error": str(exc)})
                         return False
                     current = self.store.get_job(job_id) or job
+                    if current.get("status") in TERMINAL_STATES:
+                        # The executor completed synchronously during
+                        # submit(): the terminal transition was already
+                        # persisted and its terminal events emitted. Never
+                        # write executor details, register active state, or
+                        # emit a stale running event on a terminal record.
+                        return True
                     current["executor_details"] = handle
                     self.store.save_job(job_id, current)
-                    if current.get("status") not in TERMINAL_STATES:
-                        self._active[job_id] = (executor, handle)
-                    self._event(job_id, "running", {"executor": executor.name, **handle})
+                    self._active[job_id] = (executor, handle)
                     return True
             finally:
                 for deferred_job_id in deferred_job_ids:

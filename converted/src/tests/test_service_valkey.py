@@ -433,10 +433,19 @@ def test_package_export_failure_on_real_valkey_fails_job_atomically(tmp_path, cl
     assert store.claim_next() is None
     assert not (Path(status.artifact_dir) / "model-package.json").exists()
 
-    # Event contract: package_failed precedes failed.
+    # Event contract: queued < running < package_failed < failed, terminal last.
     events = manager.events(queued.id, owner_connection_id=owner)
     types = [event["type"] for event in events]
-    assert types.index("package_failed") < types.index("failed")
+    for expected in ("queued", "running", "package_failed", "failed"):
+        assert expected in types, f"missing {expected!r} event in {types}"
+    indices = [
+        types.index("queued"),
+        types.index("running"),
+        types.index("package_failed"),
+        types.index("failed"),
+    ]
+    assert indices == sorted(indices), f"events out of order: {types}"
+    assert types[-1] == "failed"
 
     # Ownership visibility: job, list, events, error, and logs stay available.
     assert [job.id for job in manager.list_status(owner_connection_id=owner)] == [queued.id]
@@ -470,8 +479,16 @@ def test_package_export_failure_on_real_valkey_fails_job_atomically(tmp_path, cl
                     for line in events_response.text.splitlines()
                     if line.startswith("data: ")
                 ]
-                assert "failed" in event_types
-                assert event_types.index("package_failed") < event_types.index("failed")
+                for expected in ("queued", "running", "package_failed", "failed"):
+                    assert expected in event_types, f"missing {expected!r} event in {event_types}"
+                indices = [
+                    event_types.index("queued"),
+                    event_types.index("running"),
+                    event_types.index("package_failed"),
+                    event_types.index("failed"),
+                ]
+                assert indices == sorted(indices), f"events out of order: {event_types}"
+                assert event_types[-1] == "failed"
 
                 logs = await client.get(f"/jobs/{queued.id}/logs", headers=headers)
                 assert logs.status_code == 200

@@ -508,6 +508,83 @@ def test_happy_path_persists_succeeded_only_after_successful_export(tmp_path, pa
     assert types.index("package_ready") < types.index("succeeded")
 
 
+def test_synchronous_executor_emits_running_before_terminal_success(tmp_path, packaged_export):
+    """P1: an immediate executor must not emit running after the terminal chain.
+
+    ``ImmediateExecutor`` invokes ``on_finished`` inside ``submit()``, so the
+    ``package_ready``/``succeeded`` events are persisted and emitted before
+    ``submit()`` returns. The manager must emit ``running`` before invoking
+    the executor and must not append a stale ``running`` event after the
+    terminal transition, write executor details into the terminal record, or
+    register the finished job as active.
+    """
+    store = InMemoryJobStore()
+    manager = JobManager(store, tmp_path, [ImmediateExecutor()])
+    queued = manager.submit(submission(), owner_connection_id=OWNER)
+    Path(queued.artifact_dir, "weights.safetensors").write_bytes(b"safe-weights")
+
+    assert manager.run_once() is True
+
+    assert manager.status(queued.id, owner_connection_id=OWNER).status == "succeeded"
+    events = manager.events(queued.id, owner_connection_id=OWNER)
+    types = [event["type"] for event in events]
+    for expected in ("queued", "running", "package_ready", "succeeded"):
+        assert expected in types, f"missing {expected!r} event in {types}"
+    indices = [
+        types.index("queued"),
+        types.index("running"),
+        types.index("package_ready"),
+        types.index("succeeded"),
+    ]
+    assert indices == sorted(indices), f"events out of order: {types}"
+    assert types[-1] == "succeeded"
+    # The terminal record is never rewritten with executor details and the
+    # finished job is not tracked as an active execution.
+    assert queued.id not in manager._active
+    record = store.get_job(queued.id)
+    assert record is not None
+    assert "executor_details" not in record
+
+
+def test_synchronous_executor_package_failure_ends_terminal_with_failed(tmp_path, monkeypatch):
+    """P1: an immediate executor whose package export fails ends with failed last.
+
+    The ``package_failed``/``failed`` events are emitted inside ``submit()``;
+    the manager must still emit ``running`` before the executor ran and must
+    never emit a stale ``running`` event after the terminal transition.
+    """
+
+    def exploding_export(artifact_dir, *, package_name, version):
+        del artifact_dir, package_name, version
+        raise RuntimeError("exporter crashed")
+
+    monkeypatch.setattr("backend.manager.build_model_wheel", exploding_export)
+    store = InMemoryJobStore()
+    manager = JobManager(store, tmp_path, [ImmediateExecutor()])
+    queued = manager.submit(submission(), owner_connection_id=OWNER)
+    Path(queued.artifact_dir, "weights.safetensors").write_bytes(b"safe-weights")
+
+    assert manager.run_once() is True
+
+    assert manager.status(queued.id, owner_connection_id=OWNER).status == "failed"
+    events = manager.events(queued.id, owner_connection_id=OWNER)
+    types = [event["type"] for event in events]
+    for expected in ("queued", "running", "package_failed", "failed"):
+        assert expected in types, f"missing {expected!r} event in {types}"
+    indices = [
+        types.index("queued"),
+        types.index("running"),
+        types.index("package_failed"),
+        types.index("failed"),
+    ]
+    assert indices == sorted(indices), f"events out of order: {types}"
+    assert types[-1] == "failed"
+    assert queued.id not in manager._active
+    record = store.get_job(queued.id)
+    assert record is not None
+    assert "executor_details" not in record
+
+
 class _FailingMarkFailedStore(InMemoryJobStore):
     """In-memory store whose atomic failed transition always raises."""
 
