@@ -2,7 +2,9 @@
 
 **Stato:** decisioni D1/D3/D4/D5/D7 implementate; review locale approvata;
 CI remota verde su [PR #33](https://github.com/LucaSforza/NNModelling/pull/33)
-(sei gate); Milestone B non autorizzata e non iniziata
+(sei gate, run
+[30703415396](https://github.com/LucaSforza/NNModelling/actions/runs/30703415396));
+Milestone B esplicitamente approvata dall'utente e in avvio
 
 **Data:** 2026-08-01
 
@@ -11,11 +13,17 @@ obbligatoria è soltanto `mninst` + `autoencoder_mnist`; nessun modello
 Transformer e nessun modello con join non commutativo richiesto. D2 → #31,
 D6 → #30, D8 → #32 (vedi T2 e sezione 7).
 
+**Approvazione Milestone B:** la seconda approvazione esplicita è stata
+concessa; le Tranche 1-5 sono autorizzate e la Milestone B inizia dalla
+Tranche 1. La PR #33 resta aperta: non è stato richiesto o effettuato alcun
+merge e push/pull request richiedono ancora un'autorizzazione separata.
+
 **Risultati Milestone A:** [milestone-a-results.md](milestone-a-results.md)
 
-**Vincolo di esecuzione:** nessuna modifica al codice prodotto deve iniziare
-prima dell'approvazione esplicita di questo piano e della scelta degli agenti
-implementatori e revisori.
+**Vincolo di esecuzione:** l'approvazione di questo piano e la scelta degli
+agenti implementatori e revisori sono avvenute; le tranche procedono secondo
+le regole di routing della sezione 9. Nessuna modifica fuori perimetro o non
+autorizzata deve essere introdotta.
 
 ## 1. Obiettivo
 
@@ -106,9 +114,16 @@ In caso di dubbio, il codice rimane. Questa fase privilegia falsi negativi
 
 ## 5. Risultati dell'ispezione preliminare
 
-L'ispezione è stata svolta sul branch `master`, commit `0d3e2d4`. Al momento
-della progettazione il working tree era pulito. Prima di ogni implementazione
-lo stato Git deve essere ricontrollato per proteggere modifiche utente
+L'ispezione preliminare è stata svolta sul branch `master`, commit `0d3e2d4`
+(working tree pulito al momento della progettazione). In avvio della Milestone
+B l'audit dei candidati è stato ribasato sul HEAD pre-B corrente della PR #33
+— commit `dd05b35` sul branch `milestone-a-testing-foundation`, working tree
+pulito — che include i 22 commit della Milestone A. Tutti i candidati H1-H6 e
+R1-R3 sono stati riconfermati sul nuovo HEAD: nessuno dei cambiamenti di test,
+CI e fixing della Milestone A ha creato o riattivato consumer per le API
+candidate, e i punti di rimozione descritti in 5.1 e 5.2 sono ancora presenti
+nel codice (verificati su `dd05b35`). Al momento di ogni implementazione lo
+stato Git deve essere ricontrollato per proteggere modifiche utente
 sopravvenute.
 
 ### 5.1 Candidati ad alta confidenza
@@ -139,9 +154,19 @@ non deve contenere controlli sul nome `Concat` o sulla classe Python. La
 documentazione deve descrivere correttamente questo confine come
 **data-selected**, non come operazione interamente **data-defined**.
 
-### 5.3 Stato reale dell'integration testing
+### 5.3 Stato reale dell'integration testing (evidenza pre-Milestone A)
 
-L'esplorazione dei test ha prodotto queste conclusioni:
+> **Evidenza storica:** questa sottosezione fotografa lo stato dell'integration
+> testing osservato al momento della progettazione (baseline `0d3e2d4`),
+> *prima* della Milestone A. Le conclusioni qui riportate non descrivono più lo
+> stato corrente del repository: la Milestone A ha costruito la testing
+> foundation documentata in
+> [milestone-a-results.md](milestone-a-results.md) — marker pytest `fast`/
+> `service`/`e2e`/`legacy_e2e`, Valkey reale, job backend E2E serializzato e CI
+> a sei gate — affrontando i punti 3-6 qui sotto. La sezione resta nel piano
+> come motivazione storica delle tranche di testing.
+
+L'esplorazione dei test condotta in fase di progettazione aveva concluso:
 
 1. I tier Vitest `smoke`, `convert`, `forward`, `train` e `infer` eseguono
    realmente gli script Python; non simulano conversione, modello o training.
@@ -422,15 +447,18 @@ iniziare la Milestone B.
 
 ### Milestone B — Elisione
 
-Le tranche seguenti restano sospese fino al completamento e all'approvazione
-della Milestone A.
+La Milestone A è completata, revisionata e nuovamente approvata dall'utente:
+le tranche seguenti sono autorizzate e la Milestone B inizia dalla Tranche 1.
 
-**Regola di esecuzione:** la Milestone B deve iniziare con sessioni nuove degli
+**Regola di esecuzione:** la Milestone B inizia con sessioni nuove degli
 implementatori selezionati; non vengono riutilizzate le sessioni operative della
 Milestone A. Ogni task assegnato deve essere validato e revisionato e deve
 terminare con un commit scoped creato dal sottoagente responsabile. Non sono
-ammessi handoff di task completati ma lasciati non committati. Push e pull
-request richiedono comunque un'autorizzazione separata dell'utente.
+ammessi handoff di task completati ma lasciati non committati. La routing
+completa — incluso il divieto di browser per gli implementatori DeepSeek e la
+validazione live solo tramite agente OpenAI con `nnmodelling-mcp` — è in
+sezione 9. Push e pull request richiedono comunque un'autorizzazione separata
+dell'utente.
 
 ### Tranche 1 — Residui MCP e superficie workspace
 
@@ -497,9 +525,14 @@ transaction id. Non viene introdotta una nuova gerarchia di eventi.
 il type check e richiamare `fitView`; undo/redo e import devono notificare una
 sola volta per operazione pubblica.
 
-**Accettazione:** R1 completato; nessun `DomainEvent` o API di replay rimasta;
-test frontend verdi; smoke browser verificato per create/connect/update,
-undo/redo e caricamento diagramma; nessun errore console.
+**Accettazione:** R1 completato; una sola notifica sincrona di cambiamento del
+grafo, inviata una sola volta per operazione pubblica (mutazione RPC, undo/redo
+e import inclusi); nessun `DomainEvent` o API di replay rimasta; test frontend
+e MCP verdi (DiagramCore, RPC, undo/redo e reattività); smoke browser verificato
+per create/connect/update, undo/redo e caricamento diagramma; nessun errore
+console. La tranche modifica gli entry point TypeDoc (`front-end/src/core/index.ts`
+e `front-end/src/sync/index.ts`), quindi deve superare anche il gate locale
+della documentazione (sezione 7).
 
 ### Tranche 4 — Compatibilità interna del type system
 
@@ -529,14 +562,28 @@ tranche viene rinviata invece di introdurre una migrazione non approvata.
 **Obiettivo:** fare in modo che la documentazione operativa descriva soltanto
 l'architettura risultante.
 
-**File previsti:** `AGENTS.md` e documenti architetturali che nominano API
-effettivamente rimosse.
+**File previsti:** `AGENTS.md`, `docs2/source/typescript_api.rst` e documenti
+architetturali che nominano API effettivamente rimosse.
+
+**Contenuti attesi:**
+- `docs2/source/typescript_api.rst` documenta oggi `EventBus` (emitter tipizzato
+  con sequenza monotona), il dual loader di `StereotypeCore` (Vite + Node
+  `fs`), i tipi `DomainEvent`, `WSSnapshotMessage`, `WSDeltaMessage` e
+  `DeltaOperation` e il wrapper `Stereotype`: i riferimenti ai simboli rimossi
+  dalle Tranche 2-4 vanno aggiornati o eliminati, mantenendo la pagina in linea
+  con gli entry point TypeDoc reali (`front-end/typedoc.json`).
+- `AGENTS.md` riporta conteggi di test pre-Milestone A ("293 tests passed,
+  5 skipped" per i unit test frontend; "112 fast non-training Python tests" per
+  la suite Python): vanno riallineati alla baseline reale registrata in
+  `milestone-a-results.md` (329 unit frontend, 188 fast backend) o rimossi se
+  non più di competenza del file.
 
 **Vincoli:** niente cancellazione di archivi o report storici; i documenti
 storici possono ricevere una nota di stato anziché essere riscritti.
 
 **Accettazione:** nessuna istruzione operativa afferma l'esistenza di loader,
-eventi o dipendenze rimossi; build della documentazione verde.
+eventi, tipi delta o dipendenze rimossi; gate locale della documentazione verde
+(`bash gendocs.sh` più `check`/`build` frontend, sezione 7).
 
 ## 7. Matrice di validazione
 
@@ -553,8 +600,15 @@ pnpm --dir front-end run test
 pnpm --dir front-end run build
 pnpm --dir mcp-server run build
 pnpm --dir mcp-server run test
-cd converted && uv run pytest src/tests/ -m "not service and not e2e" -q
+cd converted && uv run pytest src/tests/ -m fast -q
 ```
+
+Il gate backend usa la selezione positiva `-m fast`: il marker è applicato
+automaticamente da `conftest.py` a ogni test senza marker di gate esplicito e
+la selezione non include mai la suite `legacy_e2e` (MNIST reale,
+network-dependent), che un selettore negativo come `"not service and not e2e"`
+includerebbe. `legacy_e2e` resta un comando manuale opzionale, fuori dalla CI
+obbligatoria.
 
 ### Integrazione senza training obbligatoria
 
@@ -579,18 +633,40 @@ il percorso modello completo e il job remoto completo definiti in T2 e T4. I
 nomi esatti dei file possono cambiare durante T1, ma la separazione semantica e
 l'esecuzione CI sono criteri di accettazione.
 
+Il percorso canonico training/reload/inference — loss finita, gradienti e
+parameter update, produzione e caricamento dei pesi, equivalenza dell'output in
+`eval()` prima e dopo il reload, schema/cardinalità/forma delle predizioni — è
+coperto dal gate backend `-m e2e` della CI, che attraversa realmente
+`main.py -> weights -> wheel -> install -> predict()`. I tier Vitest `train` e
+`infer` restano disponibili localmente come opzione, ma non fanno più parte dei
+gate obbligatori della Milestone B.
+
 ### Gate documentazione e browser
 
 ```bash
-pnpm run docs
+bash gendocs.sh
+pnpm --dir front-end run check
+pnpm --dir front-end run build
 ```
 
-- La build docs è obbligatoria quando cambiano entry point TypeDoc, `AGENTS.md`
-  o documenti architetturali.
+- **Nota sul gap TypeDoc preesistente:** `pnpm run docs` (root) non può essere
+  usato come gate locale: il passo `docs:typedoc` fallisce con
+  `Command "typedoc" not found` perché `typedoc` non è una dipendenza dichiarata
+  di `front-end/` né del root e non esiste alcun binario nel workspace. In
+  questa fase non viene aggiunta alcuna dipendenza per sanare il gap; la
+  coerenza di `front-end/typedoc.json` e degli entry point
+  (`front-end/src/core/index.ts`, `front-end/src/sync/index.ts`) è verificata
+  con una revisione esplicita e manuale in ogni tranche che modifica export o
+  barrel.
+- Il gate locale della documentazione è quindi `bash gendocs.sh` (Sphinx con
+  `-W`, include la pagina `typescript_api.rst`) più `check`/`build` del
+  frontend; la build docs è obbligatoria quando cambiano entry point TypeDoc,
+  `AGENTS.md` o documenti architetturali.
 - Dopo la Tranche 3 è obbligatorio uno smoke browser-backed. Prima di modificare
   frontend va acquisita la baseline visuale richiesta dagli strumenti del
   repository; dopo il diff vanno controllati DOM, console e assenza di
-  regressioni. MCP viene usato soltanto se esplicitamente richiesto.
+  regressioni. Il browser smoke è eseguito esclusivamente da un agente OpenAI
+  fresco con lo skill `nnmodelling-mcp` (sezione 9); Glimpse non è autorizzato.
 - Il browser smoke non sostituisce i test deterministici di T2-T4.
 
 ### Prove focalizzate
@@ -617,6 +693,10 @@ pnpm run docs
    nella Milestone A.
 2. Il passaggio alla Milestone B richiede evidenza dei gate verdi, approvazione
    dei revisori selezionati e una seconda approvazione esplicita dell'utente.
+   **COMPLETATO:** gate CI verdi sul run
+   [30703415396](https://github.com/LucaSforza/NNModelling/actions/runs/30703415396),
+   review locale approvata e seconda approvazione esplicita concessa; la
+   Milestone B inizia.
 3. Le Tranche 1 e 2 possono formare un primo diff coerente ma restano commit
    logicamente separabili.
 4. Le Tranche 3 e 4 sono revisionate separatamente perché hanno rischi diversi:
@@ -629,14 +709,29 @@ pnpm run docs
 
 ## 9. Assegnazione degli agenti
 
-La scelta del provider appartiene all'utente e non è ancora stata effettuata.
-Prima dell'implementazione sono richieste queste selezioni:
+La scelta del provider appartiene all'utente. Per la Milestone B restano
+disponibili queste selezioni, da confermare per ogni tranche:
 
 - `frontend-openai` oppure `frontend-deepseek` per `front-end/`, `mcp-server/`
   e la parte TypeScript della CI;
 - `backend-openai` oppure `backend-deepseek` per marker pytest, Valkey reale,
   LocalExecutor, job E2E e invarianti Python;
 - `reviewer-openai`, `reviewer-deepseek` oppure entrambi per il quality gate.
+
+**Routing di esecuzione (Milestone B):**
+
+- Ogni tranche inizia con una sessione fresca dell'implementatore selezionato;
+  il task viene validato, revisionato e termina con un commit scoped creato dal
+  sottoagente responsabile. Non sono ammessi handoff di task completati ma
+  lasciati non committati.
+- Gli implementatori DeepSeek (frontend e backend) non caricano lo skill
+  `nnmodelling-mcp` e non usano browser, CDP, screenshot o strumenti
+  multimodali: la loro validazione è esclusivamente statica (check, unit test,
+  build, fixture e test deterministici).
+- Qualsiasi validazione live browser-backed o MCP (per esempio lo smoke browser
+  dopo la Tranche 3, la verifica di tooltip, tipo o stato canvas) è eseguita da
+  un agente OpenAI fresco con lo skill `nnmodelling-mcp`.
+- Glimpse non è autorizzato in nessun punto della Milestone B.
 
 Non è previsto il coinvolgimento del designer perché non sono ammesse modifiche
 visuali. Se l'esecuzione produce una necessità visuale, il lavoro si ferma e il
@@ -662,3 +757,8 @@ Al termine della Milestone A vengono presentati:
 
 Solo una seconda approvazione esplicita autorizza le Tranche 1-5 della
 Milestone B.
+
+**Approvazione Milestone B concessa:** la seconda approvazione è stata espressa
+dall'utente e la Milestone B inizia dalle Tranche 1-5. La PR #33 resta aperta e
+non è stato richiesto o effettuato alcun merge; push e pull request richiedono
+comunque un'autorizzazione separata dell'utente.
