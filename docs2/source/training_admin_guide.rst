@@ -53,6 +53,29 @@ install the Python environment:
 All following examples run from the repository root and explicitly select the
 backend justfile.
 
+Local companion: editor + backend in one command
+~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+
+For a single-user workstation, the companion serves the built editor and starts
+the same backend on localhost with one command. Build the editor once, keep
+Valkey running (below), then:
+
+.. code-block:: bash
+
+   pnpm --dir front-end build
+   PYTHONPATH=converted/src uv run --project converted python -m backend.cli
+
+Open ``http://127.0.0.1:8000``. The command fails actionably when
+``front-end/dist`` is missing (with a build instruction) or Valkey is
+unreachable; it never serves an empty UI. The editor's project calls resolve
+under the ``/api`` prefix on the same origin, while the root training routes
+(``/health``, ``/pairing``, ``/jobs``) remain available to the Training
+Sidebar. For LAN clients, bind with ``--host 0.0.0.0`` and set
+``NNM_ALLOWED_ORIGINS`` exactly as described under *Start FastAPI* below.
+
+The companion does not proxy remote jobs: remote/Slurm training still connects
+the Training Sidebar directly to this or another backend URL.
+
 Start Valkey
 ~~~~~~~~~~~~
 

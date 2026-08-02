@@ -247,6 +247,7 @@ URL/pairing UI for choosing localhost or a remote backend.
 - `converted/src/backend/cli.py`
 - `converted/src/backend/static.py`
 - `converted/src/backend/app.py`
+- `converted/src/tests/test_companion_cli.py`
 - `converted/pyproject.toml`
 - `README.md`
 - `.github/workflows/deploy-pages.yml`

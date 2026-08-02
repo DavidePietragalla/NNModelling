@@ -11,10 +11,12 @@ from contextlib import asynccontextmanager
 from pathlib import Path
 from typing import Any
 
-from fastapi import Depends, FastAPI, Header, HTTPException, Query, Request
+from fastapi import APIRouter, Depends, FastAPI, Header, HTTPException, Query, Request
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import FileResponse, StreamingResponse
 from starlette.background import BackgroundTask
+
+from backend.static import SPAStaticFiles
 
 from backend.auth import (
     AuthError,
@@ -115,8 +117,21 @@ def create_app(
     admin_token: str | None = None,
     allowed_origins: list[str] | None = None,
     project_manager: ProjectManager | None = None,
+    static_dir: str | Path | None = None,
 ) -> FastAPI:
-    """Create the API application with injectable services for tests."""
+    """Create the API application with injectable services for tests.
+
+    Args:
+        manager: Job manager; defaults to ``JobManager.from_environment``.
+        auth_service: Auth service; defaults to the environment store.
+        admin_token: Administrator capability; defaults to the token file.
+        allowed_origins: CORS origins; defaults to the development origins.
+        project_manager: Companion project service; defaults to the
+            environment state directory.
+        static_dir: Optional built frontend directory. When provided, the app
+            also serves the editor (SPA fallback) and the production project
+            calls resolve under the ``/api`` prefix on the same origin.
+    """
 
     injected_manager = manager
 
@@ -248,9 +263,14 @@ def create_app(
     # -- Project workspace APIs -------------------------------------------------
     # Project calls use the companion origin; every endpoint requires the same
     # pairing authentication as the training endpoints. Project IDs resolve
-    # only through the companion-owned recent-project registry.
+    # only through the companion-owned recent-project registry. The router is
+    # registered both at the root (established backend contract) and under the
+    # ``/api`` prefix, which is how the built editor's same-origin
+    # ``ProjectApiClient`` reaches the companion in production.
 
-    @app.post("/projects", response_model=ProjectSummary, status_code=201)
+    project_router = APIRouter()
+
+    @project_router.post("/projects", response_model=ProjectSummary, status_code=201)
     async def create_project(
         body: CreateProjectRequest,
         _connection: dict[str, Any] = Depends(current_connection),
@@ -260,7 +280,7 @@ def create_app(
         except ProjectError as exc:
             raise _project_http_error(exc) from exc
 
-    @app.post("/projects/open", response_model=ProjectSummary)
+    @project_router.post("/projects/open", response_model=ProjectSummary)
     async def open_project(
         body: OpenProjectRequest,
         _connection: dict[str, Any] = Depends(current_connection),
@@ -270,13 +290,13 @@ def create_app(
         except ProjectError as exc:
             raise _project_http_error(exc) from exc
 
-    @app.get("/projects", response_model=RecentProjectsResponse)
+    @project_router.get("/projects", response_model=RecentProjectsResponse)
     async def list_projects(
         _connection: dict[str, Any] = Depends(current_connection),
     ) -> RecentProjectsResponse:
         return app.state.projects.list_projects()
 
-    @app.get("/projects/active", response_model=ProjectSummary)
+    @project_router.get("/projects/active", response_model=ProjectSummary)
     async def active_project(
         _connection: dict[str, Any] = Depends(current_connection),
     ) -> ProjectSummary:
@@ -288,7 +308,7 @@ def create_app(
             )
         return summary
 
-    @app.get("/projects/{project_id}", response_model=ProjectSummary)
+    @project_router.get("/projects/{project_id}", response_model=ProjectSummary)
     async def get_project(
         project_id: str,
         _connection: dict[str, Any] = Depends(current_connection),
@@ -298,7 +318,7 @@ def create_app(
         except ProjectError as exc:
             raise _project_http_error(exc) from exc
 
-    @app.post("/projects/{project_id}/sync", response_model=ProjectSummary)
+    @project_router.post("/projects/{project_id}/sync", response_model=ProjectSummary)
     async def sync_project(
         project_id: str,
         _connection: dict[str, Any] = Depends(current_connection),
@@ -308,7 +328,7 @@ def create_app(
         except ProjectError as exc:
             raise _project_http_error(exc) from exc
 
-    @app.delete("/projects/{project_id}", response_model=ProjectSummary)
+    @project_router.delete("/projects/{project_id}", response_model=ProjectSummary)
     async def forget_project(
         project_id: str,
         _connection: dict[str, Any] = Depends(current_connection),
@@ -320,7 +340,7 @@ def create_app(
         except ProjectError as exc:
             raise _project_http_error(exc) from exc
 
-    @app.get("/projects/{project_id}/graph", response_model=dict[str, Any])
+    @project_router.get("/projects/{project_id}/graph", response_model=dict[str, Any])
     async def read_graph(
         project_id: str,
         _connection: dict[str, Any] = Depends(current_connection),
@@ -330,7 +350,7 @@ def create_app(
         except ProjectError as exc:
             raise _project_http_error(exc) from exc
 
-    @app.put("/projects/{project_id}/graph", response_model=dict[str, Any])
+    @project_router.put("/projects/{project_id}/graph", response_model=dict[str, Any])
     async def write_graph(
         project_id: str,
         body: dict[str, Any],
@@ -342,7 +362,7 @@ def create_app(
         except ProjectError as exc:
             raise _project_http_error(exc) from exc
 
-    @app.get("/projects/{project_id}/stereotypes", response_model=StereotypeCatalogResponse)
+    @project_router.get("/projects/{project_id}/stereotypes", response_model=StereotypeCatalogResponse)
     async def project_stereotypes(
         project_id: str,
         _connection: dict[str, Any] = Depends(current_connection),
@@ -352,7 +372,7 @@ def create_app(
         except ProjectError as exc:
             raise _project_http_error(exc) from exc
 
-    @app.get("/projects/{project_id}/datasets", response_model=DatasetCatalogResponse)
+    @project_router.get("/projects/{project_id}/datasets", response_model=DatasetCatalogResponse)
     async def project_datasets(
         project_id: str,
         _connection: dict[str, Any] = Depends(current_connection),
@@ -362,7 +382,7 @@ def create_app(
         except ProjectError as exc:
             raise _project_http_error(exc) from exc
 
-    @app.get("/projects/{project_id}/wandb", response_model=WandbSettingsResponse)
+    @project_router.get("/projects/{project_id}/wandb", response_model=WandbSettingsResponse)
     async def read_wandb(
         project_id: str,
         _connection: dict[str, Any] = Depends(current_connection),
@@ -373,7 +393,7 @@ def create_app(
         except ProjectError as exc:
             raise _project_http_error(exc) from exc
 
-    @app.put("/projects/{project_id}/wandb", response_model=WandbSettingsResponse)
+    @project_router.put("/projects/{project_id}/wandb", response_model=WandbSettingsResponse)
     async def update_wandb(
         project_id: str,
         body: WandbUpdate,
@@ -386,7 +406,7 @@ def create_app(
         except ProjectError as exc:
             raise _project_http_error(exc) from exc
 
-    @app.put("/projects/{project_id}/wandb-key", response_model=WandbKeyStatus)
+    @project_router.put("/projects/{project_id}/wandb-key", response_model=WandbKeyStatus)
     async def set_wandb_key(
         project_id: str,
         body: WandbKeyInput,
@@ -398,7 +418,7 @@ def create_app(
         except ProjectError as exc:
             raise _project_http_error(exc) from exc
 
-    @app.delete("/projects/{project_id}/wandb-key", response_model=WandbKeyStatus)
+    @project_router.delete("/projects/{project_id}/wandb-key", response_model=WandbKeyStatus)
     async def delete_wandb_key(
         project_id: str,
         _connection: dict[str, Any] = Depends(current_connection),
@@ -408,6 +428,9 @@ def create_app(
             return WandbKeyStatus(configured=False)
         except ProjectError as exc:
             raise _project_http_error(exc) from exc
+
+    app.include_router(project_router)
+    app.include_router(project_router, prefix="/api", include_in_schema=False)
 
     @app.get("/compute-units")
     async def compute_units(
@@ -661,6 +684,11 @@ def create_app(
             return app.state.manager.admin_cancel(job_id)
         except KeyError as exc:
             raise HTTPException(status_code=404, detail="Unknown job") from exc
+
+    if static_dir is not None:
+        # The mount is added after every API route so registered endpoints
+        # keep precedence; the handler never rewrites /api paths to the SPA.
+        app.mount("/", SPAStaticFiles(static_dir), name="spa")
 
     return app
 

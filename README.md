@@ -1,15 +1,32 @@
 # NNModelling
 
 [![CI](https://github.com/LucaSforza/NNModelling/actions/workflows/ci.yml/badge.svg)](https://github.com/LucaSforza/NNModelling/actions/workflows/ci.yml)
-[![GitHub Pages](https://img.shields.io/badge/demo-GitHub%20Pages-2ea44f?logo=github)](https://lucasforza.github.io/NNModelling/)
+[![Install](https://img.shields.io/badge/install-GitHub%20Pages-2ea44f?logo=github)](https://lucasforza.github.io/NNModelling/)
 
 A visual editor and DSL for designing neural networks. Create diagrams in the browser, compile them to NNTree, and generate PyTorch/Lightning training pipelines.
 
-## Try the editor
+## Install and start locally
 
-**[Open NNModelling in your browser](https://lucasforza.github.io/NNModelling/)**
+The editor is served locally by the companion together with a local training
+backend — it is no longer hosted on GitHub Pages (the Pages site now publishes
+only installation instructions). Prerequisites: Git, Python 3.12+ with
+[`uv`](https://docs.astral.sh/uv/), Valkey 8, and Node.js/pnpm (only to build
+the editor once).
 
-The GitHub Pages demo contains the visual editor and runs entirely in the browser. Remote training, conversion, and MCP/browser integration require a local or separately deployed backend.
+```bash
+# From the repository root — one command:
+git clone <repository-url> NNModelling && cd NNModelling
+pnpm install && pnpm --dir front-end build   # build the editor once
+just --justfile converted/backend/justfile valkey   # start Valkey
+PYTHONPATH=converted/src uv run --project converted python -m backend.cli
+```
+
+Open <http://127.0.0.1:8000>. The command serves the built editor and starts
+the existing training backend on the same origin; it fails with build or
+Valkey instructions instead of serving an empty UI. The Training Sidebar keeps
+its URL/pairing workflow, so you may connect it either to this localhost
+backend or to an independently managed remote backend URL. The companion never
+proxies or routes remote jobs.
 
 ```
 Stereotypes/ (JSON) → Svelte Flow Editor → NNTree (JSON) → convert.py → Hydra YAML → main.py → Training
@@ -35,6 +52,9 @@ cd converted
 uv sync
 uv run python src/convert.py <nn_tree_json> <output_dir>
 uv run python src/main.py --config-dir <dir>
+
+# Local companion (serves the editor + training backend on localhost)
+PYTHONPATH=src uv run python -m backend.cli
 ```
 
 ### MCP Server
@@ -80,6 +100,8 @@ cd docs2 && uv run make html
 The Sphinx docs cover:
 
 - **User Guide** — how to use the visual editor
+- **Project Workspace** — project layout, local environments, training runs
+- **Training guides** — pairing, localhost vs remote backends, administration
 - **Architecture** — system design, data flow, components
 - **Stereotypes Reference** — JSON format, categories, all parameters
 - **Python API Reference** — convert.py, main.py, infer.py, Net, ops
