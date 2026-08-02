@@ -3,7 +3,6 @@ description: Reviews NNModelling changes with GPT-5.6 Terra as a read-only quali
 mode: subagent
 model: openai/gpt-5.6-terra
 reasoningEffort: high
-textVerbosity: medium
 permission:
   edit: allow
   task: allow
