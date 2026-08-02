@@ -189,6 +189,29 @@ def test_installer_fails_actionably_when_a_prerequisite_is_missing(tmp_path: Pat
     assert "git is required" in result.stderr
 
 
+def test_installer_honors_explicit_destination_without_home(tmp_path: Path) -> None:
+    """NNM_DEST_DIR is documented as the fallback when HOME is unavailable."""
+    bin_dir = _make_fake_bin(tmp_path)
+    dest = tmp_path / "explicit-destination"
+    env = {
+        "PATH": f"{bin_dir}{os.pathsep}{os.environ['PATH']}",
+        "NNM_DEST_DIR": str(dest),
+        "NNM_REMOTE_REPO": DEFAULT_REMOTE,
+        "DEFAULT_REMOTE": DEFAULT_REMOTE,
+        "FAKE_LOG": str(tmp_path / "calls.log"),
+        "FAKE_VALKEY_MODE": "healthy",
+        "FAKE_VALKEY_READY_MARKER": str(tmp_path / "valkey-ready"),
+        "FAKE_VALKEY_PIDFILE": str(tmp_path / "valkey.pid"),
+    }
+
+    result = subprocess.run(
+        [_bash(), str(INSTALL_SCRIPT)], env=env, capture_output=True, text=True, timeout=60
+    )
+
+    assert result.returncode == 0, result.stderr
+    assert dest.is_dir()
+
+
 @pytest.mark.parametrize(
     ("overrides", "expected"),
     [
