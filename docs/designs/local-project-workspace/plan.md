@@ -338,7 +338,10 @@ cd converted && uv run pytest src/tests/ -m e2e -q
    claimed bug must be supported by a deterministic regression test that
    reproduces the failure; speculative or vibe-based bug findings are not
    actionable. The reviewer may add only such review tests and must not fix
-   production code.
+   production code. Because this review includes frontend work, the reviewer
+   must load the `nnmodelling-mcp` skill and use its browser-backed workflow to
+   verify the editor changes. Glimpse is explicitly excluded and must be
+   ignored even if a Glimpse tool/server is available.
 5. Findings and their failing regression tests return to the original
    implementer of the affected subtask; the same reviewer is resumed after
    fixes and verifies that the test now passes.
