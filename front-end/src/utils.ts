@@ -196,12 +196,7 @@ export function checkValidConnection(diagram: Diagram, connection: Connection | 
 }
 
 // --- LOGICA DI SALVATAGGIO (Download File) ---
-/**
- * Explicit export fallback: serialize the browser diagram to a JSON file
- * download. Project-aware saving writes to the active project graph instead;
- * this download remains available for explicit export.
- */
-export function exportDiagramJson(diagram: Diagram, filename = "modello_ai.json") {
+export function handleSaveModel(diagram: Diagram) {
   const jsonStr = diagram.exportToJson();
 
   // Creiamo un Blob di testo (un file virtuale in memoria)
@@ -211,16 +206,11 @@ export function exportDiagramJson(diagram: Diagram, filename = "modello_ai.json"
   // Trucco HTML: creiamo un tag <a> invisibile, lo clicchiamo e lo distruggiamo
   const a = document.createElement("a");
   a.href = url;
-  a.download = filename; // Nome del file di default
+  a.download = "modello_ai.json"; // Nome del file di default
   document.body.appendChild(a);
   a.click();
   document.body.removeChild(a);
   URL.revokeObjectURL(url); // Pulizia della memoria
-}
-
-/** Legacy alias: the download-based save is now the explicit export fallback. */
-export function handleSaveModel(diagram: Diagram) {
-  exportDiagramJson(diagram);
 }
 
 // --- LOGICA DI CARICAMENTO (Upload File) ---
