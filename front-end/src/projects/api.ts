@@ -197,8 +197,16 @@ export class ProjectApiClient {
     return await response.json() as T;
   }
 
+  /**
+   * Build the request Authorization headers. A null token means the request
+   * goes out without an Authorization header (anonymous): the companion then
+   * rejects it with 401 ``missing_token``, which the workspace surfaces as the
+   * actionable unpaired state. Callers must never substitute a token from a
+   * different origin here — the project factory only ever passes the
+   * companion-origin pairing token.
+   */
   private authHeaders(): Headers {
-    if (!this.token) throw new BackendApiError(401, "missing_token", "La connessione non ha un token");
+    if (!this.token) return new Headers();
     return new Headers({ authorization: `Bearer ${this.token}` });
   }
 }

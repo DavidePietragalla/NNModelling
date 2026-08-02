@@ -15,6 +15,7 @@ import { afterEach, describe, expect, it, vi } from "vitest";
 import { BackendApiError } from "../training/api";
 import { ProjectApiClient, type ProjectSummary } from "../projects/api";
 import { isLocalCompanionBackend, ProjectWorkspace } from "../projects/state.svelte";
+import { loadBackendConnection, loadBackendConnectionByOrigin, saveBackendConnection } from "../training/connection";
 import { compileStereotypeCatalog } from "../core/StereotypeCore";
 import { Diagram } from "../Diagram.svelte";
 import { stubWindow, unstubWindow } from "./helpers";
@@ -214,16 +215,21 @@ describe("ProjectApiClient serialization", () => {
     expect(apiError.message).toContain("root is not empty");
   });
 
-  it("refuses every project call without a pairing token", async () => {
-    const fetchMock = vi.fn();
-    vi.stubGlobal("fetch", fetchMock);
+  it("sends an anonymous request without an Authorization header when no token is configured", async () => {
+    const fetchMock = mockFetch({
+      "http://companion.test/api/projects": () => errorResponse(401, "missing_token", "no pairing token"),
+    });
     const api = new ProjectApiClient("http://companion.test/api");
 
     await expect(api.listProjects()).rejects.toMatchObject<Partial<BackendApiError>>({
       status: 401,
       code: "missing_token",
     });
-    expect(fetchMock).not.toHaveBeenCalled();
+
+    // The client never invents or leaks a credential: without a token it
+    // sends no Authorization header at all and surfaces the server rejection.
+    const [, init] = fetchMock.mock.calls[0] as [string, RequestInit];
+    expect(new Headers(init.headers).get("authorization")).toBeNull();
   });
 
   it("joins the base URL with request paths and tolerates a trailing slash", async () => {
@@ -251,6 +257,92 @@ describe("isLocalCompanionBackend", () => {
   it("honours an explicit companion origin override", () => {
     expect(isLocalCompanionBackend("https://companion.lan:8443", "https://companion.lan:8443")).toBe(true);
     expect(isLocalCompanionBackend("https://remote.lan:8443", "https://companion.lan:8443")).toBe(false);
+  });
+
+  it("matches loopback aliases and trailing slashes", () => {
+    expect(isLocalCompanionBackend("http://localhost:8000")).toBe(true);
+    expect(isLocalCompanionBackend("http://127.0.0.1:8000/")).toBe(true);
+  });
+});
+
+describe("companion-origin connection lookup", () => {
+  afterEach(() => {
+    if ("localStorage" in globalThis) {
+      globalThis.localStorage.removeItem("nnm.training.connections");
+    }
+  });
+
+  it("reuses the saved companion connection regardless of the active remote one", () => {
+    const storage = new Map<string, string>();
+    vi.stubGlobal("localStorage", {
+      getItem: (key: string) => storage.get(key) ?? null,
+      setItem: (key: string, value: string) => storage.set(key, value),
+      removeItem: (key: string) => storage.delete(key),
+    });
+    saveBackendConnection({
+      version: 1,
+      baseUrl: "http://127.0.0.1:8000",
+      token: "companion-token",
+      connectionId: "companion-connection",
+      requestId: null,
+      verificationCode: null,
+      deviceName: null,
+    });
+    saveBackendConnection({
+      version: 1,
+      baseUrl: "https://training.example.test",
+      token: "remote-training-token",
+      connectionId: "remote-connection",
+      requestId: null,
+      verificationCode: null,
+      deviceName: null,
+    });
+
+    // The active connection is the remote one, but the origin lookup must
+    // return the companion pairing for project calls.
+    expect(loadBackendConnection()?.baseUrl).toBe("https://training.example.test");
+    const companion = loadBackendConnectionByOrigin("http://127.0.0.1:8000");
+    expect(companion?.token).toBe("companion-token");
+  });
+
+  it("matches loopback aliases and trailing slashes in saved connections", () => {
+    const storage = new Map<string, string>();
+    vi.stubGlobal("localStorage", {
+      getItem: (key: string) => storage.get(key) ?? null,
+      setItem: (key: string, value: string) => storage.set(key, value),
+      removeItem: (key: string) => storage.delete(key),
+    });
+    saveBackendConnection({
+      version: 1,
+      baseUrl: "http://localhost:8000/",
+      token: "companion-token",
+      connectionId: "companion-connection",
+      requestId: null,
+      verificationCode: null,
+      deviceName: null,
+    });
+
+    expect(loadBackendConnectionByOrigin("http://127.0.0.1:8000")?.token).toBe("companion-token");
+  });
+
+  it("returns null when no saved connection matches the companion origin", () => {
+    const storage = new Map<string, string>();
+    vi.stubGlobal("localStorage", {
+      getItem: (key: string) => storage.get(key) ?? null,
+      setItem: (key: string, value: string) => storage.set(key, value),
+      removeItem: (key: string) => storage.delete(key),
+    });
+    saveBackendConnection({
+      version: 1,
+      baseUrl: "https://training.example.test",
+      token: "remote-training-token",
+      connectionId: "remote-connection",
+      requestId: null,
+      verificationCode: null,
+      deviceName: null,
+    });
+
+    expect(loadBackendConnectionByOrigin("http://127.0.0.1:8000")).toBeNull();
   });
 });
 

@@ -19,7 +19,7 @@
 import { StereotypeCore } from "../core/StereotypeCore";
 import { compileStereotypeCatalog } from "../core/StereotypeCore";
 import type { Diagram } from "../Diagram.svelte";
-import { loadBackendConnection } from "../training/connection";
+import { loadBackendConnection, loadBackendConnectionByOrigin, normalizeOriginForComparison } from "../training/connection";
 import { BackendApiError } from "../training/api";
 import {
   ProjectApiClient,
@@ -46,9 +46,17 @@ type ApiFactory = () => ProjectApiClient | null;
 
 function defaultProjectApiFactory(): ProjectApiClient | null {
   try {
-    const saved = loadBackendConnection();
-    if (!saved) return null;
-    return new ProjectApiClient(projectApiBaseUrl(), saved.token);
+    // Only a saved connection whose origin matches the companion may
+    // authenticate project calls. The active connection may belong to a
+    // remote training backend, whose token must never reach the companion.
+    const companion = loadBackendConnectionByOrigin(companionOrigin());
+    if (companion) return new ProjectApiClient(projectApiBaseUrl(), companion.token);
+    // No companion pairing: keep a client without a token so restore() still
+    // probes the companion and surfaces its 401 missing_token rejection as
+    // the actionable unpaired state — never a remote training credential.
+    // With no saved connection at all, stay cleanly unpaired (chooser).
+    if (!loadBackendConnection()) return null;
+    return new ProjectApiClient(projectApiBaseUrl(), null);
   } catch {
     return null;
   }
@@ -64,9 +72,9 @@ function isDiagramGraph(graph: Record<string, unknown>): boolean {
   return Array.isArray(graph.nodes) && Array.isArray(graph.edges);
 }
 
-/** Normalize an origin for comparison (case, trailing slashes). */
+/** Normalize an origin for comparison (case, trailing slashes, loopback aliases). */
 function normalizeOrigin(origin: string): string {
-  return origin.replace(/\/+$/, "").toLowerCase();
+  return normalizeOriginForComparison(origin);
 }
 
 /**
