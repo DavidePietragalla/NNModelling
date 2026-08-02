@@ -675,6 +675,52 @@ def test_project_stereotype_catalog_does_not_read_symlinked_files_outside_projec
     assert "must-not-leak" not in json.dumps(catalog.model_dump())
 
 
+def test_project_stereotype_catalog_ignores_directory_symlinks_outside_project(
+    manager: ProjectManager,
+    tmp_path: Path,
+):
+    """A directory symlink must never expose JSON from outside stereotypes/."""
+    project = manager.create_project("stereos", str(tmp_path / "proj"))
+    outside_dir = tmp_path / "outside-stereos"
+    outside_dir.mkdir()
+    (outside_dir / "Leaked.json").write_text(
+        json.dumps({"category": "Layer", "private_value": "dir-leak"}),
+        encoding="utf-8",
+    )
+    (Path(project.root) / "stereotypes" / "OutsideDir").symlink_to(outside_dir)
+    # Valid in-tree definitions must still be discovered.
+    (Path(project.root) / "stereotypes" / "GoodLayer.json").write_text(
+        json.dumps({"category": "Layer", "pythonClassName": "nn.Linear"}),
+        encoding="utf-8",
+    )
+
+    catalog = manager.project_stereotypes(project.id)
+
+    names = {entry.name for entry in catalog.stereotypes}
+    assert "GoodLayer" in names
+    assert "Leaked" not in names
+    assert "dir-leak" not in json.dumps(catalog.model_dump())
+
+
+def test_project_stereotype_catalog_diagnoses_broken_symlinks_outside_project(
+    manager: ProjectManager,
+    tmp_path: Path,
+):
+    """A broken symlink whose target escapes the root is diagnosed, not read."""
+    project = manager.create_project("stereos", str(tmp_path / "proj"))
+    (Path(project.root) / "stereotypes" / "Broken.json").symlink_to(
+        tmp_path / "missing.json"
+    )
+
+    catalog = manager.project_stereotypes(project.id)
+
+    assert "Broken" not in {entry.name for entry in catalog.stereotypes}
+    broken_errors = [
+        error for error in catalog.errors if error["path"] == "Broken.json"
+    ]
+    assert broken_errors and "resolves outside" in broken_errors[0]["error"]
+
+
 def test_builtin_catalog_loads_every_repository_stereotype():
     from backend.stereotype_registry import load_builtin_stereotypes
 
@@ -798,6 +844,55 @@ def test_project_dataset_discovery_does_not_import_symlinked_code_outside_projec
     discovery = discover_project_datasets(Path(project.root))
 
     assert "outside_dataset.OutsideDataset" not in {dataset.target for dataset in discovery.datasets}
+
+
+def test_project_dataset_discovery_ignores_directory_symlinks_outside_project(
+    manager: ProjectManager,
+    tmp_path: Path,
+):
+    """A directory symlink must never execute code from outside datasets/."""
+    project = manager.create_project("datasets", str(tmp_path / "proj"))
+    outside_dir = tmp_path / "outside-datasets"
+    outside_dir.mkdir()
+    (outside_dir / "leaked.py").write_text(
+        "from dataset.ds import Dataset\n"
+        "class LeakedDataset(Dataset):\n"
+        "    def division(self):\n"
+        "        raise NotImplementedError\n",
+        encoding="utf-8",
+    )
+    (Path(project.root) / "datasets" / "outside-dir").symlink_to(outside_dir)
+    # Valid in-tree modules must still be discovered.
+    (Path(project.root) / "datasets" / "valid.py").write_text(
+        "from dataset.ds import Dataset\n"
+        "class ValidDataset(Dataset):\n"
+        "    def division(self):\n"
+        "        raise NotImplementedError\n",
+        encoding="utf-8",
+    )
+
+    discovery = discover_project_datasets(Path(project.root))
+
+    targets = {dataset.target for dataset in discovery.datasets}
+    assert "valid.ValidDataset" in targets
+    assert "leaked.LeakedDataset" not in targets
+
+
+def test_project_dataset_discovery_diagnoses_broken_symlinks_outside_project(
+    manager: ProjectManager,
+    tmp_path: Path,
+):
+    """A broken symlink whose target escapes datasets/ is diagnosed, not run."""
+    project = manager.create_project("datasets", str(tmp_path / "proj"))
+    (Path(project.root) / "datasets" / "broken.py").symlink_to(
+        tmp_path / "missing_dataset.py"
+    )
+
+    discovery = discover_project_datasets(Path(project.root))
+
+    assert "broken.BrokenDataset" not in {dataset.target for dataset in discovery.datasets}
+    broken_errors = [error for error in discovery.errors if error["path"] == "broken.py"]
+    assert broken_errors and "resolves outside" in broken_errors[0]["error"]
 
 
 def test_legacy_dataset_discovery_signature_is_preserved():

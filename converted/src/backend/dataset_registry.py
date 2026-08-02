@@ -76,11 +76,21 @@ def discover_project_datasets(project_root: str | Path) -> DatasetDiscovery:
     if not datasets_dir.is_dir():
         return DatasetDiscovery(datasets, errors)
 
-    python_files = sorted(
-        path
-        for path in datasets_dir.rglob("*.py")
-        if "__pycache__" not in path.parts and not path.name.startswith(".")
-    )
+    python_files: list[Path] = []
+    for path in sorted(datasets_dir.rglob("*.py")):
+        if "__pycache__" in path.parts or path.name.startswith("."):
+            continue
+        rel_posix = path.relative_to(datasets_dir).as_posix()
+        if not _resolves_inside_root(path, datasets_dir):
+            errors.append(
+                {
+                    "path": rel_posix,
+                    "error": f"{rel_posix} resolves outside the project datasets "
+                    "directory and was not imported",
+                }
+            )
+            continue
+        python_files.append(path)
     if not python_files:
         return DatasetDiscovery(datasets, errors)
 
@@ -153,6 +163,21 @@ def _import_project_module(
         return None
     finally:
         sys.modules.pop(synthetic_name, None)
+
+
+def _resolves_inside_root(candidate: Path, root: Path) -> bool:
+    """Return whether a candidate's physical target stays inside the root.
+
+    The candidate path is resolved with symlinks fully followed; only a proper
+    descendant of the resolved root is considered inside. A symlinked module
+    whose target (or whose chain of symlinks) escapes the root — including a
+    broken symlink whose target path lies outside — is rejected before it can
+    be executed, so project discovery never imports code reachable only
+    through a symlink planted outside ``datasets/``.
+    """
+    resolved_root = root.resolve()
+    resolved = candidate.resolve()
+    return resolved != resolved_root and resolved_root in resolved.parents
 
 
 def _discover_package_datasets() -> list[DatasetInfo]:

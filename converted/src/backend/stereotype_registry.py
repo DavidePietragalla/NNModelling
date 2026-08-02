@@ -118,6 +118,14 @@ def _load_directory(
     for path in sorted(root.rglob("*.json")):
         rel = path.relative_to(root).as_posix()
         name = path.stem
+        if not _resolves_inside_root(path, root):
+            errors.append(
+                {
+                    "path": rel,
+                    "error": f"{rel}: resolves outside the stereotype directory and was ignored",
+                }
+            )
+            continue
         try:
             data = json.loads(path.read_text(encoding="utf-8"))
         except json.JSONDecodeError as exc:
@@ -134,6 +142,21 @@ def _load_directory(
             StereotypeCatalogEntry(id=f"{prefix}/{rel}", name=name, source=source, data=data)
         )
     return entries, errors
+
+
+def _resolves_inside_root(candidate: Path, root: Path) -> bool:
+    """Return whether a candidate's physical target stays inside the root.
+
+    The candidate path is resolved with symlinks fully followed; only a proper
+    descendant of the resolved root is considered inside. A symlinked file
+    whose target (or whose chain of symlinks) escapes the root — including a
+    broken symlink whose target path lies outside — is rejected before it can
+    be read, so project discovery never exposes files reachable only through a
+    symlink planted outside ``stereotypes/``.
+    """
+    resolved_root = root.resolve()
+    resolved = candidate.resolve()
+    return resolved != resolved_root and resolved_root in resolved.parents
 
 
 def _validate_definition(name: str, data: object, *, strict_category: bool) -> str | None:
