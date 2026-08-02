@@ -329,9 +329,18 @@ cd converted && uv run pytest src/tests/ -m e2e -q
    diff, and recent log.
 2. S2 starts only after S1's API/data contracts are committed; S3 starts only
    after backend contracts are stable; S4 starts after functional integration.
-3. `reviewer-openai` reviews S1–S4 as one related change set for correctness,
-   security, compatibility, architecture, tests, and issue acceptance.
-4. Findings return to the original implementer of the affected subtask; the same
-   reviewer is resumed after fixes.
-5. The architect verifies the final diff, validations, branch ancestry, and PR
+3. Starting with S2, implementation follows TDD: first add or update a focused
+   test that fails for the missing behavior, then implement the smallest change
+   that makes it pass, then refactor while keeping the targeted and integration
+   suites green. Result reports include red/green evidence where practical.
+4. `reviewer-openai` reviews S1–S4 as one related change set for correctness,
+   security, compatibility, architecture, tests, and issue acceptance. Any
+   claimed bug must be supported by a deterministic regression test that
+   reproduces the failure; speculative or vibe-based bug findings are not
+   actionable. The reviewer may add only such review tests and must not fix
+   production code.
+5. Findings and their failing regression tests return to the original
+   implementer of the affected subtask; the same reviewer is resumed after
+   fixes and verifies that the test now passes.
+6. The architect verifies the final diff, validations, branch ancestry, and PR
    contents before pushing and opening the authorized pull request.

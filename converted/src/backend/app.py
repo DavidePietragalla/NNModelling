@@ -142,10 +142,10 @@ def create_app(
         allow_headers=["Authorization", "Content-Type", "Last-Event-ID", "X-NNM-Admin-Token"],
         expose_headers=["X-NNM-SHA256"],
     )
-    app.state.manager = manager or JobManager.from_environment()
+    app.state.projects = project_manager or ProjectManager.from_environment()
+    app.state.manager = manager or JobManager.from_environment(project_manager=app.state.projects)
     app.state.auth = auth_service or _auth_from_environment(in_memory=injected_manager is not None)
     app.state.admin_token = admin_token if admin_token is not None else _read_admin_token()
-    app.state.projects = project_manager or ProjectManager.from_environment()
 
     async def bearer_token(authorization: str | None = Header(default=None)) -> str:
         if authorization is None or not authorization.startswith("Bearer "):
