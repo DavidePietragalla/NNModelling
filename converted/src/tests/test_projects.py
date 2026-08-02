@@ -1105,3 +1105,70 @@ def test_legacy_datasets_endpoint_remains_compatible(api):
                 assert all(entry["source"] == "builtin" for entry in datasets)
 
     asyncio.run(exercise())
+
+
+# ---------------------------------------------------------------------------
+# Composition root: production JobManager wiring (S1-INTEGRATION)
+# ---------------------------------------------------------------------------
+
+
+def test_create_app_wires_production_manager_to_the_project_service(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+):
+    """The environment-built JobManager must share the app's ProjectManager.
+
+    In production ``create_app`` constructs ``JobManager.from_environment``
+    itself; without wiring, ``project_id`` submissions would reach a manager
+    with ``project_manager=None`` and fail to resolve any project. The wiring
+    contract is that the same instance exposed as ``app.state.projects`` is
+    passed into ``JobManager.from_environment(project_manager=...)``.
+    """
+
+    captured: dict[str, object] = {}
+
+    def fake_from_environment(*args: Any, **kwargs: Any) -> JobManager:
+        del args
+        project_manager = kwargs.get("project_manager")
+        captured["project_manager"] = project_manager
+        return JobManager(
+            InMemoryJobStore(),
+            tmp_path / "jobs",
+            [NoopExecutor()],
+            project_manager=project_manager,
+        )
+
+    monkeypatch.setattr(JobManager, "from_environment", classmethod(fake_from_environment))
+
+    app = create_app()
+
+    assert captured["project_manager"] is app.state.projects
+    assert app.state.manager.project_manager is app.state.projects
+
+
+def test_create_app_preserves_an_injected_manager(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+):
+    """An explicitly injected JobManager is never rebuilt or rewired.
+
+    Existing tests (and deployments) inject the manager together with the
+    auth service; the composition-root wiring must only apply to the
+    environment-built manager and must not call ``from_environment`` or
+    replace the injected project manager.
+    """
+
+    injected_manager = JobManager(InMemoryJobStore(), tmp_path / "jobs", [NoopExecutor()])
+    injected_projects = ProjectManager(tmp_path / "state", sync_enabled=False)
+
+    def unexpected_from_environment(*args: Any, **kwargs: Any) -> JobManager:
+        del args, kwargs
+        raise AssertionError("from_environment must not run for an injected manager")
+
+    monkeypatch.setattr(JobManager, "from_environment", classmethod(unexpected_from_environment))
+
+    app = create_app(injected_manager, project_manager=injected_projects)
+
+    assert app.state.manager is injected_manager
+    assert app.state.projects is injected_projects
+    assert app.state.manager.project_manager is None
