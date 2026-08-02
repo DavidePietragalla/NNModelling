@@ -138,6 +138,7 @@ def run_installer(
         "HOME": str(tmp_path),
         "NNM_DEST_DIR": str(dest),
         "NNM_REMOTE_REPO": DEFAULT_REMOTE,
+        "DEFAULT_REMOTE": DEFAULT_REMOTE,
         "FAKE_LOG": str(log_path),
         "FAKE_VALKEY_MODE": valkey_mode,
         "FAKE_VALKEY_READY_MARKER": str(tmp_path / "valkey-ready"),
@@ -209,6 +210,38 @@ def test_installer_rejects_unsupported_node_and_pnpm_versions(
     assert result.returncode != 0
     assert expected in result.stderr
     assert "clone" not in _calls(tmp_path)
+
+
+@pytest.mark.parametrize(
+    "overrides",
+    [
+        {"FAKE_NODE_VERSION": "garbage-output"},
+        {"FAKE_PNPM_VERSION": "definitely-not-semver"},
+    ],
+)
+def test_installer_rejects_malformed_node_and_pnpm_version_output(
+    tmp_path: Path,
+    overrides: dict[str, str],
+) -> None:
+    """Unparseable version output must fail clearly, before any repository mutation."""
+    result = run_installer(
+        tmp_path,
+        extra_env=overrides,
+    )
+
+    assert result.returncode != 0
+    assert "--version" in result.stderr
+    assert "clone" not in _calls(tmp_path)
+
+
+def test_installer_accepts_v_prefixed_and_plain_major_versions(tmp_path: Path) -> None:
+    """Normal v18.x / 10.x version forms are accepted."""
+    result = run_installer(
+        tmp_path,
+        extra_env={"FAKE_NODE_VERSION": "v18.19.1", "FAKE_PNPM_VERSION": "10.1.0"},
+    )
+    assert result.returncode == 0, result.stderr
+    assert "clone --depth 1" in _calls(tmp_path)
 
 
 # ---------------------------------------------------------------------------

@@ -38,10 +38,31 @@ require_tool() { # <name> <hint>
   command -v "$1" >/dev/null 2>&1 || die "$1 is required but was not found on PATH. $2"
 }
 
+check_min_major() { # <tool> <version-output> <min-major> <friendly>
+  local tool="$1" output="$2" min_major="$3" friendly="$4"
+  local raw="$output" major=""
+  case "$raw" in
+    [vV]*) raw="${raw#?}" ;;
+  esac
+  major="${raw%%.*}"
+  case "$major" in
+    ''|*[!0-9]*)
+      die "$tool --version reported an unrecognized version ('$output'); $friendly is required"
+      ;;
+  esac
+  if [ "$major" -lt "$min_major" ]; then
+    die "$tool --version reported $output; $friendly is required"
+  fi
+}
+
 require_tool git "Install Git (https://git-scm.com/)."
 require_tool uv "Install uv (https://docs.astral.sh/uv/)."
 require_tool node "Install Node.js 18 or newer."
 require_tool pnpm "Install pnpm 10+ (corepack enable pnpm or npm install --global pnpm)."
+# Version minimums are validated before any repository mutation: a clone or
+# update must never start with a toolchain that cannot build the editor.
+check_min_major node "$(node --version 2>/dev/null || true)" 18 "Node.js 18 or newer"
+check_min_major pnpm "$(pnpm --version 2>/dev/null || true)" 10 "pnpm 10 or newer"
 
 dest="$NNM_DEST_DIR"
 
@@ -58,11 +79,15 @@ fi
 
 if [ "$is_checkout" = 1 ]; then
   origin="$(git -C "$dest" remote get-url origin 2>/dev/null || true)"
-  if [ -n "$origin" ] && [ "$origin" != "$NNM_REMOTE_REPO" ]; then
+  if [ -z "$origin" ]; then
+    die "destination '$dest' is a git checkout without a readable origin; refusing to touch it"
+  fi
+  if [ "$origin" != "$NNM_REMOTE_REPO" ]; then
     die "destination '$dest' is a git checkout of '$origin', not '$NNM_REMOTE_REPO'; refusing to touch it"
   fi
   log "updating existing checkout at $dest"
-  git -C "$dest" checkout --quiet "$NNM_BRANCH" 2>/dev/null || true
+  git -C "$dest" checkout --quiet "$NNM_BRANCH" 2>/dev/null \
+    || die "cannot check out branch '$NNM_BRANCH' in $dest; check NNM_BRANCH and the repository refs"
   git -C "$dest" pull --ff-only --quiet \
     || die "failed to update $dest; resolve the git error above (local changes may conflict)"
 elif [ -d "$dest" ] && [ -n "$(ls -A "$dest")" ]; then

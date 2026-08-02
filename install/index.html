@@ -129,7 +129,7 @@
         <li><code>NNM_BACKEND_HOST</code> / <code>NNM_BACKEND_PORT</code> — companion bind settings (default <code>127.0.0.1:8000</code>).</li>
       </ul>
       <p>For example:</p>
-      <pre><span class="cmd">$</span> NNM_DEST_DIR=~/nnmodelling curl -fsSL https://lucasforza.github.io/NNModelling/install.sh | bash</pre>
+      <pre><span class="cmd">$</span> curl -fsSL https://lucasforza.github.io/NNModelling/install.sh | NNM_DEST_DIR=~/nnmodelling bash</pre>
 
       <div class="note">
         The installer never overwrites a destination it does not own (a non-empty

@@ -27,7 +27,12 @@ editor, reuses a healthy Valkey instance or starts a repository-local
 missing or the destination is not an NNModelling checkout, never prints
 secrets, and stops only the Valkey process it started when the companion
 exits. Configure with `NNM_DEST_DIR`, `NNM_REMOTE_REPO`, `NNM_BRANCH`,
-`NNM_VALKEY_URL`/`NNM_VALKEY_PORT`, or `NNM_BACKEND_HOST`/`NNM_BACKEND_PORT`.
+`NNM_VALKEY_URL`/`NNM_VALKEY_PORT`, or `NNM_BACKEND_HOST`/`NNM_BACKEND_PORT` —
+in a pipeline the overrides go on the `bash` side, not on `curl`:
+
+```bash
+curl -fsSL https://lucasforza.github.io/NNModelling/install.sh | NNM_DEST_DIR=~/nnmodelling bash
+```
 
 Open <http://127.0.0.1:8000>. The Training Sidebar keeps its URL/pairing
 workflow, so you may connect it either to this localhost backend or to an
