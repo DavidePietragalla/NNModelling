@@ -27,10 +27,14 @@ die() { printf 'nnm: error: %s\n' "$*" >&2; exit 1; }
 
 NNM_REMOTE_REPO="${NNM_REMOTE_REPO:-https://github.com/LucaSforza/NNModelling.git}"
 NNM_BRANCH="${NNM_BRANCH:-master}"
-if [ -z "${HOME:-}" ]; then
-  die "HOME is not set; set NNM_DEST_DIR explicitly"
+NNM_DEST_DIR="${NNM_DEST_DIR:-}"
+if [ -z "$NNM_DEST_DIR" ]; then
+  # HOME is required only to derive the default destination.
+  if [ -z "${HOME:-}" ]; then
+    die "HOME is not set; set NNM_DEST_DIR explicitly"
+  fi
+  NNM_DEST_DIR="$HOME/.local/share/nnmodelling"
 fi
-NNM_DEST_DIR="${NNM_DEST_DIR:-$HOME/.local/share/nnmodelling}"
 NNM_VALKEY_URL="${NNM_VALKEY_URL:-valkey://127.0.0.1:6379/0}"
 NNM_VALKEY_PORT="${NNM_VALKEY_PORT:-6379}"
 
