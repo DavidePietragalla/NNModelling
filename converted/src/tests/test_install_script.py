@@ -43,7 +43,11 @@ if [ "$1" = "-C" ]; then
       exit 1
       ;;
     remote)
-      if [ -n "${FAKE_GIT_ORIGIN:-}" ]; then echo "$FAKE_GIT_ORIGIN"; else echo "$DEFAULT_REMOTE"; fi
+      if [ "${FAKE_GIT_ORIGIN_SET:-0}" = "1" ]; then echo "${FAKE_GIT_ORIGIN:-}"; else echo "$DEFAULT_REMOTE"; fi
+      exit 0
+      ;;
+    checkout)
+      [ "${FAKE_GIT_CHECKOUT_FAIL:-0}" = "1" ] && exit 1
       exit 0
       ;;
     *) exit 0 ;;
@@ -63,12 +67,14 @@ exit 0
 
 FAKE_PNPM = """\
 #!/usr/bin/env bash
+if [ "${1:-}" = "--version" ]; then printf '%s\\n' "${FAKE_PNPM_VERSION:-10.0.0}"; exit 0; fi
 { echo "pnpm $* (cwd=$PWD)"; } >> "$FAKE_LOG" 2>/dev/null || true
 exit 0
 """
 
 FAKE_NODE = """\
 #!/usr/bin/env bash
+if [ "${1:-}" = "--version" ]; then printf '%s\\n' "${FAKE_NODE_VERSION:-v20.0.0}"; exit 0; fi
 exit 0
 """
 
@@ -182,6 +188,29 @@ def test_installer_fails_actionably_when_a_prerequisite_is_missing(tmp_path: Pat
     assert "git is required" in result.stderr
 
 
+@pytest.mark.parametrize(
+    ("overrides", "expected"),
+    [
+        ({"FAKE_NODE_VERSION": "v16.20.0"}, "Node.js 18"),
+        ({"FAKE_PNPM_VERSION": "8.15.0"}, "pnpm 10"),
+    ],
+)
+def test_installer_rejects_unsupported_node_and_pnpm_versions(
+    tmp_path: Path,
+    overrides: dict[str, str],
+    expected: str,
+) -> None:
+    """Published Node 18+/pnpm 10+ prerequisites must be enforced."""
+    result = run_installer(
+        tmp_path,
+        extra_env=overrides,
+    )
+
+    assert result.returncode != 0
+    assert expected in result.stderr
+    assert "clone" not in _calls(tmp_path)
+
+
 # ---------------------------------------------------------------------------
 # Destination: clone vs update vs refusal
 # ---------------------------------------------------------------------------
@@ -236,10 +265,50 @@ def test_installer_refuses_an_existing_checkout_of_a_different_remote(
     dest.mkdir()
     (dest / ".git").mkdir()
     result = run_installer(
-        tmp_path, extra_env={"FAKE_GIT_ORIGIN": "https://other.invalid/other.git"}
+        tmp_path,
+        extra_env={
+            "FAKE_GIT_ORIGIN_SET": "1",
+            "FAKE_GIT_ORIGIN": "https://other.invalid/other.git",
+        },
     )
     assert result.returncode != 0
     assert "refusing" in result.stderr
+
+
+def test_installer_refuses_a_checkout_without_an_origin(tmp_path: Path) -> None:
+    """An origin-less checkout cannot be established as the trusted repository."""
+    dest = tmp_path / "dest"
+    dest.mkdir()
+    (dest / ".git").mkdir()
+
+    result = run_installer(tmp_path, extra_env={"FAKE_GIT_ORIGIN_SET": "1", "FAKE_GIT_ORIGIN": ""})
+
+    assert result.returncode != 0
+    assert "origin" in result.stderr
+    assert "pull --ff-only" not in _calls(tmp_path)
+
+
+def test_installer_stops_when_the_requested_branch_cannot_be_checked_out(tmp_path: Path) -> None:
+    """A failed NNM_BRANCH checkout must not silently update another branch."""
+    dest = tmp_path / "dest"
+    dest.mkdir()
+    (dest / ".git").mkdir()
+
+    result = run_installer(
+        tmp_path,
+        extra_env={"NNM_BRANCH": "missing-branch", "FAKE_GIT_CHECKOUT_FAIL": "1"},
+    )
+
+    assert result.returncode != 0
+    assert "branch" in result.stderr
+    assert "pull --ff-only" not in _calls(tmp_path)
+
+
+def test_install_page_does_not_scope_destination_override_only_to_curl() -> None:
+    """Pipeline examples must pass NNM_DEST_DIR to bash, not just to curl."""
+    page = REPO_ROOT / "install" / "index.html"
+
+    assert "NNM_DEST_DIR=~/nnmodelling curl -fsSL" not in page.read_text(encoding="utf-8")
 
 
 # ---------------------------------------------------------------------------
