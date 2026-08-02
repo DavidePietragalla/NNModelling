@@ -255,6 +255,39 @@ describe("isLocalCompanionBackend", () => {
 });
 
 describe("ProjectWorkspace restore", () => {
+  it("does not send a remote training token to the local companion project API", async () => {
+    const values = new Map<string, string>();
+    vi.stubGlobal("localStorage", {
+      getItem: (key: string) => values.get(key) ?? null,
+      setItem: (key: string, value: string) => values.set(key, value),
+      removeItem: (key: string) => values.delete(key),
+    });
+    values.set("nnm.training.connections", JSON.stringify({
+      version: 1,
+      activeUrl: "https://training.example.test",
+      connections: {
+        "https://training.example.test": {
+          version: 1,
+          baseUrl: "https://training.example.test",
+          token: "remote-training-token",
+          connectionId: "remote-connection",
+          requestId: null,
+          verificationCode: null,
+          deviceName: null,
+        },
+      },
+    }));
+    const fetchMock = mockFetch({
+      "/api/projects": () => errorResponse(401, "missing_token", "local companion rejects remote credentials"),
+    });
+    const workspace = new ProjectWorkspace();
+
+    await workspace.restore();
+
+    const [, init] = fetchMock.mock.calls[0] as [string, RequestInit];
+    expect(new Headers(init.headers).get("authorization")).not.toBe("Bearer remote-training-token");
+  });
+
   it("shows the chooser when no backend is paired", async () => {
     const workspace = new ProjectWorkspace(() => null);
 

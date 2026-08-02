@@ -216,6 +216,24 @@ def test_cli_fails_actionably_when_valkey_is_unreachable(
     assert "Valkey" in capsys.readouterr().err
 
 
+def test_cli_fails_actionably_when_pairing_administration_is_unavailable(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    capsys: pytest.CaptureFixture,
+) -> None:
+    """A local server without an administrator token cannot approve pairing."""
+    dist = make_fake_dist(tmp_path)
+    missing_token = tmp_path / "missing-admin.token"
+    monkeypatch.setenv("NNM_ADMIN_TOKEN_FILE", str(missing_token))
+    monkeypatch.setattr("backend.cli.valkey_reachable", lambda *a, **k: True)
+    monkeypatch.setattr("backend.cli.uvicorn.run", lambda *a, **k: None)
+
+    code = main(["--dist", str(dist)])
+
+    assert code == 2
+    assert "admin-init" in capsys.readouterr().err
+
+
 def test_cli_valkey_reachable_treats_ping_failure_as_false(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:

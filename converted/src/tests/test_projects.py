@@ -656,6 +656,25 @@ def test_stereotype_catalog_rejects_structurally_invalid_definitions(manager: Pr
     assert "not recognized" in errors["bad-category.json"]
 
 
+def test_project_stereotype_catalog_does_not_read_symlinked_files_outside_project(
+    manager: ProjectManager,
+    tmp_path: Path,
+):
+    """Catalog discovery must not expose JSON reachable only through a symlink."""
+    project = manager.create_project("stereos", str(tmp_path / "proj"))
+    outside = tmp_path / "outside.json"
+    outside.write_text(
+        json.dumps({"category": "Layer", "private_value": "must-not-leak"}),
+        encoding="utf-8",
+    )
+    (Path(project.root) / "stereotypes" / "Outside.json").symlink_to(outside)
+
+    catalog = manager.project_stereotypes(project.id)
+
+    assert "Outside" not in {entry.name for entry in catalog.stereotypes}
+    assert "must-not-leak" not in json.dumps(catalog.model_dump())
+
+
 def test_builtin_catalog_loads_every_repository_stereotype():
     from backend.stereotype_registry import load_builtin_stereotypes
 
@@ -758,6 +777,27 @@ def test_project_dataset_discovery_does_not_leak_import_state(manager: ProjectMa
     assert set(sys.modules) - modules_before == set()
     assert sys.path == path_before
     assert datasets_dir not in sys.path
+
+
+def test_project_dataset_discovery_does_not_import_symlinked_code_outside_project(
+    manager: ProjectManager,
+    tmp_path: Path,
+):
+    """Only dataset modules physically below ``datasets/`` may be executed."""
+    project = manager.create_project("datasets", str(tmp_path / "proj"))
+    outside = tmp_path / "outside_dataset.py"
+    outside.write_text(
+        "from dataset.ds import Dataset\n"
+        "class OutsideDataset(Dataset):\n"
+        "    def division(self):\n"
+        "        raise NotImplementedError\n",
+        encoding="utf-8",
+    )
+    (Path(project.root) / "datasets" / "outside_dataset.py").symlink_to(outside)
+
+    discovery = discover_project_datasets(Path(project.root))
+
+    assert "outside_dataset.OutsideDataset" not in {dataset.target for dataset in discovery.datasets}
 
 
 def test_legacy_dataset_discovery_signature_is_preserved():
