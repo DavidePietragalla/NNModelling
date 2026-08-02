@@ -43,6 +43,27 @@ configuration:
      - Generic; reserved for future use, currently unused
      - Depends on implementation
 
+Input and Fork contract
+-----------------------
+
+The top-level model requires exactly one ``Input``. It is the network source
+and has no input handle. Inside a subflow, ``Input`` may serve only as a
+declared boundary entry: the container injects its external tensor/type and it
+is not counted as another top-level root. If no internal ``Input`` is declared,
+the unique topological source is the entry.
+
+``Fork`` is the canonical internal entry/pass-through, especially for
+branching, and is used by the canonical Repeat examples. It has normal
+input/output handles and may also appear downstream. ``Input`` and ``Fork``
+are equivalent only as no-Python-module pass-through at a subflow boundary;
+they are not globally interchangeable, and ``Fork`` cannot replace the
+mandatory top-level ``Input``.
+
+For public MCP construction, use ``Fork`` in the sensible Repeat residual model
+for the next QA. Compatibility with an internal ``Input`` remains intentional
+and supported. No GitHub issue is needed: this boundary compatibility is
+already part of the intended contract.
+
 JSON Field Reference
 --------------------
 

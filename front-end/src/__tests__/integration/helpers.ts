@@ -12,7 +12,7 @@
  */
 
 import { spawnSync } from "node:child_process";
-import { resolve, dirname, join } from "node:path";
+import { resolve, dirname, join, sep } from "node:path";
 import { fileURLToPath } from "node:url";
 import {
   mkdtempSync,
@@ -21,8 +21,14 @@ import {
   readFileSync,
   mkdirSync,
   readdirSync,
+  writeFileSync,
+  symlinkSync,
+  cpSync,
 } from "node:fs";
 import { tmpdir } from "node:os";
+import { expect } from "vitest";
+import { Diagram } from "../../Diagram.svelte";
+import { NNTree } from "../../conversion/nnTree";
 
 // ---------------------------------------------------------------------------
 // Paths
@@ -77,11 +83,32 @@ export interface DiagramEntry {
   format: "svelte-flow" | "nntree";
   inputShape: number[];
   inputType?: "float" | "int";
+  /**
+   * Expected model output shape for a single sample (batch dimension
+   * excluded). Verified exactly by the forward tier. Only models that
+   * declare this shape get the exact-shape assertion.
+   */
+  outputShape?: number[];
+  /** Expected torch dtype of the model output, e.g. "float32". */
+  outputDtype?: string;
   numClasses?: number;
   taskType: "classification" | "regression";
+  /**
+   * convert.py `--dataset` class path. Required for training/reload/inference
+   * invariants (e.g. autoencoder diagrams must select AutoencoderMNIST or the
+   * MSELoss target shape is wrong).
+   */
+  dataset?: string;
   trainable: boolean;
   /** Included in the default fast training/inference matrix. */
   trainingSmoke?: boolean;
+  /**
+   * The diagram must pass TypeEngine inference with no hard errors.
+   * Diagrams with known pre-existing hard errors must not declare this.
+   */
+  refreshTypesClean?: boolean;
+  /** infer.py --image-dir artifact path is validated for this model. */
+  supportsImages?: boolean;
   description: string;
 }
 
@@ -158,11 +185,117 @@ export function getTargetDiagrams(
   return Object.entries(diagrams).map(([name, entry]) => ({ name, entry }));
 }
 
+/**
+ * Models that declare the full invariant set (exact output shape and a clean
+ * type check). These are the models used for the strengthened invariants:
+ * currently `mninst` and `autoencoder_mnist`.
+ */
+export function getValidationModels(
+  manifest: Manifest,
+): Array<{ name: string; entry: DiagramEntry }> {
+  return Object.entries(manifest.diagrams)
+    .filter(([_, entry]) => entry.outputShape !== undefined && entry.refreshTypesClean === true)
+    .map(([name, entry]) => ({ name, entry }));
+}
+
+// ---------------------------------------------------------------------------
+// NNTree helpers
+// ---------------------------------------------------------------------------
+
+export interface ParsedNNTree {
+  root: string;
+  lossNode: unknown;
+  nodes: Record<string, unknown>;
+}
+
+interface ParsedNode {
+  data?: { type?: string; [key: string]: unknown };
+  children?: string[];
+}
+
+/** Parse an NNTree JSON string into its structural shape. */
+export function parseNNTree(jsonStr: string): ParsedNNTree {
+  return JSON.parse(jsonStr) as ParsedNNTree;
+}
+
+/**
+ * Assert structural reference integrity of a compiled NNTree:
+ * every declared child ID resolves to a tree-level node, the root exists, and
+ * every subflow's internal graph references only internal or tree-level nodes.
+ */
+export function assertNNTreeReferenceIntegrity(tree: ParsedNNTree): void {
+  const treeIds = new Set(Object.keys(tree.nodes));
+
+  expect(
+    treeIds.has(tree.root),
+    `root "${tree.root}" must exist in the tree nodes map`,
+  ).toBe(true);
+
+  for (const [id, node] of Object.entries(tree.nodes)) {
+    const parsed = node as ParsedNode;
+    const data = parsed.data ?? {};
+    for (const childId of parsed.children ?? []) {
+      expect(
+        treeIds.has(childId),
+        `node ${id} references missing tree node ${childId}`,
+      ).toBe(true);
+    }
+    if (data.type === "subflow") {
+      const sfData = data as unknown as {
+        entryNode?: string;
+        nodes?: Record<string, { children?: string[] }>;
+      };
+      const internal = sfData.nodes ?? {};
+      expect(
+        sfData.entryNode !== undefined && sfData.entryNode in internal,
+        `subflow ${id} entryNode "${sfData.entryNode}" must exist internally`,
+      ).toBe(true);
+      for (const [intId, intNode] of Object.entries(internal)) {
+        for (const childId of intNode.children ?? []) {
+          const isInternal = childId in internal;
+          const isTreeLevel = treeIds.has(childId);
+          expect(
+            isInternal || isTreeLevel,
+            `subflow ${id} internal node ${intId} references unknown node ${childId}`,
+          ).toBe(true);
+        }
+      }
+    }
+  }
+}
+
+/**
+ * Compile a source diagram into an NNTree JSON file inside outDir.
+ * Returns the path to the written JSON file.
+ */
+export function compileDiagramToFile(
+  name: string,
+  outDir: string,
+  options?: { diagramsDir?: string },
+): string {
+  const diagramPath = resolve(options?.diagramsDir ?? DIAGRAMS_DIR, `${name}.json`);
+  const content = readFileSync(diagramPath, "utf-8");
+
+  const diagram = new Diagram();
+  diagram.importFromJson(content);
+
+  const jsonStr = new NNTree(diagram).toJson();
+  const jsonPath = join(outDir, `${name}.json`);
+  writeFileSync(jsonPath, jsonStr, "utf-8");
+  return jsonPath;
+}
+
 // ---------------------------------------------------------------------------
 // Temp directory management
 // ---------------------------------------------------------------------------
 
-/** Create a temporary directory. Auto-cleaned unless NNM_KEEP_TEMP=true. */
+/**
+ * Create a caller-owned temporary directory. The caller is responsible for
+ * registering it (e.g. in the test's afterEach via conditionalCleanup) and for
+ * passing it as workDir to compileDiagramToFile/runConvert/runTraining so all
+ * helper-generated artifacts live under it. Auto-cleaned unless
+ * NNM_KEEP_TEMP=true.
+ */
 export function tempDir(): string {
   return mkdtempSync(join(tmpdir(), "nnm-integration-"));
 }
@@ -230,6 +363,12 @@ export function uvRun(
 /**
  * Run convert.py on a JSON file (NNTree or Svelte Flow JSON).
  * Returns the path to the generated Hydra config directory.
+ *
+ * Ownership model: helpers never create un-owned temp parents. By default the
+ * config directory is placed next to the input JSON file, so the caller's
+ * teardown of its own workDir (created with tempDir()) also removes the
+ * generated Hydra configs. An explicit `outputDir` transfers ownership to the
+ * caller.
  */
 export function runConvert(
   jsonPath: string,
@@ -241,7 +380,18 @@ export function runConvert(
   },
 ): string {
   const outDir =
-    options?.outputDir || resolve(tempDir(), "hydra_config");
+    options?.outputDir || resolve(dirname(jsonPath), "hydra_config");
+  if (!options?.outputDir) {
+    // Guard: never silently write into a non-temporary parent (e.g. a repo
+    // fixture) — the caller must own the destination explicitly.
+    const parent = dirname(outDir);
+    if (parent !== tmpdir() && !parent.startsWith(tmpdir() + sep)) {
+      throw new Error(
+        "runConvert: refusing to write Hydra configs into a non-temporary " +
+          `parent (${parent}). Pass an explicit caller-owned outputDir.`,
+      );
+    }
+  }
   mkdirSync(outDir, { recursive: true });
 
   const args = ["python", "src/convert.py", jsonPath, outDir];
@@ -275,8 +425,34 @@ export const EXPECTED_YAML_FILES = [
 ];
 
 /**
+ * The generated trainer runs with `hydra.job.chdir=true`, so the dataset root
+ * ("data") resolves inside the temporary output directory. Without a local
+ * copy, every training run re-downloads MNIST over the network into that temp
+ * dir — slow and flaky. When the repo-local cache (converted/data, gitignored)
+ * exists, expose it under the output dir so training is offline and
+ * deterministic. No-op when the cache is absent (behavior unchanged).
+ */
+export function seedDatasetCache(outputDir: string): void {
+  const localData = resolve(CONVERTED_DIR, "data");
+  const targetData = join(outputDir, "data");
+  if (existsSync(resolve(localData, "MNIST")) && !existsSync(targetData)) {
+    try {
+      symlinkSync(localData, targetData, "dir");
+    } catch {
+      // Fall back to a copy when symlinks are unavailable.
+      cpSync(localData, targetData, { recursive: true });
+    }
+  }
+}
+
+/**
  * Run main.py training with a Hydra config dir.
  * Every run writes checkpoints and weights into its own output directory.
+ *
+ * The default output dir is `dirname(cfgDir)/training-output`. Under the
+ * ownership model, cfgDir is produced by runConvert inside the caller-owned
+ * workDir, so training outputs/weights/checkpoints stay inside the caller's
+ * teardown scope.
  */
 export function runTraining(
   cfgDir: string,
@@ -292,6 +468,7 @@ export function runTraining(
   const device = options?.device || process.env.NNM_DEVICE || "cpu";
   const outputDir = options?.outputDir || resolve(dirname(cfgDir), "training-output");
   mkdirSync(outputDir, { recursive: true });
+  seedDatasetCache(outputDir);
   const overrides: string[] = [
     `trainer.accelerator=${device}`,
     `+trainer.devices=${device === "gpu" ? "auto" : "1"}`,
@@ -352,6 +529,10 @@ export function composeHydraConfig(
 /**
  * Run infer.py with a trained checkpoint.
  * Returns SpawnResult.
+ *
+ * The default prediction output lands next to the caller-owned cfgDir (which
+ * is the caller's workDir when runConvert used its default), so normal
+ * teardown removes it too.
  */
 export function runInference(
   cfgDir: string,
@@ -364,7 +545,7 @@ export function runInference(
   },
 ): SpawnResult {
   const outPath =
-    options?.outputPath || join(tmpdir(), "nnm-predictions.json");
+    options?.outputPath || join(dirname(cfgDir), "predictions.json");
 
   const args = [
     "python",
@@ -397,6 +578,27 @@ export function isPythonAvailable(): boolean {
   } catch {
     return false;
   }
+}
+
+/**
+ * Resolve whether the Python prerequisites are available for a Python-backed
+ * integration tier.
+ *
+ * - When `NNM_REQUIRE_PYTHON=true` (CI-required mode) a missing runtime is an
+ *   error: this throws instead of silently skipping.
+ * - Otherwise (local lenient mode) it returns false so the tier can
+ *   `describe.skip` with an explicit reason.
+ */
+export function requirePython(): boolean {
+  const available = isPythonAvailable();
+  if (!available && process.env.NNM_REQUIRE_PYTHON === "true") {
+    throw new Error(
+      "Python prerequisites are unavailable (`uv run python --version` failed) while " +
+        "NNM_REQUIRE_PYTHON=true. This tier is required: install uv and run `uv sync` " +
+        "inside converted/ instead of silently skipping.",
+    );
+  }
+  return available;
 }
 
 /**

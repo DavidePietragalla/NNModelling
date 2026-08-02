@@ -2,10 +2,14 @@
 
 from __future__ import annotations
 
+import hashlib
+import hmac
 import json
 import os
 import re
+import tempfile
 import threading
+import time
 import uuid
 from pathlib import Path
 from typing import Any
@@ -19,6 +23,31 @@ from model_package.exporter import build_model_wheel
 
 TERMINAL_STATES = {"succeeded", "failed", "cancelled"}
 
+# The failed transition is persisted atomically by the store (record update +
+# queue removal in one operation). A bounded retry heals transient store
+# failures; a persistent failure raises so the job keeps a recoverable running
+# state instead of a partial transition.
+FAILED_TRANSITION_ATTEMPTS = 3
+FAILED_TRANSITION_BACKOFF_SECONDS = 0.2
+
+# Authoritative wheel digests are lowercase hex SHA-256 strings. Anything else
+# is a corrupt manifest that must never be served.
+PACKAGE_SHA256_HEX = re.compile(r"[0-9a-fA-F]{64}\Z")
+
+# Downloads are pinned to an immutable backend-private snapshot streamed in
+# bounded chunks, so a wheel is never loaded into memory on either the
+# copy-and-hash side or the serve side.
+PACKAGE_SNAPSHOT_CHUNK_SIZE = 1024 * 1024
+
+
+class PackageIntegrityError(Exception):
+    """Raised when an exported wheel no longer matches its declared digest.
+
+    The message is deliberately generic: it never includes filesystem paths,
+    so the download endpoint can surface it to clients without leaking where
+    job artifacts are stored.
+    """
+
 
 class JobManager:
     """Persist jobs, schedule them by priority, and run one at a time."""
@@ -30,6 +59,8 @@ class JobManager:
         executors: list[Executor],
         max_running_jobs: int = 1,
         poll_interval: float = 0.25,
+        *,
+        package_snapshot_dir: str | Path | None = None,
     ) -> None:
         if not executors:
             raise ValueError("At least one executor is required")
@@ -39,6 +70,12 @@ class JobManager:
         self.executors = executors
         self.max_running_jobs = max_running_jobs
         self.poll_interval = poll_interval
+        # Private directory for immutable download snapshots. When unset the
+        # OS temporary directory is used (mkstemp files are created ``0600``);
+        # the directory is never exposed through any API path.
+        self.package_snapshot_dir = (
+            Path(package_snapshot_dir) if package_snapshot_dir is not None else None
+        )
         self._active: dict[str, tuple[Executor, dict[str, Any]]] = {}
         self._round_robin_cursor = 0
         self._lock = threading.RLock()
@@ -228,6 +265,12 @@ class JobManager:
                         executor=executor.kind,
                         compute_unit=executor.name,
                     )
+                    # The running event is emitted before the executor can
+                    # invoke any callback: an executor that completes
+                    # synchronously inside submit() (or a very fast Local or
+                    # Slurm completion) must never leave a stale running event
+                    # after its terminal events.
+                    self._event(job_id, "running", {"executor": executor.name})
                     try:
                         handle = executor.submit(
                             job,
@@ -240,11 +283,16 @@ class JobManager:
                         self._event(job_id, "failed", {"error": str(exc)})
                         return False
                     current = self.store.get_job(job_id) or job
+                    if current.get("status") in TERMINAL_STATES:
+                        # The executor completed synchronously during
+                        # submit(): the terminal transition was already
+                        # persisted and its terminal events emitted. Never
+                        # write executor details, register active state, or
+                        # emit a stale running event on a terminal record.
+                        return True
                     current["executor_details"] = handle
                     self.store.save_job(job_id, current)
-                    if current.get("status") not in TERMINAL_STATES:
-                        self._active[job_id] = (executor, handle)
-                    self._event(job_id, "running", {"executor": executor.name, **handle})
+                    self._active[job_id] = (executor, handle)
                     return True
             finally:
                 for deferred_job_id in deferred_job_ids:
@@ -285,25 +333,43 @@ class JobManager:
         self._event(job_id, "heartbeat", details)
 
     def _finished(self, job_id: str, return_code: int, details: dict[str, Any]) -> None:
-        with self._lock:
-            self._active.pop(job_id, None)
         job = self.store.get_job(job_id)
         if job is None or job.get("status") in TERMINAL_STATES:
+            with self._lock:
+                self._active.pop(job_id, None)
             return
         wandb_url = _find_wandb_url(job)
         publish_wandb_url = wandb_url is not None and wandb_url != job.get("wandb_url")
         if return_code == 0:
-            self._set_status(
-                job_id,
-                "succeeded",
-                finished_at=utc_now(),
-                error=None,
-                wandb_url=wandb_url,
-            )
             if publish_wandb_url:
                 self._event(job_id, "wandb_ready", {"wandb_url": wandb_url})
-            self._export_model_package(job_id)
-            self._event(job_id, "succeeded", details)
+            # The wheel is part of the promised output of a successful job:
+            # the job is never persisted as ``succeeded`` before the package
+            # export committed. A packaging failure (missing/corrupt safe
+            # weights, unsupported adapter, exporter exception) transitions
+            # the job to terminal ``failed`` through the same atomic failed
+            # transition as any other failure, keeping artifacts and logs.
+            if self._export_model_package(job_id):
+                self._set_status(
+                    job_id,
+                    "succeeded",
+                    finished_at=utc_now(),
+                    error=None,
+                    wandb_url=wandb_url,
+                )
+                self._drop_active(job_id)
+                self._event(job_id, "succeeded", details)
+            else:
+                error = self._package_failure_text(job_id)
+                self._set_status(
+                    job_id,
+                    "failed",
+                    finished_at=utc_now(),
+                    error=error,
+                    wandb_url=wandb_url,
+                )
+                self._drop_active(job_id)
+                self._event(job_id, "failed", {"error": error, **details})
         else:
             error = self._failure_text(job, details)
             self._set_status(
@@ -313,9 +379,20 @@ class JobManager:
                 error=error,
                 wandb_url=wandb_url,
             )
+            self._drop_active(job_id)
             if publish_wandb_url:
                 self._event(job_id, "wandb_ready", {"wandb_url": wandb_url})
             self._event(job_id, "failed", {"error": error, **details})
+
+    def _drop_active(self, job_id: str) -> None:
+        """Remove a finished job from the active set.
+
+        Called only after the terminal state was persisted: keeping the entry
+        on a store failure leaves the job as a tracked, recoverable ``running``
+        state that stop()/cancellation or restart recovery can reconcile.
+        """
+        with self._lock:
+            self._active.pop(job_id, None)
 
     def _failure_text(self, job: dict[str, Any], details: dict[str, Any]) -> str:
         """Build a compact error while retaining full logs on disk."""
@@ -370,8 +447,29 @@ class JobManager:
             "stderr": _read_text(root / "stderr.log"),
         }
 
-    def package_path(self, job_id: str, *, owner_connection_id: str) -> tuple[Path, str]:
-        """Return the owned job's wheel path and its safe download filename."""
+    def package_download(self, job_id: str, *, owner_connection_id: str) -> tuple[Path, str, str]:
+        """Resolve and verify the owned job's wheel for download.
+
+        The wheel is streamed from a single opened source handle into an
+        immutable backend-private snapshot while its SHA-256 is computed, and
+        the snapshot digest is compared in constant time against the
+        authoritative ``model_package.sha256`` recorded at export time. The
+        download response never reopens the original artifact path: it serves
+        the verified snapshot bytes, so a wheel replaced or modified after
+        verification cannot influence what is transferred. A snapshot whose
+        digest differs from the manifest is deleted and never returned.
+
+        Returns:
+            The verified snapshot path, the safe download filename, and the
+            SHA-256 digest of the snapshot bytes.
+
+        Raises:
+            KeyError: The job does not exist or is not owned by the connection.
+            FileNotFoundError: The job has no exported wheel or its declared
+                wheel path escapes the artifact root.
+            PackageIntegrityError: The declared manifest digest is missing or
+                malformed, or the snapshot bytes no longer match it.
+        """
 
         job = self._owned_job(job_id, owner_connection_id)
         package = job.get("model_package")
@@ -381,7 +479,17 @@ class JobManager:
         wheel = (root / package["wheel"]).resolve()
         if root not in wheel.parents or not wheel.is_file() or wheel.suffix != ".whl":
             raise FileNotFoundError("Model package is not available")
-        return wheel, wheel.name
+        declared = package.get("sha256")
+        if not isinstance(declared, str) or not PACKAGE_SHA256_HEX.fullmatch(declared):
+            raise PackageIntegrityError("Model package integrity cannot be verified")
+        snapshot, computed = _create_package_snapshot(
+            wheel,
+            snapshot_dir=self.package_snapshot_dir,
+        )
+        if not hmac.compare_digest(computed, declared.lower()):
+            _remove_file(snapshot)
+            raise PackageIntegrityError("Model package integrity check failed")
+        return snapshot, wheel.name, computed
 
     def tail_logs(
         self,
@@ -439,6 +547,9 @@ class JobManager:
         return JobStatus.model_validate({key: job.get(key) for key in JobStatus.model_fields})
 
     def _set_status(self, job_id: str, status: str, **changes: Any) -> None:
+        if status == "failed":
+            self._persist_failed(job_id, changes)
+            return
         job = self.store.get_job(job_id)
         if job is None:
             return
@@ -446,20 +557,52 @@ class JobManager:
         job.update(changes)
         self.store.save_job(job_id, job)
 
+    def _persist_failed(self, job_id: str, changes: dict[str, Any]) -> None:
+        """Atomically persist the failed transition, retrying transient failures.
+
+        Uses the store's ``mark_failed`` so the record update and the queue
+        removal are one atomic operation. A persistence failure is never
+        swallowed: after a bounded number of attempts the exception propagates,
+        leaving the job in its previous recoverable state rather than a partial
+        transition (``failed``+queued or dequeued+``running``).
+        """
+        for attempt in range(FAILED_TRANSITION_ATTEMPTS):
+            try:
+                self.store.mark_failed(job_id, changes)
+                return
+            except Exception:
+                if attempt == FAILED_TRANSITION_ATTEMPTS - 1:
+                    raise
+                time.sleep(FAILED_TRANSITION_BACKOFF_SECONDS)
+
     def _event(self, job_id: str, event_type: str, details: dict[str, Any]) -> None:
         self.store.append_event(job_id, {"type": event_type, "at": utc_now(), **details})
 
-    def _export_model_package(self, job_id: str) -> None:
-        """Create a portable wheel without turning export failures into train failures."""
+    def _package_failure_text(self, job_id: str) -> str:
+        """Build the client-visible error for a job whose package export failed."""
+
+        job = self.store.get_job(job_id)
+        package_error = job.get("package_error") if job is not None else None
+        if package_error:
+            return f"Model package export failed: {package_error}"
+        return "Model package export failed"
+
+    def _export_model_package(self, job_id: str) -> bool:
+        """Export the portable wheel for a finished job.
+
+        Returns True when the wheel was built and its manifest persisted.
+        On any failure — missing or corrupt safe weights, an unsupported
+        input adapter, or an exporter exception — the job record keeps a
+        client-visible ``package_error``, the ``package_failed`` event is
+        emitted, and False is returned so the caller can transition the job
+        to the terminal ``failed`` state. A job without safe weights is a
+        packaging failure, never a silent success.
+        """
 
         job = self.store.get_job(job_id)
         if job is None:
-            return
+            return False
         artifact_dir = Path(job["artifact_dir"])
-        if not (artifact_dir / "weights.safetensors").is_file():
-            # Executors used by unit tests and artifacts created before the
-            # portable-export feature do not contain safe weights.
-            return
         package_name = job["submission"].get("package_name") or f"nnm_job_{job_id.replace('-', '')}"
         try:
             build_model_wheel(artifact_dir, package_name=package_name, version="0.1.0")
@@ -469,11 +612,12 @@ class JobManager:
             job["package_error"] = str(exc)
             self.store.save_job(job_id, job)
             self._event(job_id, "package_failed", {"error": str(exc)})
-            return
+            return False
         job["model_package"] = manifest
         job["package_error"] = None
         self.store.save_job(job_id, job)
         self._event(job_id, "package_ready", manifest)
+        return True
 
 
 def _read_text(path: Path) -> str:
@@ -483,6 +627,60 @@ def _read_text(path: Path) -> str:
         return path.read_text(encoding="utf-8", errors="replace")
     except FileNotFoundError:
         return ""
+
+
+def _remove_file(path: Path) -> None:
+    """Delete a temporary snapshot, tolerating races and double removal."""
+
+    try:
+        path.unlink(missing_ok=True)
+    except OSError:
+        pass
+
+
+def _create_package_snapshot(
+    source: Path,
+    *,
+    snapshot_dir: Path | None,
+    chunk_size: int = PACKAGE_SNAPSHOT_CHUNK_SIZE,
+) -> tuple[Path, str]:
+    """Copy a wheel into a private immutable snapshot while hashing it in one pass.
+
+    The source is opened exactly once and the returned digest covers exactly
+    the bytes copied into the snapshot, so a concurrent replacement of the
+    source path can never produce a verified snapshot whose bytes differ from
+    what the download later serves. The snapshot is created with ``0600``
+    permissions in the OS temporary directory (or ``snapshot_dir`` when given)
+    and is never reachable through any API path.
+
+    Returns:
+        The snapshot path and its SHA-256 hex digest.
+
+    Raises:
+        FileNotFoundError: If the source disappeared before it could be opened.
+    """
+
+    if snapshot_dir is not None:
+        snapshot_dir.mkdir(parents=True, exist_ok=True)
+    fd, raw_path = tempfile.mkstemp(
+        prefix="nnm_pkg_",
+        suffix=".whl",
+        dir=str(snapshot_dir) if snapshot_dir is not None else None,
+    )
+    snapshot = Path(raw_path)
+    digest = hashlib.sha256()
+    try:
+        with os.fdopen(fd, "wb") as writer, source.open("rb") as reader:
+            while True:
+                chunk = reader.read(chunk_size)
+                if not chunk:
+                    break
+                writer.write(chunk)
+                digest.update(chunk)
+    except BaseException:
+        _remove_file(snapshot)
+        raise
+    return snapshot, digest.hexdigest()
 
 
 def _tail_text(path: Path, offset: int, *, limit: int = 64 * 1024) -> dict[str, str | int | bool]:

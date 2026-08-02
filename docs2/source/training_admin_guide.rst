@@ -165,20 +165,64 @@ executor handle and could leave the actual training process running.
 Model wheel artifacts
 ---------------------
 
-After a successful training process writes ``weights.safetensors``, the
-backend builds ``dist/nnm_<chosen_name>-0.1.0-py3-none-any.whl`` inside the
-job artifact directory and records ``model-package.json`` with its SHA-256.
-The browser may choose only the suffix; the backend requires the full name to
+The portable wheel is a required output of every successful job. After the
+training process writes ``weights.safetensors``, the backend builds
+``dist/nnm_<chosen_name>-0.1.0-py3-none-any.whl`` inside the job artifact
+directory and records ``model-package.json`` with the wheel's SHA-256. The
+browser may choose only the suffix; the backend requires the full name to
 match ``nnm_<name>`` and falls back to ``nnm_job_<job_id>`` when none is sent.
-The browser owner downloads it through ``GET /jobs/{job_id}/package``; the
-endpoint does not accept a filesystem path and applies normal job ownership.
 
-An export failure does not change a successful training job into a failed one.
-It is instead exposed as ``package_error`` in the job status and in a
-``package_failed`` lifecycle event. Typical causes are missing safe weights or
-an unsupported dataset adapter. Keep the artifact root persistent and include
-wheels in backup/retention policies: they are the portable form of trained
-models.
+Download verification
+~~~~~~~~~~~~~~~~~~~~~
+
+The browser owner downloads the wheel through ``GET /jobs/{job_id}/package``;
+the endpoint does not accept a filesystem path and applies normal job
+ownership. Before serving a single byte, the backend opens the wheel once,
+copies it into a private immutable snapshot (``0600``, never exposed through
+an API path) while computing its SHA-256, and compares that digest in
+constant time against the digest recorded in ``model-package.json`` at export
+time. Only the verified snapshot is served — never the mutable artifact path
+— so bytes replaced on disk after verification cannot be transferred. A
+manifest whose digest is missing or malformed, or a snapshot whose bytes no
+longer match it, is rejected with ``409 Conflict`` and ``{"code":
+"package_integrity_error"}``; the artifact is never served and the response
+never reveals filesystem paths. The snapshot is removed after the response
+completes, errors, or is disconnected. On success the verified digest is
+exposed through the ``X-NNM-SHA256`` response header, which CORS explicitly
+allows browsers to read.
+
+Packaging failures are terminal
+~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+
+There is no legacy fallback for jobs without safe weights: the wheel is part
+of the promised output of a successful job, so a missing or corrupt
+``weights.safetensors`` (a file that cannot be opened as a safetensors
+container, or an empty container), an unsupported dataset adapter, or any
+exporter exception is a packaging failure. The job records a client-visible
+``package_error``, emits a ``package_failed`` event, and then transitions to
+the terminal ``failed`` state through the same atomic failed transition as any
+other failure. The error, lifecycle events, and training logs remain visible
+to the owning browser and to ``just`` administrator commands, and the artifact
+root is kept. The job is never reported successful before its wheel committed:
+on the happy path the events are ordered ``package_ready`` then ``succeeded``.
+A job that failed packaging has no manifest, so its download returns ``404``.
+
+Diagnosis
+~~~~~~~~~
+
+* A ``409`` ``package_integrity_error`` on download means the wheel on disk no
+  longer matches the digest recorded at export time. Check the artifact root
+  for disk corruption or a partial backup restore, and consider restoring the
+  wheel (and ``model-package.json``) as one pair.
+* A job ending as ``failed`` with a ``package_error`` after training finished
+  points at packaging, not training. Inspect ``weights.safetensors`` in the
+  job artifact directory: it must exist, parse as a safetensors container, and
+  contain at least one tensor. Verify that ``resolved_config.yaml`` (or
+  ``resolved_config.json``) is valid and that the dataset adapter is supported
+  by the exporter.
+* Keep the artifact root persistent and include wheels in backup/retention
+  policies: they are the portable form of trained models, and a wheel can be
+  re-downloaded only while its manifest and bytes remain consistent.
 
 Configuration reference
 -----------------------
@@ -347,9 +391,11 @@ Security and current limitations
 * Local resource values are scheduling compatibility metadata; they do not
   create cgroup or container isolation.
 * The initial scheduler runs one job at a time.
-* The MCP remote-training HTTP client does not yet send browser pairing tokens.
-  Do not configure it against this protected backend until MCP authentication
-  is implemented.
+* The MCP remote-training HTTP client can use this protected backend when the
+  operator provisions a token externally (``NNM_BACKEND_TOKEN`` or an explicit
+  client token). It sends the same ``Bearer`` header as the browser client but
+  does not perform pairing or renewal itself: provisioning and rotation of the
+  MCP token are an operator responsibility.
 * Never expose the administrator token, its file, Valkey, or artifact paths
   through a web server.
 

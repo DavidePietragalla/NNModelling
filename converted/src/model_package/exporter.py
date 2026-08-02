@@ -39,6 +39,7 @@ def build_model_wheel(
     weights_path = artifact_path / "weights.safetensors"
     if not weights_path.is_file():
         raise FileNotFoundError(f"model weights not found: {weights_path}")
+    _validate_safe_weights(weights_path)
     config = _load_resolved_config(artifact_path)
     module_name = package_name
     architecture = {
@@ -79,6 +80,20 @@ def build_model_wheel(
     }
     (artifact_path / "model-package.json").write_text(json.dumps(manifest, indent=2, sort_keys=True), encoding="utf-8")
     return wheel_path
+
+
+def _validate_safe_weights(weights_path: Path) -> None:
+    """Reject weights that are not a loadable safetensors container.
+
+    Opening the container parses and validates its header, so a truncated or
+    garbage file raises here; an empty container is rejected explicitly
+    because an inference wheel without tensors is not a model.
+    """
+    from safetensors import safe_open
+
+    with safe_open(str(weights_path), framework="pt") as handle:
+        if not handle.keys():
+            raise ValueError("weights.safetensors contains no tensors")
 
 
 def _load_resolved_config(artifact_path: Path) -> dict[str, Any]:

@@ -28,3 +28,13 @@ explicit = true
 [tool.uv.sources]
 torch = { index = "pytorch-cuda" }
 torchvision = { index = "pytorch-cuda" }
+
+[tool.pytest.ini_options]
+testpaths = ["src/tests"]
+markers = [
+    "fast: quick unit and integration tests without real services or training",
+    "service: integration tests against real infrastructure (Valkey)",
+    "e2e: canonical full-path backend job tests on deterministic datasets (real API, store, scheduler, executor)",
+    "legacy_e2e: legacy one-epoch MNIST training/inference smoke tests that download real MNIST",
+]
+addopts = "-m \"not service and not e2e and not legacy_e2e\""

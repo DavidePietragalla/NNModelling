@@ -11,6 +11,7 @@ permission:
     "git status*": allow
     "git diff*": allow
     "git log*": allow
+    "gh*": allow
   task:
     "*": deny
     explorer: allow
@@ -93,3 +94,18 @@ without initiating implementation unless the user also requests changes.
   contradictory instructions.
 - Keep architecture decisions with this agent; keep implementation with the
   selected implementers and final quality judgment with the selected reviewers.
+
+## Commit ownership
+
+- `git commit` and `git commit --amend` remain allowed only when the user
+  explicitly authorizes committing.
+- Once authorized and after implementation has been validated and reviewed,
+  delegate commit creation to the responsible selected implementation
+  subagent; do not run `git commit` yourself.
+- The committing subagent must inspect `git status`, `git diff`, and recent
+  `git log`, stage only its intended files, use a repo-style commit message,
+  and report the resulting commit hash.
+- Push and pull-request creation still require separate explicit user
+  authorization.
+- Issue creation explicitly requested by the user remains an architect-owned
+  `gh` operation and must not be delegated.

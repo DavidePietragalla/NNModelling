@@ -22,6 +22,7 @@
     type SavedBackendConnection,
   } from "../training/connection";
   import { trainingLogWindowUrl } from "../training/windows";
+  import { RefreshGate } from "../training/refreshGate";
 
   interface Props {
     diagram: Diagram;
@@ -83,6 +84,7 @@
   let refreshTimer: ReturnType<typeof setInterval> | undefined;
   let pairingTimer: ReturnType<typeof setInterval> | undefined;
   let eventAbort: AbortController | null = null;
+  let refreshGate = new RefreshGate();
 
   let selectedDatasetInfo = $derived(
     datasets.find((dataset) => dataset.target === selectedDataset) ?? null,
@@ -94,6 +96,7 @@
   });
 
   function cleanup() {
+    refreshGate.invalidate();
     if (refreshTimer) clearInterval(refreshTimer);
     if (pairingTimer) clearInterval(pairingTimer);
     refreshTimer = undefined;
@@ -198,6 +201,7 @@
   }
 
   async function activate(currentSession: SessionInfo) {
+    refreshGate.invalidate();
     connectionState = "active";
     session = currentSession;
     errorMessage = "";
@@ -242,13 +246,15 @@
 
   async function refreshJobs() {
     if (connectionState !== "active") return;
+    const request = refreshGate.begin();
     loadingJobs = true;
     try {
-      jobs = await requireApi().listTrainingJobs();
+      const nextJobs = await requireApi().listTrainingJobs();
+      if (request.isCurrent()) jobs = nextJobs;
     } catch (error) {
-      handleConnectionError(error);
+      if (request.isCurrent()) handleConnectionError(error);
     } finally {
-      loadingJobs = false;
+      if (request.isCurrent()) loadingJobs = false;
     }
   }
 
@@ -415,7 +421,7 @@
   async function downloadModelPackage(job: TrainingJobStatus) {
     if (!job.model_package) return;
     try {
-      const blob = await requireApi().downloadModelPackage(job.id);
+      const blob = await requireApi().downloadModelPackage(job.id, job.model_package.sha256);
       const url = URL.createObjectURL(blob);
       const link = document.createElement("a");
       link.href = url;

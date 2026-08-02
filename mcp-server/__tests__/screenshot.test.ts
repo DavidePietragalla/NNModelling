@@ -151,4 +151,68 @@ describe("captureChromiumScreenshot", () => {
       await closeServer(httpServer);
     }
   });
+
+  it("hovers a subflow source handle without requiring CustomNode's private wrapper", async () => {
+    const png = Buffer.from([0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a]);
+    let port = 0;
+    const httpServer = createServer((request, response) => {
+      if (request.url !== "/json/list") {
+        response.writeHead(404).end();
+        return;
+      }
+      response.setHeader("content-type", "application/json");
+      response.setHeader("connection", "close");
+      response.end(JSON.stringify([{
+        id: "page-subflow",
+        title: "NNModelling",
+        type: "page",
+        url: "http://127.0.0.1:5174/",
+        webSocketDebuggerUrl: `ws://127.0.0.1:${port}/devtools/page/page-subflow`,
+      }]));
+    });
+    const webSocketServer = new WebSocketServer({ server: httpServer });
+    webSocketServer.on("connection", (socket) => {
+      socket.on("message", (raw) => {
+        const request = JSON.parse(raw.toString()) as {
+          id: number;
+          method: string;
+          params?: { expression?: string };
+        };
+        if (request.method === "Runtime.evaluate") {
+          if (request.params?.expression?.includes("output-handle-wrapper")) {
+            socket.send(JSON.stringify({
+              id: request.id,
+              result: { exceptionDetails: { text: "No output handle found for node repeat" } },
+            }));
+          } else {
+            socket.send(JSON.stringify({ id: request.id, result: { result: { value: true } } }));
+          }
+        } else if (request.method === "Page.getLayoutMetrics") {
+          socket.send(JSON.stringify({
+            id: request.id,
+            result: { cssVisualViewport: { clientWidth: 1440, clientHeight: 900 } },
+          }));
+        } else if (request.method === "Page.captureScreenshot") {
+          socket.send(JSON.stringify({ id: request.id, result: { data: png.toString("base64") } }));
+        } else {
+          socket.send(JSON.stringify({ id: request.id, result: {} }));
+        }
+      });
+    });
+
+    port = await listen(httpServer);
+    const directory = mkdtempSync(join(tmpdir(), "nnm-screenshot-subflow-test-"));
+    temporaryDirectories.push(directory);
+    try {
+      await expect(captureChromiumScreenshot({
+        devtoolsUrl: `http://127.0.0.1:${port}`,
+        pageUrl: "http://127.0.0.1:5174",
+        outputPath: join(directory, "subflow.png"),
+        hoverNodeId: "repeat",
+      })).resolves.toMatchObject({ success: true });
+    } finally {
+      await new Promise<void>((resolve) => webSocketServer.close(() => resolve()));
+      await closeServer(httpServer);
+    }
+  });
 });

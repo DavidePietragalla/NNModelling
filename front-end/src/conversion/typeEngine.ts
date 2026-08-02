@@ -1674,7 +1674,7 @@ export class TypeEngine {
         }
 
         case "computed": {
-          // New path: expression-based computed dims
+          // Expression-based computed dims
           if (p.expr) {
             try {
               // Build expression-friendly env: strip $/# prefixes so
@@ -1711,14 +1711,6 @@ export class TypeEngine {
                 throw e;
               }
             }
-          } else if (p.formula) {
-            // LEGACY: old formula+args — keep as deferred computed
-            // (no JSONs use this anymore; all migrated to expr)
-            result.push({
-              kind: "computed",
-              formula: p.formula,
-              args: p.args,
-            });
           }
           break;
         }
@@ -2130,7 +2122,7 @@ export class TypeEngine {
       case "wildcard":
         return "*";
       case "computed":
-        return d.expr ? `computed(${d.expr})` : `computed(${d.formula ?? "?"})`;
+        return `computed(${d.expr ?? "?"})`;
       case "param_spread":
         return d.values ? `[${d.values.join(",")}]` : `spread(${d.param})`;
     }
@@ -2204,8 +2196,9 @@ function dimEqual(a: ShapeDimension, b: ShapeDimension): boolean {
     case "wildcard":
       return true;
     case "computed":
-      return a.formula === (b as typeof a).formula && 
-             JSON.stringify(a.args) === JSON.stringify((b as typeof a).args);
+      // Preserved legacy behavior: all expr-based computed dims compare equal,
+      // regardless of their expression text.
+      return true;
     case "param_spread":
       return a.param === (b as typeof a).param;
   }

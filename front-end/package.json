@@ -3,32 +3,6 @@
   "private": true,
   "version": "0.0.0",
   "type": "module",
-  "exports": {
-    "./core/DiagramCore": {
-      "types": "./src/core/DiagramCore.ts",
-      "default": "./src/core/DiagramCore.ts"
-    },
-    "./core/StereotypeCore": {
-      "types": "./src/core/StereotypeCore.ts",
-      "default": "./src/core/StereotypeCore.ts"
-    },
-    "./core/EventBus": {
-      "types": "./src/core/EventBus.ts",
-      "default": "./src/core/EventBus.ts"
-    },
-    "./core/types": {
-      "types": "./src/core/types.ts",
-      "default": "./src/core/types.ts"
-    },
-    "./core/validation": {
-      "types": "./src/core/validation.ts",
-      "default": "./src/core/validation.ts"
-    },
-    "./conversion/nnTree": {
-      "types": "./src/conversion/nnTree.ts",
-      "default": "./src/conversion/nnTree.ts"
-    }
-  },
   "scripts": {
     "dev": "vite",
     "build": "vite build",
@@ -38,10 +12,10 @@
     "test:watch": "vitest",
     "test:integration": "vitest run --config vitest.integration.config.ts",
     "test:integration:smoke": "NNM_TIER=smoke vitest run --config vitest.integration.config.ts",
-    "test:integration:convert": "NNM_TIER=convert vitest run --config vitest.integration.config.ts",
-    "test:integration:forward": "NNM_TIER=forward vitest run --config vitest.integration.config.ts",
-    "test:integration:train": "NNM_TIER=train vitest run --config vitest.integration.config.ts",
-    "test:integration:infer": "NNM_TIER=infer vitest run --config vitest.integration.config.ts",
+    "test:integration:convert": "NNM_TIER=convert NNM_REQUIRE_PYTHON=true vitest run --config vitest.integration.config.ts",
+    "test:integration:forward": "NNM_TIER=forward NNM_REQUIRE_PYTHON=true vitest run --config vitest.integration.config.ts",
+    "test:integration:train": "NNM_TIER=train NNM_REQUIRE_PYTHON=true vitest run --config vitest.integration.config.ts",
+    "test:integration:infer": "NNM_TIER=infer NNM_REQUIRE_PYTHON=true vitest run --config vitest.integration.config.ts",
     "test:integration:all": "NNM_TIER=all vitest run --config vitest.integration.config.ts",
     "test:integration:model": "vitest run --config vitest.integration.config.ts src/__tests__/integration/model-validation.test.ts",
     "test:example": "vitest run --config vitest.integration.config.ts"

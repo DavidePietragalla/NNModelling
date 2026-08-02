@@ -16,11 +16,12 @@ After building the documentation (see :doc:`user_guide`), open:
 This page provides full API documentation for all exported symbols, including:
 
 * ``DiagramCore`` — main state authority with all graph manipulation methods
-* ``EventBus`` — typed event emitter with monotonic sequencing
-* ``StereotypeCore`` — dual loader for stereotype JSON files
+* ``StereotypeCore`` — browser stereotype JSON loader (Vite ``import.meta.glob``)
 * ``BrowserRPCHandler`` — WebSocket RPC handler for MCP integration
 * ``checkValidConnection`` — standalone connection validation
-* ``DomainEvent`` and related types — event system type definitions
+* ``findDirectedCycle`` — cycle detection over directed graph edges
+* ``Position``, ``NodeConfig``, ``JoinNodeConfig``, ``DiagramCoreSnapshot`` —
+  core type definitions
 
 Generating the TypeScript API
 -----------------------------
@@ -48,12 +49,14 @@ The TypeScript codebase is organized into two layers:
     These modules can run in any JavaScript environment and are the foundation
     of the editor's business logic:
 
-    * ``DiagramCore`` — manages nodes, edges, undo/redo, import/export
-    * ``EventBus`` — typed event system for mutation tracking
-    * ``StereotypeCore`` — loads stereotype JSON from Vite (browser) or
-      Node.js ``fs`` (MCP server)
-    * ``types.ts`` — shared type definitions
-    * ``validation.ts`` — connection validation rules
+    * ``DiagramCore`` — manages nodes, edges, undo/redo, import/export, and
+      exposes the synchronous ``onGraphChanged`` graph-change subscription
+    * ``StereotypeCore`` — loads stereotype JSON from the ``Stereotypes/``
+      directory via Vite's ``import.meta.glob`` (browser)
+    * ``types.ts`` — shared type definitions (``Position``, ``NodeConfig``,
+      ``JoinNodeConfig``, ``DiagramCoreSnapshot``)
+    * ``validation.ts`` — connection validation rules and cycle detection
+      (``checkValidConnection``, ``findDirectedCycle``)
 
 **sync/** (Browser-Side RPC)
     * ``BrowserRPCHandler`` — handles WebSocket JSON-RPC requests from the
@@ -62,34 +65,38 @@ The TypeScript codebase is organized into two layers:
 Key Types
 ---------
 
+The ``core`` barrel exports these configuration and snapshot types (the
+``types.ts`` module also re-exports ``Node`` and ``Edge`` from Svelte Flow):
+
 .. code-block:: typescript
 
-   // Domain events for tracking mutations
-   interface DomainEvent<T extends string> {
-     seq: number;
-     type: T;
-     timestamp: number;
-     payload: unknown;
+   interface Position {
+     x: number;
+     y: number;
    }
 
-   // WebSocket protocol messages
-   interface WSSnapshotMessage {
-     type: "snapshot";
-     state: { nodes: Node[]; edges: Edge[] };
+   interface NodeConfig {
+     name?: string;
+     color?: string;
+     width?: number;
+     height?: number;
+     params?: Record<string, any>;
    }
 
-   interface WSDeltaMessage {
-     type: "delta";
-     operations: DeltaOperation[];
+   interface JoinNodeConfig extends NodeConfig {
+     inputsCount?: number;
    }
 
-   // Config interfaces for Hydra pipeline
-   interface AppConfig {
-     net: NetConfig;
-     dataset: DatasetConfig;
-     optimizer: OptimizerConfig;
-     trainer: TrainerConfig;
+   interface DiagramCoreSnapshot {
+     nodes: Node[];
+     edges: Edge[];
    }
+
+``DiagramCore`` also exposes the synchronous ``onGraphChanged(handler)``
+graph-change subscription: the handler runs once after every successful public
+mutation (add/update/delete/move operations, edge changes, undo/redo, snapshot
+restore, import and reset), carries no payload, and returns an unsubscribe
+function. Rejected connections and no-op operations do not notify.
 
 For complete type signatures and method documentation, refer to the
 TypeDoc output linked above.

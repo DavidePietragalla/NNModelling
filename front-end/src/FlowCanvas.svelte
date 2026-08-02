@@ -46,10 +46,6 @@ MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.
   import { setContext } from "svelte";
   import { toPng } from "html-to-image";
 
-  // Context per SubflowNode — gli permette di chiamare diagram.toggleSubflow
-  // senza bisogno di callback nel node data
-  import type { DiagramCore } from "./core/DiagramCore";
-
   // RPC handler — receives MCP server requests and dispatches to Diagram
   import { BrowserRPCHandler } from "./sync/BrowserRPCHandler";
 
@@ -62,17 +58,16 @@ MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.
   // 2. Istanziamo il nostro "Controller/Model"
   // Grazie a Svelte 5, le sue proprietà interne $state saranno reattive qui dentro!
   const diagram = new Diagram();
-  setContext(DIAGRAM_CONTEXT_KEY, diagram);
 
-  // Esponiamo il diagram via context per SubflowNode e altri componenti
-  setContext<DiagramCore>("diagram", diagram);
+  // Context per SubflowNode — gli permette di chiamare diagram.toggleSubflow
+  // senza bisogno di callback nel node data
+  setContext(DIAGRAM_CONTEXT_KEY, diagram);
 
   // --- SVELTE 5: Stato derivato per abilitare/disabilitare i pulsanti ---
   // Ora peschiamo direttamente dall'istanza diagram
   let selectedNodes = $derived(diagram.nodes.filter((n) => n.selected));
   let selectedEdges = $derived(diagram.edges.filter((e) => e.selected));
 
-  // TODO: serve questo codice? let isNodeSelected = $derived(selectedNodes.length === 1);
   let hasSelection = $derived(
     selectedNodes.length > 0 || selectedEdges.length > 0,
   );
@@ -104,7 +99,7 @@ MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.
 
   // Forziamo il ricalcolo della vista su ogni cambiamento strutturale
   $effect(() => {
-    const unsubscribe = diagram.events.on("graph_changed", () => {
+    const unsubscribe = diagram.onGraphChanged(() => {
       fitView({ maxZoom: 1, padding: 0.2 });
     });
     return unsubscribe;

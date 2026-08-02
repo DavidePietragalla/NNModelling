@@ -12,13 +12,11 @@
  */
 
 export { DiagramCore } from './DiagramCore';
-export { EventBus } from './EventBus';
 export { StereotypeCore } from './StereotypeCore';
 export type {
-  DomainEvent,
   Position,
   NodeConfig,
   JoinNodeConfig,
   DiagramCoreSnapshot,
 } from './types';
-export { checkValidConnection } from './validation';
+export { checkValidConnection, findDirectedCycle } from './validation';

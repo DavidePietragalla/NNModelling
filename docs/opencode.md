@@ -68,6 +68,24 @@ Both architects follow the same loop:
 The loop does not authorize destructive actions, external writes, credential
 changes, or work outside the user's requested scope.
 
+## Commit ownership
+
+The user's durable preference is that nothing is committed unless explicitly
+authorized:
+
+- `git commit` and `git commit --amend` are allowed only after the user
+  explicitly authorizes committing.
+- Once authorized and after implementation has been validated and reviewed,
+  the architect delegates commit creation to the responsible selected
+  implementation subagent instead of running `git commit` itself.
+- The committing subagent inspects `git status`, `git diff`, and recent
+  `git log`, stages only its intended files, uses a repo-style commit message,
+  and reports the resulting commit hash.
+- Push and pull-request creation still require separate explicit
+  authorization.
+- Creating an issue explicitly requested by the user remains an architect-owned
+  `gh` operation and is not delegated.
+
 ## Skills
 
 OpenCode discovers the repository skills directly from `.agents/skills/`; no

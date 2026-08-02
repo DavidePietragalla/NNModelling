@@ -233,6 +233,18 @@ describe("NNTree — skip connections with joins", () => {
     expect(j1!.isJoin()).toBe(true);
   });
 
+  it("preserves target-handle order using runtime producer IDs after sequential compaction", () => {
+    const join0 = tree.nodes.get("join0")!;
+    const join1 = tree.nodes.get("join1")!;
+
+    // `skip_act` and `act1` are folded into their respective sequential
+    // runtime nodes. Join input references must therefore name those emitted
+    // tree nodes, not an elided visual-layer ID that Net.forward() never puts
+    // into its node-input map.
+    expect((join0.data as any).inputs).toEqual(["skip_fc", "input"]);
+    expect((join1.data as any).inputs).toEqual(["fc1", "skip2_fc"]);
+  });
+
   it("preserves sequential segments between joins", () => {
     // skip_fc + skip_act form a sequential before join0
     const skipSeq = tree.nodes.get("skip_fc");
@@ -368,8 +380,7 @@ describe("NNTree — error handling", () => {
     expect(() => new NNTree(d)).toThrow("Expected exactly one input node");
   });
 
-  it("warns on graph cycle but still produces a tree", () => {
-    const warnSpy = vi.spyOn(console, "warn").mockImplementation(() => {});
+  it("throws on a top-level directed cycle", () => {
     const d = new Diagram();
     d.nodes = [
       node("i", "Input", "Input_0", { out_features: { value: "10" } }, { isInput: true }),
@@ -382,15 +393,41 @@ describe("NNTree — error handling", () => {
       edge("e2", "a", "b"),
       edge("e3", "b", "a"),
     ];
-    const tree = new NNTree(d);
-    // Tree still produces output despite cycle
-    expect(tree.nodes.size).toBeGreaterThan(0);
-    expect(tree.root).toBeDefined();
-    // Warn about loop detected
-    expect(warnSpy).toHaveBeenCalledWith(
-      expect.stringContaining("is visited, there is a loop"),
-    );
-    warnSpy.mockRestore();
+    expect(() => new NNTree(d)).toThrow(/cycle/i);
+  });
+
+  it("compiles a DAG reconvergence into a join without a loop warning", () => {
+    const warnSpy = vi.spyOn(console, "warn").mockImplementation(() => {});
+    try {
+      const d = new Diagram();
+      d.nodes = [
+        node("i", "Input", "Input_0", {}, { isInput: true }),
+        node("a", "Linear", "A"),
+        node("b", "Linear", "B"),
+        node("j", "Addition", "Add", {}, { type: "join" }),
+        node("loss", "MSELoss", "Loss", {}, { isLoss: true }),
+      ];
+      // Two branches (i -> a -> j and a -> b -> j) reconverge on join j:
+      // a valid DAG, not a cycle.
+      d.edges = [
+        edge("e1", "i", "a"),
+        edge("e2", "a", "j", { targetHandle: "in-0" }),
+        edge("e3", "a", "b"),
+        edge("e4", "b", "j", { targetHandle: "in-1" }),
+        edge("e5", "j", "loss"),
+      ];
+      const tree = new NNTree(d);
+      expect(tree.nodes.size).toBeGreaterThan(0);
+      expect(tree.root).toBeDefined();
+      expect(warnSpy).not.toHaveBeenCalledWith(
+        expect.stringContaining("is visited"),
+      );
+      expect(warnSpy).not.toHaveBeenCalledWith(
+        expect.stringContaining("loop"),
+      );
+    } finally {
+      warnSpy.mockRestore();
+    }
   });
 });
 
@@ -451,6 +488,27 @@ describe("NNTree — subflow boundary mapping", () => {
   it("lossNode is CrossEntropyLoss", () => {
     expect(tree.lossNode).not.toBeNull();
     expect(tree.lossNode!.stereotype).toBe("CrossEntropyLoss");
+  });
+
+  it("accepts an internal Input as the Repeat subflow boundary, not a second root", () => {
+    const d = new Diagram();
+    d.nodes = [
+      node("root-input", "Input", "Input", { out_features: { value: "64" } }, { isInput: true }),
+      node("repeat", "Repeat", "Repeat", { iterations: { value: "2" } }, { type: "subflow" }),
+      node("repeat-input", "Input", "Repeat Input", { out_features: { value: "64" } }, { parentId: "repeat", isInput: true }),
+      node("repeat-relu", "ReLU", "Repeat ReLU", {}, { parentId: "repeat" }),
+      node("loss", "CrossEntropyLoss", "Loss", {}, { isLoss: true }),
+    ];
+    d.edges = [
+      edge("outer-in", "root-input", "repeat"),
+      edge("outer-out", "repeat", "loss"),
+      edge("internal", "repeat-input", "repeat-relu"),
+    ];
+
+    const tree = new NNTree(d);
+    expect(tree.root).toBe("root-input");
+    const repeat = tree.nodes.get("repeat")!;
+    expect((repeat.data as SubflowData).entryNode).toBe("repeat-input");
   });
 });
 

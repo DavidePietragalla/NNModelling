@@ -1,4 +1,4 @@
-import { describe, expect, it, vi } from "vitest";
+import { describe, expect, it, vi, afterEach } from "vitest";
 import type { ServerContext } from "../src/server";
 import { RemoteTrainingClient } from "../src/remote-training";
 import * as remoteTools from "../src/tools/remote-training";
@@ -47,5 +47,120 @@ describe("remote training MCP tools", () => {
     expect(client.getLogs).toHaveBeenCalledWith("job-1");
     expect(client.getEvents).toHaveBeenCalledWith("job-1", "2-0");
     expect(client.cancelJob).toHaveBeenCalledWith("job-1");
+  });
+});
+
+// ── Authentication parity contract ──────────────────────────────────────
+//
+// The browser client (TrainingApiClient in front-end/src/training/api.ts)
+// sends `authorization: Bearer <token>` on every authenticated request, with
+// the token injected from the pairing flow. The FastAPI backend enforces
+// bearer auth for /jobs, /datasets, /compute-units, logs and events. These
+// tests pin the equivalent contract for the MCP RemoteTrainingClient: when a
+// token is configured (constructor arg or NNM_BACKEND_TOKEN), every request —
+// including the SSE events stream — carries the same Bearer header the
+// browser sends. When no token is configured the header is omitted (behavior
+// unchanged) and the backend rejects with 401.
+
+function okJson(body: unknown): Response {
+  return new Response(JSON.stringify(body), {
+    status: 200,
+    headers: { "content-type": "application/json" },
+  });
+}
+
+describe("RemoteTrainingClient authentication parity with the browser client", () => {
+  afterEach(() => {
+    vi.unstubAllGlobals();
+    delete process.env.NNM_BACKEND_TOKEN;
+  });
+
+  function stubFetch(): ReturnType<typeof vi.fn> {
+    const fetchMock = vi.fn().mockImplementation(() => Promise.resolve(okJson({ status: "ok" })));
+    vi.stubGlobal("fetch", fetchMock);
+    return fetchMock;
+  }
+
+  function capturedHeaders(fetchMock: ReturnType<typeof vi.fn>, callIndex = 0): Headers {
+    const [url, init] = fetchMock.mock.calls[callIndex] as [string, RequestInit | undefined];
+    expect(url).toBeTruthy();
+    return new Headers(init?.headers);
+  }
+
+  it("attaches the configured bearer token to submitJob, matching the browser header", async () => {
+    const fetchMock = stubFetch();
+    const client = new RemoteTrainingClient("http://127.0.0.1:8000", "test-token");
+
+    await client.submitJob({ network: {} });
+
+    expect(fetchMock).toHaveBeenCalledOnce();
+    const headers = capturedHeaders(fetchMock);
+    expect(headers.get("authorization")).toBe("Bearer test-token");
+    expect(headers.get("content-type")).toBe("application/json");
+  });
+
+  it("attaches the bearer token to every authenticated read endpoint", async () => {
+    const fetchMock = stubFetch();
+    const client = new RemoteTrainingClient("http://127.0.0.1:8000", "test-token");
+
+    await client.listDatasets();
+    await client.listComputeUnits();
+    await client.listJobs();
+    await client.getJob("job-1");
+    await client.getLogs("job-1");
+    await client.cancelJob("job-1");
+
+    for (let i = 0; i < fetchMock.mock.calls.length; i++) {
+      const headers = capturedHeaders(fetchMock, i);
+      expect(headers.get("authorization")).toBe("Bearer test-token");
+    }
+  });
+
+  it("attaches the bearer token to the SSE events stream request", async () => {
+    const fetchMock = vi.fn().mockResolvedValue(
+      new Response("data: {\"type\":\"running\"}\n\n", { status: 200 }),
+    );
+    vi.stubGlobal("fetch", fetchMock);
+    const client = new RemoteTrainingClient("http://127.0.0.1:8000", "test-token");
+
+    await client.getEvents("job-1", "2-0");
+
+    const headers = capturedHeaders(fetchMock);
+    expect(headers.get("authorization")).toBe("Bearer test-token");
+    expect(headers.get("accept")).toBe("text/event-stream");
+  });
+
+  it("reads the token from NNM_BACKEND_TOKEN when no explicit token is given", async () => {
+    const fetchMock = stubFetch();
+    process.env.NNM_BACKEND_TOKEN = "env-token";
+    const client = new RemoteTrainingClient("http://127.0.0.1:8000");
+
+    await client.listJobs();
+
+    const headers = capturedHeaders(fetchMock);
+    expect(headers.get("authorization")).toBe("Bearer env-token");
+  });
+
+  it("omits the authorization header when no token is configured (unchanged behavior)", async () => {
+    const fetchMock = stubFetch();
+    const client = new RemoteTrainingClient("http://127.0.0.1:8000");
+
+    await client.listDatasets();
+
+    const headers = capturedHeaders(fetchMock);
+    expect(headers.get("authorization")).toBeNull();
+  });
+
+  it("does not break a request whose init already carries headers", async () => {
+    const fetchMock = stubFetch();
+    const client = new RemoteTrainingClient("http://127.0.0.1:8000", "test-token");
+
+    await client.submitJob({ network: {}, training: {}, resources: {}, priority: 0 });
+
+    const [url, init] = fetchMock.mock.calls[0] as [string, RequestInit | undefined];
+    expect(url).toBe("http://127.0.0.1:8000/jobs");
+    const headers = new Headers(init?.headers);
+    expect(headers.get("authorization")).toBe("Bearer test-token");
+    expect(headers.get("content-type")).toBe("application/json");
   });
 });

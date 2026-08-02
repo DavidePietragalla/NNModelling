@@ -3,7 +3,10 @@
 from __future__ import annotations
 
 import asyncio
+import hashlib
 import json
+import os
+import stat
 from pathlib import Path
 from typing import Any
 
@@ -11,12 +14,12 @@ import httpx
 import pytest
 
 from backend.app import create_app
-from backend.auth import AuthService, InMemoryAuthStore
+from backend.auth import AuthService, InMemoryAuthStore, PairingGrant
 from backend.config_service import build_job_hydra_configs, normalize_training_config
 from backend.dataset_registry import discover_datasets
 from backend.executors import SlurmExecutor
 from backend.manager import JobManager
-from backend.models import JobSubmission, ResourceRequest
+from backend.models import JobStatus, JobSubmission, ResourceRequest
 from backend.store import InMemoryJobStore, ValkeyJobStore
 
 
@@ -74,6 +77,43 @@ class ImmediateExecutor:
 
     def cancel(self, job_id: str) -> bool:
         return True
+
+
+def _write_fake_wheel_manifest(
+    artifact_dir: str | Path,
+    *,
+    package_name: str,
+    version: str = "0.1.0",
+) -> Path:
+    """Write a fake wheel and its manifest into an artifact directory."""
+    root = Path(artifact_dir)
+    wheel = root / "dist" / "model.whl"
+    wheel.parent.mkdir()
+    wheel.write_bytes(b"wheel")
+    (root / "model-package.json").write_text(
+        json.dumps(
+            {
+                "schema_version": 1,
+                "package_name": package_name,
+                "version": version,
+                "wheel": "dist/model.whl",
+                "sha256": hashlib.sha256(b"wheel").hexdigest(),
+                "input_adapter": {"kind": "tensor", "version": 1},
+            }
+        ),
+        encoding="utf-8",
+    )
+    return wheel
+
+
+@pytest.fixture()
+def packaged_export(monkeypatch):
+    """Monkeypatch the wheel exporter so a finished job exports successfully."""
+
+    def fake_export(artifact_dir, *, package_name, version="0.1.0"):
+        return _write_fake_wheel_manifest(artifact_dir, package_name=package_name, version=version)
+
+    monkeypatch.setattr("backend.manager.build_model_wheel", fake_export)
 
 
 def test_normalize_training_config_accepts_dataset_target_string():
@@ -156,10 +196,12 @@ def test_valkey_event_cursor_continues_after_retention_limit():
     assert [event["sequence"] for event in following_batch] == [1_000]
 
 
-def test_manager_builds_job_artifacts_and_finishes(tmp_path):
+def test_manager_builds_job_artifacts_and_finishes(tmp_path, packaged_export):
     manager = JobManager(InMemoryJobStore(), tmp_path, [ImmediateExecutor()])
     queued = manager.submit(submission(), owner_connection_id=OWNER)
     assert queued.status == "queued"
+    # A current successful job writes safe weights before packaging.
+    Path(queued.artifact_dir, "weights.safetensors").write_bytes(b"safe-weights")
     assert manager.run_once() is True
     finished = manager.status(queued.id, owner_connection_id=OWNER)
     assert finished.status == "succeeded"
@@ -171,27 +213,7 @@ def test_manager_builds_job_artifacts_and_finishes(tmp_path):
     assert manager.logs(queued.id, owner_connection_id=OWNER)["stdout"] == "ok\n"
 
 
-def test_manager_exports_a_model_wheel_after_a_successful_job(tmp_path, monkeypatch):
-    def fake_export(artifact_dir, *, package_name, version):
-        wheel = Path(artifact_dir) / "dist" / "model.whl"
-        wheel.parent.mkdir()
-        wheel.write_bytes(b"wheel")
-        (Path(artifact_dir) / "model-package.json").write_text(
-            json.dumps(
-                {
-                    "schema_version": 1,
-                    "package_name": package_name,
-                    "version": version,
-                    "wheel": "dist/model.whl",
-                    "sha256": "checksum",
-                    "input_adapter": {"kind": "tensor", "version": 1},
-                }
-            ),
-            encoding="utf-8",
-        )
-        return wheel
-
-    monkeypatch.setattr("backend.manager.build_model_wheel", fake_export)
+def test_manager_exports_a_model_wheel_after_a_successful_job(tmp_path, packaged_export):
     manager = JobManager(InMemoryJobStore(), tmp_path, [ImmediateExecutor()])
     queued = manager.submit(
         submission().model_copy(update={"package_name": "nnm_mnist_classifier"}),
@@ -202,9 +224,14 @@ def test_manager_exports_a_model_wheel_after_a_successful_job(tmp_path, monkeypa
     manager.run_once()
 
     status = manager.status(queued.id, owner_connection_id=OWNER)
+    assert status.status == "succeeded"
     assert status.model_package is not None
     assert status.model_package.package_name == "nnm_mnist_classifier"
-    assert any(event["type"] == "package_ready" for event in manager.events(queued.id, owner_connection_id=OWNER))
+    events = manager.events(queued.id, owner_connection_id=OWNER)
+    types = [event["type"] for event in events]
+    assert any(event["type"] == "package_ready" for event in events)
+    assert "succeeded" in types
+    assert types.index("package_ready") < types.index("succeeded")
 
 
 def test_manager_tails_only_new_log_bytes_and_resets_a_stale_offset(tmp_path):
@@ -255,7 +282,7 @@ def test_manager_publishes_wandb_url_as_soon_as_a_heartbeat_sees_it(tmp_path):
     )
 
 
-def test_manager_publishes_wandb_url_when_a_short_job_finishes_before_heartbeat(tmp_path):
+def test_manager_publishes_wandb_url_when_a_short_job_finishes_before_heartbeat(tmp_path, packaged_export):
     class WandbImmediateExecutor(ImmediateExecutor):
         def submit(self, job, artifact_dir, on_heartbeat, on_finished):
             stdout = Path(artifact_dir, "stdout.log")
@@ -265,9 +292,11 @@ def test_manager_publishes_wandb_url_when_a_short_job_finishes_before_heartbeat(
 
     manager = JobManager(InMemoryJobStore(), tmp_path, [WandbImmediateExecutor()])
     queued = manager.submit(submission(), owner_connection_id=OWNER)
+    Path(queued.artifact_dir, "weights.safetensors").write_bytes(b"safe-weights")
 
     manager.run_once()
 
+    assert manager.status(queued.id, owner_connection_id=OWNER).status == "succeeded"
     assert any(
         event["type"] == "wandb_ready"
         and event["wandb_url"] == "https://wandb.ai/team/project/runs/quick-run"
@@ -275,7 +304,7 @@ def test_manager_publishes_wandb_url_when_a_short_job_finishes_before_heartbeat(
     )
 
 
-def test_manager_skips_incompatible_high_priority_job(tmp_path):
+def test_manager_skips_incompatible_high_priority_job(tmp_path, packaged_export):
     """A blocked high-priority job must not starve a runnable lower-priority job."""
 
     class CpuOnlyExecutor(ImmediateExecutor):
@@ -295,6 +324,7 @@ def test_manager_skips_incompatible_high_priority_job(tmp_path):
         ),
         owner_connection_id=OWNER,
     )
+    Path(runnable.artifact_dir, "weights.safetensors").write_bytes(b"safe-weights")
 
     assert manager.run_once() is True
     assert manager.status(blocked.id, owner_connection_id=OWNER).status == "queued"
@@ -347,6 +377,352 @@ def test_manager_recovery_records_terminal_event_for_interrupted_job(tmp_path):
     assert recovered.status == "failed"
     assert recovered.finished_at is not None
     assert manager.events(queued.id, owner_connection_id=OWNER)[-1]["type"] == "failed"
+
+
+def test_recovery_failed_job_is_removed_from_queue_and_contract_preserved(tmp_path):
+    """D5: a failed job must not remain claimable; metadata/events/logs stay.
+
+    A crash after enqueue but before the claim persisted leaves the record
+    marked ``running`` with its queue entry still present. Recovery fails the
+    job and must clean the queue entry without deleting the job or its audit
+    trail.
+    """
+
+    store = InMemoryJobStore()
+    manager = JobManager(store, tmp_path, [ImmediateExecutor()])
+    queued = manager.submit(submission(), owner_connection_id=OWNER)
+    record = store.get_job(queued.id)
+    assert record is not None
+    record["status"] = "running"
+    store.save_job(queued.id, record)
+    assert queued.id in store.queue
+
+    manager._recover()
+
+    recovered = manager.status(queued.id, owner_connection_id=OWNER)
+    assert recovered.status == "failed"
+    assert recovered.finished_at is not None
+    # Queue invariants: entry removed, not claimable, nothing left to drain.
+    assert store.queue == {}
+    assert store.claim_next() is None
+    # Visibility contracts: list/get/events/logs remain available.
+    assert [job.id for job in manager.list_status(owner_connection_id=OWNER)] == [queued.id]
+    assert manager.events(queued.id, owner_connection_id=OWNER)[-1]["type"] == "failed"
+    assert manager.logs(queued.id, owner_connection_id=OWNER) == {"stdout": "", "stderr": ""}
+
+
+def test_recovery_keeps_queued_jobs_claimable(tmp_path):
+    """D5: recovery re-enqueues queued jobs; only failed jobs leave the queue."""
+
+    store = InMemoryJobStore()
+    manager = JobManager(store, tmp_path, [ImmediateExecutor()])
+    queued = manager.submit(submission(), owner_connection_id=OWNER)
+    assert queued.id in store.queue
+
+    manager._recover()
+
+    assert manager.status(queued.id, owner_connection_id=OWNER).status == "queued"
+    assert store.claim_next() == queued.id
+
+
+def test_failed_job_is_not_claimable_after_executor_failure(tmp_path):
+    """D5: the real execution failure path leaves no claimable queue entry."""
+
+    class FailingExecutor(ImmediateExecutor):
+        name = "failing"
+
+        def submit(self, job, artifact_dir, on_heartbeat, on_finished):
+            stdout = Path(artifact_dir, "stdout.log")
+            stderr = Path(artifact_dir, "stderr.log")
+            stdout.write_text("started\n", encoding="utf-8")
+            stderr.write_text("Traceback\nboom\n", encoding="utf-8")
+            on_finished(1, {"stdout": str(stdout), "stderr": str(stderr)})
+            return {"stdout": str(stdout), "stderr": str(stderr)}
+
+    store = InMemoryJobStore()
+    manager = JobManager(store, tmp_path, [FailingExecutor()])
+    queued = manager.submit(submission(), owner_connection_id=OWNER)
+    assert queued.id in store.queue
+
+    assert manager.run_once() is True
+
+    failed = manager.status(queued.id, owner_connection_id=OWNER)
+    assert failed.status == "failed"
+    assert store.queue == {}
+    assert store.claim_next() is None
+    assert manager.logs(queued.id, owner_connection_id=OWNER)["stderr"] == "Traceback\nboom\n"
+
+
+class _StatusRecordingStore(InMemoryJobStore):
+    """In-memory store that records every persisted status transition."""
+
+    def __init__(self) -> None:
+        super().__init__()
+        self.saved_statuses: list[str] = []
+
+    def save_job(self, job_id, data):
+        self.saved_statuses.append(data["status"])
+        super().save_job(job_id, data)
+
+    def mark_failed(self, job_id, changes):
+        updated = super().mark_failed(job_id, changes)
+        if updated is not None:
+            self.saved_statuses.append(updated["status"])
+        return updated
+
+
+def test_package_failure_never_persists_a_succeeded_status(tmp_path, monkeypatch):
+    """D4: a packaging failure must never persist a transient succeeded status."""
+
+    def exploding_export(artifact_dir, *, package_name, version):
+        del artifact_dir, package_name, version
+        raise RuntimeError("exporter crashed")
+
+    monkeypatch.setattr("backend.manager.build_model_wheel", exploding_export)
+    store = _StatusRecordingStore()
+    manager = JobManager(store, tmp_path, [ImmediateExecutor()])
+    queued = manager.submit(submission(), owner_connection_id=OWNER)
+    Path(queued.artifact_dir, "weights.safetensors").write_bytes(b"safe-weights")
+
+    manager.run_once()
+
+    assert manager.status(queued.id, owner_connection_id=OWNER).status == "failed"
+    assert store.saved_statuses[-1] == "failed"
+    assert "succeeded" not in store.saved_statuses
+
+
+def test_happy_path_persists_succeeded_only_after_successful_export(tmp_path, packaged_export):
+    """D4: the happy chain persists running, then succeeded after package_ready."""
+    store = _StatusRecordingStore()
+    manager = JobManager(store, tmp_path, [ImmediateExecutor()])
+    queued = manager.submit(submission(), owner_connection_id=OWNER)
+    Path(queued.artifact_dir, "weights.safetensors").write_bytes(b"safe-weights")
+
+    manager.run_once()
+
+    status = manager.status(queued.id, owner_connection_id=OWNER)
+    assert status.status == "succeeded"
+    assert status.model_package is not None
+    assert store.saved_statuses[-1] == "succeeded"
+    events = manager.events(queued.id, owner_connection_id=OWNER)
+    types = [event["type"] for event in events]
+    assert "succeeded" in types
+    assert types.index("package_ready") < types.index("succeeded")
+
+
+def test_synchronous_executor_emits_running_before_terminal_success(tmp_path, packaged_export):
+    """P1: an immediate executor must not emit running after the terminal chain.
+
+    ``ImmediateExecutor`` invokes ``on_finished`` inside ``submit()``, so the
+    ``package_ready``/``succeeded`` events are persisted and emitted before
+    ``submit()`` returns. The manager must emit ``running`` before invoking
+    the executor and must not append a stale ``running`` event after the
+    terminal transition, write executor details into the terminal record, or
+    register the finished job as active.
+    """
+    store = InMemoryJobStore()
+    manager = JobManager(store, tmp_path, [ImmediateExecutor()])
+    queued = manager.submit(submission(), owner_connection_id=OWNER)
+    Path(queued.artifact_dir, "weights.safetensors").write_bytes(b"safe-weights")
+
+    assert manager.run_once() is True
+
+    assert manager.status(queued.id, owner_connection_id=OWNER).status == "succeeded"
+    events = manager.events(queued.id, owner_connection_id=OWNER)
+    types = [event["type"] for event in events]
+    for expected in ("queued", "running", "package_ready", "succeeded"):
+        assert expected in types, f"missing {expected!r} event in {types}"
+    indices = [
+        types.index("queued"),
+        types.index("running"),
+        types.index("package_ready"),
+        types.index("succeeded"),
+    ]
+    assert indices == sorted(indices), f"events out of order: {types}"
+    assert types[-1] == "succeeded"
+    # The terminal record is never rewritten with executor details and the
+    # finished job is not tracked as an active execution.
+    assert queued.id not in manager._active
+    record = store.get_job(queued.id)
+    assert record is not None
+    assert "executor_details" not in record
+
+
+def test_synchronous_executor_package_failure_ends_terminal_with_failed(tmp_path, monkeypatch):
+    """P1: an immediate executor whose package export fails ends with failed last.
+
+    The ``package_failed``/``failed`` events are emitted inside ``submit()``;
+    the manager must still emit ``running`` before the executor ran and must
+    never emit a stale ``running`` event after the terminal transition.
+    """
+
+    def exploding_export(artifact_dir, *, package_name, version):
+        del artifact_dir, package_name, version
+        raise RuntimeError("exporter crashed")
+
+    monkeypatch.setattr("backend.manager.build_model_wheel", exploding_export)
+    store = InMemoryJobStore()
+    manager = JobManager(store, tmp_path, [ImmediateExecutor()])
+    queued = manager.submit(submission(), owner_connection_id=OWNER)
+    Path(queued.artifact_dir, "weights.safetensors").write_bytes(b"safe-weights")
+
+    assert manager.run_once() is True
+
+    assert manager.status(queued.id, owner_connection_id=OWNER).status == "failed"
+    events = manager.events(queued.id, owner_connection_id=OWNER)
+    types = [event["type"] for event in events]
+    for expected in ("queued", "running", "package_failed", "failed"):
+        assert expected in types, f"missing {expected!r} event in {types}"
+    indices = [
+        types.index("queued"),
+        types.index("running"),
+        types.index("package_failed"),
+        types.index("failed"),
+    ]
+    assert indices == sorted(indices), f"events out of order: {types}"
+    assert types[-1] == "failed"
+    assert queued.id not in manager._active
+    record = store.get_job(queued.id)
+    assert record is not None
+    assert "executor_details" not in record
+
+
+class _FailingMarkFailedStore(InMemoryJobStore):
+    """In-memory store whose atomic failed transition always raises."""
+
+    def mark_failed(self, job_id, changes):
+        del job_id, changes
+        raise RuntimeError("injected persistence failure")
+
+
+class _FlakyMarkFailedStore(InMemoryJobStore):
+    """In-memory store whose atomic failed transition fails N times first."""
+
+    def __init__(self, failures_before_success: int) -> None:
+        super().__init__()
+        self.remaining = failures_before_success
+
+    def mark_failed(self, job_id, changes):
+        if self.remaining > 0:
+            self.remaining -= 1
+            raise RuntimeError("injected transient persistence failure")
+        return super().mark_failed(job_id, changes)
+
+
+class _PassiveExecutor:
+    """Executor double that never reports completion on its own."""
+
+    name = "passive"
+    kind = "local"
+
+    def can_run(self, resources):
+        del resources
+        return True
+
+    def describe(self):
+        return {"id": self.name, "kind": self.kind, "capacity": {}, "enabled": True}
+
+    def submit(self, job, artifact_dir, on_heartbeat, on_finished):
+        del job, artifact_dir, on_heartbeat, on_finished
+        return {"passive": True}
+
+    def cancel(self, job_id):
+        del job_id
+        return True
+
+
+def _recover_with_working_store(record, tmp_path, *, owner=OWNER):
+    """Simulate a restart: a fresh manager over a fresh working store."""
+    working = InMemoryJobStore()
+    working.save_job(record["id"], record)
+    working.enqueue(record["id"], int(record["priority"]), record["created_at"])
+    manager = JobManager(working, tmp_path, [ImmediateExecutor()])
+    manager._recover()
+    return manager, working
+
+
+def test_recovery_store_failure_leaves_no_partial_state(tmp_path, monkeypatch):
+    """H1: a failed atomic transition must leave neither failed+queued nor
+    dequeued+running state, and the manager must surface the failure."""
+
+    monkeypatch.setattr("backend.manager.FAILED_TRANSITION_BACKOFF_SECONDS", 0)
+    store = _FailingMarkFailedStore()
+    manager = JobManager(store, tmp_path, [ImmediateExecutor()])
+    queued = manager.submit(submission(), owner_connection_id=OWNER)
+    record = store.get_job(queued.id)
+    assert record is not None
+    record["status"] = "running"
+    store.save_job(queued.id, record)
+    assert queued.id in store.queue
+
+    with pytest.raises(RuntimeError, match="injected persistence failure"):
+        manager._recover()
+
+    # Atomic contract: neither the record nor the queue changed.
+    assert store.get_job(queued.id)["status"] == "running"
+    assert queued.id in store.queue
+    # No failed event was emitted (the transition never committed).
+    assert all(event["type"] != "failed" for event in store.get_events(queued.id))
+
+    # Restart recovery over the same persisted state reconciles cleanly.
+    reconciled, working = _recover_with_working_store(record, tmp_path)
+    assert reconciled.status(queued.id, owner_connection_id=OWNER).status == "failed"
+    assert working.queue == {}
+    assert working.claim_next() is None
+
+
+def test_failed_transition_retries_and_heals_transient_store_failure(tmp_path, monkeypatch):
+    """H1: a transient store failure on the failed transition is retried."""
+
+    monkeypatch.setattr("backend.manager.FAILED_TRANSITION_BACKOFF_SECONDS", 0)
+    store = _FlakyMarkFailedStore(failures_before_success=1)
+    manager = JobManager(store, tmp_path, [ImmediateExecutor()])
+    queued = manager.submit(submission(), owner_connection_id=OWNER)
+    record = store.get_job(queued.id)
+    assert record is not None
+    record["status"] = "running"
+    store.save_job(queued.id, record)
+    assert queued.id in store.queue
+
+    manager._recover()
+
+    recovered = manager.status(queued.id, owner_connection_id=OWNER)
+    assert recovered.status == "failed"
+    assert store.queue == {}
+    assert store.claim_next() is None
+    assert manager.events(queued.id, owner_connection_id=OWNER)[-1]["type"] == "failed"
+
+
+def test_terminal_persistence_failure_keeps_recoverable_running_state(tmp_path, monkeypatch):
+    """H1: a store failure after executor completion must not be masked.
+
+    The job stays a tracked ``running`` job (active entry retained) with no
+    partial failed transition, so stop()/restart can reconcile it.
+    """
+
+    monkeypatch.setattr("backend.manager.FAILED_TRANSITION_BACKOFF_SECONDS", 0)
+    store = _FailingMarkFailedStore()
+    manager = JobManager(store, tmp_path, [_PassiveExecutor()])
+    queued = manager.submit(submission(), owner_connection_id=OWNER)
+    assert manager.run_once() is True
+    assert manager.status(queued.id, owner_connection_id=OWNER).status == "running"
+    assert queued.id in manager._active
+
+    with pytest.raises(RuntimeError, match="injected persistence failure"):
+        manager._finished(queued.id, 1, {"stdout": "x", "stderr": "y"})
+
+    # No partial transition: still running, still tracked, no failed event.
+    assert manager.status(queued.id, owner_connection_id=OWNER).status == "running"
+    assert queued.id in manager._active
+    assert all(event["type"] != "failed" for event in store.get_events(queued.id))
+
+    # Restart recovery reconciles the same persisted record.
+    record = store.get_job(queued.id)
+    assert record is not None
+    reconciled, working = _recover_with_working_store(record, tmp_path)
+    assert reconciled.status(queued.id, owner_connection_id=OWNER).status == "failed"
+    assert working.queue == {}
+    assert reconciled.events(queued.id, owner_connection_id=OWNER)[-1]["type"] == "failed"
 
 
 def test_manager_cancel_queued_job_emits_cancelled_event(tmp_path):
@@ -467,31 +843,58 @@ def test_api_requires_pairing_and_scopes_jobs_to_their_connection(tmp_path):
     asyncio.run(exercise_api())
 
 
-def test_api_downloads_only_the_owner_model_wheel(tmp_path):
+def _materialize_package(
+    store: InMemoryJobStore,
+    job: JobStatus,
+    *,
+    wheel_bytes: bytes = b"wheel-content",
+    wheel_rel: str = "dist/nnm-model.whl",
+    sha256: str | None = None,
+) -> dict[str, Any]:
+    """Write a wheel and a matching manifest into a job's artifact directory."""
+    record = store.get_job(job.id)
+    assert record is not None
+    artifact = Path(record["artifact_dir"])
+    wheel = artifact / wheel_rel
+    wheel.parent.mkdir(parents=True, exist_ok=True)
+    wheel.write_bytes(wheel_bytes)
+    record["model_package"] = {
+        "schema_version": 1,
+        "package_name": "nnm-model",
+        "version": "0.1.0",
+        "wheel": wheel_rel,
+        "sha256": sha256 if sha256 is not None else hashlib.sha256(wheel_bytes).hexdigest(),
+        "input_adapter": {"kind": "tensor", "version": 1},
+    }
+    store.save_job(job.id, record)
+    return record
+
+
+def _download_context(
+    tmp_path: Path,
+) -> tuple[Any, InMemoryJobStore, JobStatus, PairingGrant, PairingGrant]:
+    """Build an authenticated app with one owner, one other, and a packaged job."""
     store = InMemoryJobStore()
-    manager = JobManager(store, tmp_path, [ImmediateExecutor()])
+    manager = JobManager(
+        store,
+        tmp_path,
+        [ImmediateExecutor()],
+        package_snapshot_dir=tmp_path / "snapshots",
+    )
     auth = AuthService(InMemoryAuthStore())
     owner = auth.create_pairing("Owner", client_host="127.0.0.1")
     other = auth.create_pairing("Other", client_host="127.0.0.2")
     auth.approve(owner.request_id)
     auth.approve(other.request_id)
     job = manager.submit(submission(), owner_connection_id=owner.connection_id)
-    record = store.get_job(job.id)
-    assert record is not None
-    artifact = Path(record["artifact_dir"])
-    wheel = artifact / "dist" / "nnm-model.whl"
-    wheel.parent.mkdir()
-    wheel.write_bytes(b"wheel-content")
-    record["model_package"] = {
-        "schema_version": 1,
-        "package_name": "nnm-model",
-        "version": "0.1.0",
-        "wheel": "dist/nnm-model.whl",
-        "sha256": "checksum",
-        "input_adapter": {"kind": "tensor", "version": 1},
-    }
-    store.save_job(job.id, record)
     app = create_app(manager, auth_service=auth, admin_token="admin-secret")
+    return app, store, job, owner, other
+
+
+def test_api_downloads_only_the_owner_model_wheel(tmp_path):
+    app, store, job, owner, other = _download_context(tmp_path)
+    _materialize_package(store, job)
+    expected = hashlib.sha256(b"wheel-content").hexdigest()
 
     async def exercise_api() -> None:
         transport = httpx.ASGITransport(app=app)
@@ -502,10 +905,323 @@ def test_api_downloads_only_the_owner_model_wheel(tmp_path):
                 response = await client.get(f"/jobs/{job.id}/package", headers=owner_headers)
                 assert response.status_code == 200
                 assert response.content == b"wheel-content"
+                assert response.headers["x-nnm-sha256"] == expected
                 assert "attachment" in response.headers["content-disposition"]
                 assert (await client.get(f"/jobs/{job.id}/package", headers=other_headers)).status_code == 404
 
     asyncio.run(exercise_api())
+
+
+def test_api_rejects_a_wheel_replaced_after_export(tmp_path):
+    """D3: bytes that no longer match the manifest digest are never served."""
+    app, store, job, owner, _other = _download_context(tmp_path)
+    _materialize_package(store, job, wheel_bytes=b"original")
+    record = store.get_job(job.id)
+    assert record is not None
+    wheel = Path(record["artifact_dir"]) / record["model_package"]["wheel"]
+    wheel.write_bytes(b"tampered-bytes")
+
+    async def exercise_api() -> None:
+        transport = httpx.ASGITransport(app=app)
+        async with app.router.lifespan_context(app):
+            async with httpx.AsyncClient(transport=transport, base_url="http://test") as client:
+                headers = {"authorization": f"Bearer {owner.token}"}
+                response = await client.get(f"/jobs/{job.id}/package", headers=headers)
+                assert response.status_code == 409
+                assert response.json()["detail"] == {
+                    "code": "package_integrity_error",
+                    "message": "Model package integrity check failed",
+                }
+                # A conflicted download must not leak where artifacts live.
+                assert str(tmp_path) not in response.text
+
+    asyncio.run(exercise_api())
+
+
+def test_api_rejects_a_missing_declared_digest(tmp_path):
+    """A manifest without a sha256 cannot be verified, so nothing is served."""
+    app, store, job, owner, _other = _download_context(tmp_path)
+    _materialize_package(store, job)
+    record = store.get_job(job.id)
+    assert record is not None
+    del record["model_package"]["sha256"]
+    store.save_job(job.id, record)
+
+    async def exercise_api() -> None:
+        transport = httpx.ASGITransport(app=app)
+        async with app.router.lifespan_context(app):
+            async with httpx.AsyncClient(transport=transport, base_url="http://test") as client:
+                headers = {"authorization": f"Bearer {owner.token}"}
+                response = await client.get(f"/jobs/{job.id}/package", headers=headers)
+                assert response.status_code == 409
+                assert response.json()["detail"] == {
+                    "code": "package_integrity_error",
+                    "message": "Model package integrity cannot be verified",
+                }
+                assert str(tmp_path) not in response.text
+
+    asyncio.run(exercise_api())
+
+
+def test_api_rejects_a_malformed_declared_digest(tmp_path):
+    """A non-hex manifest digest is corrupt state, not a downloadable package."""
+    app, store, job, owner, _other = _download_context(tmp_path)
+    _materialize_package(store, job, sha256="not-a-hex-digest")
+
+    async def exercise_api() -> None:
+        transport = httpx.ASGITransport(app=app)
+        async with app.router.lifespan_context(app):
+            async with httpx.AsyncClient(transport=transport, base_url="http://test") as client:
+                headers = {"authorization": f"Bearer {owner.token}"}
+                response = await client.get(f"/jobs/{job.id}/package", headers=headers)
+                assert response.status_code == 409
+                assert response.json()["detail"]["code"] == "package_integrity_error"
+                assert str(tmp_path) not in response.text
+
+    asyncio.run(exercise_api())
+
+
+def test_api_exposes_the_package_digest_header_via_cors(tmp_path):
+    """Browsers must be allowed to read X-NNM-SHA256 on the download response."""
+    app, store, job, owner, _other = _download_context(tmp_path)
+    _materialize_package(store, job)
+
+    async def exercise_api() -> None:
+        transport = httpx.ASGITransport(app=app)
+        async with app.router.lifespan_context(app):
+            async with httpx.AsyncClient(transport=transport, base_url="http://test") as client:
+                headers = {
+                    "authorization": f"Bearer {owner.token}",
+                    "origin": "http://127.0.0.1:5173",
+                }
+                response = await client.get(f"/jobs/{job.id}/package", headers=headers)
+                assert response.status_code == 200
+                assert response.headers["x-nnm-sha256"] == hashlib.sha256(b"wheel-content").hexdigest()
+                assert "X-NNM-SHA256" in response.headers.get("access-control-expose-headers", "")
+
+    asyncio.run(exercise_api())
+
+
+def test_api_pins_served_bytes_to_the_verified_snapshot(tmp_path):
+    """D3 TOCTOU: replacing the original wheel after verification but before
+    the response body is read must not change the bytes that are served.
+
+    The manager copies and hashes the wheel from one opened source handle into
+    an immutable private snapshot; the endpoint serves only that snapshot and
+    never reopens the mutable artifact path. The custom ASGI ``send`` replaces
+    the original wheel at ``http.response.start`` — after the snapshot was
+    verified, before any body byte was read — so a regression that reopened
+    the artifact path would serve the replaced bytes and fail this test.
+    """
+    app, store, job, owner, _other = _download_context(tmp_path)
+    original = b"original-wheel-bytes"
+    _materialize_package(store, job, wheel_bytes=original)
+    record = store.get_job(job.id)
+    assert record is not None
+    wheel = Path(record["artifact_dir"]) / record["model_package"]["wheel"]
+    manager = app.state.manager
+    snapshot_dir = manager.package_snapshot_dir
+    assert snapshot_dir is not None
+
+    async def exercise_api() -> None:
+        status_code = 0
+        response_headers: dict[str, str] = {}
+        body_parts: list[bytes] = []
+
+        async def send(message: dict[str, Any]) -> None:
+            nonlocal status_code, response_headers
+            if message["type"] == "http.response.start":
+                status_code = message["status"]
+                response_headers = {
+                    key.decode(): value.decode() for key, value in message["headers"]
+                }
+                # Verification and snapshot creation already finished; replace
+                # the original artifact before the response body is produced.
+                wheel.write_bytes(b"replaced-after-verification")
+            elif message["type"] == "http.response.body":
+                body_parts.append(message["body"])
+
+        async def receive() -> dict[str, Any]:
+            return {"type": "http.disconnect"}
+
+        scope = {
+            "type": "http",
+            "asgi": {"version": "3.0"},
+            "http_version": "1.1",
+            "method": "GET",
+            "headers": [(b"authorization", f"Bearer {owner.token}".encode())],
+            "scheme": "http",
+            "path": f"/jobs/{job.id}/package",
+            "raw_path": f"/jobs/{job.id}/package".encode(),
+            "query_string": b"",
+            "server": ("test", 80),
+            "client": ("127.0.0.1", 1234),
+            "root_path": "",
+        }
+        await app(scope, receive, send)
+
+        served = b"".join(body_parts)
+        assert status_code == 200
+        assert response_headers["x-nnm-sha256"] == hashlib.sha256(original).hexdigest()
+        assert wheel.read_bytes() == b"replaced-after-verification"
+        assert served == original
+        assert served != wheel.read_bytes()
+        # The verified snapshot is removed after the response completed.
+        assert list(snapshot_dir.iterdir()) == []
+
+    asyncio.run(exercise_api())
+
+
+def test_api_removes_snapshot_when_send_fails_during_body_streaming(tmp_path):
+    """D3 cleanup: a mid-stream failure must not leak the verified snapshot.
+
+    Starlette invokes a FileResponse ``background`` callback only after a
+    fully successful transfer, so a plain FileResponse would skip cleanup when
+    the client connection drops and ``send`` raises while the body is being
+    streamed. The endpoint wraps the response so the private snapshot is
+    removed on every outcome. This test drives the real ASGI app with a
+    ``send`` that raises exactly after ``http.response.start`` — verification
+    and snapshot creation already finished, but the transfer did not — and
+    asserts both the propagated exception and the cleanup.
+    """
+    app, store, job, owner, _other = _download_context(tmp_path)
+    original = b"original-wheel-bytes"
+    _materialize_package(store, job, wheel_bytes=original)
+    manager = app.state.manager
+    snapshot_dir = manager.package_snapshot_dir
+    assert snapshot_dir is not None
+
+    class StreamInterrupted(Exception):
+        """Sentinel for the connection loss a server raises from ``send``."""
+
+    snapshot_modes: list[int] = []
+
+    async def exercise_api() -> None:
+        async def send(message: dict[str, Any]) -> None:
+            if message["type"] == "http.response.start":
+                # The verified snapshot exists while the response is served;
+                # record its private permissions for the 0600 check.
+                snapshots = list(snapshot_dir.iterdir())
+                assert len(snapshots) == 1
+                snapshot_modes.append(snapshots[0].stat().st_mode)
+            elif message["type"] == "http.response.body":
+                raise StreamInterrupted("connection lost while streaming body")
+
+        async def receive() -> dict[str, Any]:
+            return {"type": "http.disconnect"}
+
+        scope = {
+            "type": "http",
+            "asgi": {"version": "3.0"},
+            "http_version": "1.1",
+            "method": "GET",
+            "headers": [(b"authorization", f"Bearer {owner.token}".encode())],
+            "scheme": "http",
+            "path": f"/jobs/{job.id}/package",
+            "raw_path": f"/jobs/{job.id}/package".encode(),
+            "query_string": b"",
+            "server": ("test", 80),
+            "client": ("127.0.0.1", 1234),
+            "root_path": "",
+        }
+        with pytest.raises(StreamInterrupted, match="connection lost"):
+            await app(scope, receive, send)
+
+        # The verified private snapshot is gone even though the transfer failed.
+        assert list(snapshot_dir.iterdir()) == []
+
+    asyncio.run(exercise_api())
+    if os.name == "posix":
+        assert len(snapshot_modes) == 1
+        assert stat.S_IMODE(snapshot_modes[0]) == 0o600
+
+
+def test_api_removes_snapshot_when_download_task_is_cancelled(tmp_path):
+    """D3 cleanup: cancelling the streaming task must also remove the snapshot.
+
+    Uvicorn cancels the request task when the client transport goes away or
+    during shutdown; the cancellation lands at an await inside the response.
+    The cleanup wrapper still runs its ``finally`` before the CancelledError
+    escapes, so a cancelled download never leaves the private snapshot behind.
+    The test blocks ``send`` on the first body message so the cancellation
+    deterministically lands mid-stream, after the verified snapshot exists.
+    """
+    app, store, job, owner, _other = _download_context(tmp_path)
+    _materialize_package(store, job, wheel_bytes=b"wheel-content")
+    manager = app.state.manager
+    snapshot_dir = manager.package_snapshot_dir
+    assert snapshot_dir is not None
+
+    async def exercise_api() -> None:
+        response_started = asyncio.Event()
+        hold_body = asyncio.Event()
+
+        async def send(message: dict[str, Any]) -> None:
+            if message["type"] == "http.response.start":
+                response_started.set()
+            elif message["type"] == "http.response.body":
+                await hold_body.wait()
+
+        async def receive() -> dict[str, Any]:
+            return {"type": "http.disconnect"}
+
+        scope = {
+            "type": "http",
+            "asgi": {"version": "3.0"},
+            "http_version": "1.1",
+            "method": "GET",
+            "headers": [(b"authorization", f"Bearer {owner.token}".encode())],
+            "scheme": "http",
+            "path": f"/jobs/{job.id}/package",
+            "raw_path": f"/jobs/{job.id}/package".encode(),
+            "query_string": b"",
+            "server": ("test", 80),
+            "client": ("127.0.0.1", 1234),
+            "root_path": "",
+        }
+        task = asyncio.create_task(app(scope, receive, send))
+        await response_started.wait()
+        # The response is now streaming the verified private snapshot.
+        assert list(snapshot_dir.iterdir())
+        task.cancel()
+        with pytest.raises(asyncio.CancelledError):
+            await task
+        # The verified private snapshot is removed after the cancelled transfer.
+        assert list(snapshot_dir.iterdir()) == []
+
+    asyncio.run(exercise_api())
+
+
+def test_api_snapshot_mismatch_returns_409_without_body_and_cleans_up(tmp_path):
+    """A wheel whose snapshot digest differs from the manifest is rejected with
+    409, no wheel bytes are served, and the temporary snapshot is deleted."""
+    app, store, job, owner, _other = _download_context(tmp_path)
+    _materialize_package(store, job, wheel_bytes=b"original")
+    record = store.get_job(job.id)
+    assert record is not None
+    wheel = Path(record["artifact_dir"]) / record["model_package"]["wheel"]
+    wheel.write_bytes(b"tampered-before-download")
+    manager = app.state.manager
+    snapshot_dir = manager.package_snapshot_dir
+    assert snapshot_dir is not None
+
+    async def exercise_api() -> None:
+        transport = httpx.ASGITransport(app=app)
+        async with app.router.lifespan_context(app):
+            async with httpx.AsyncClient(transport=transport, base_url="http://test") as client:
+                headers = {"authorization": f"Bearer {owner.token}"}
+                response = await client.get(f"/jobs/{job.id}/package", headers=headers)
+                assert response.status_code == 409
+                assert response.json()["detail"] == {
+                    "code": "package_integrity_error",
+                    "message": "Model package integrity check failed",
+                }
+                # Only the error detail is sent; no wheel bytes, no paths.
+                assert b"tampered-before-download" not in response.content
+                assert str(tmp_path) not in response.text
+
+    asyncio.run(exercise_api())
+    assert list(snapshot_dir.iterdir()) == []
 
 
 def test_public_pairing_flow_waits_for_administrator_approval(tmp_path):

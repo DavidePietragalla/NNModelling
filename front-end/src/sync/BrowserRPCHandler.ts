@@ -441,12 +441,24 @@ export class BrowserRPCHandler {
 
     const beforeCount = this.diagram.nodes.length;
 
-    if (stereo.isJoin) {
+    const parentId = config.parentId as string | undefined;
+    if (stereo.isSubFlow) {
+      this.diagram.addSubGraph(x, y, config.label as string | undefined, {
+        stereotype: stereo,
+        name: config.name as string | undefined,
+        color: config.color as string | undefined,
+        width: config.width as number | undefined,
+        height: config.height as number | undefined,
+        params: (config.params as Record<string, string | { value: string; position?: string }>) ?? {},
+        parentId,
+      });
+    } else if (stereo.isJoin) {
       this.diagram.addJoinNode(stereo, x, y, {
         name: config.name as string | undefined,
         inputsCount: (config.inputsCount as number) ?? 2,
         color: config.color as string | undefined,
         params: (config.params as Record<string, string>) ?? {},
+        parentId,
       });
     } else {
       this.diagram.addModule(stereo, x, y, {
@@ -455,6 +467,7 @@ export class BrowserRPCHandler {
         width: config.width as number | undefined,
         height: config.height as number | undefined,
         params: (config.params as Record<string, string>) ?? {},
+        parentId,
       });
     }
 
@@ -550,67 +563,7 @@ export class BrowserRPCHandler {
     if (!Array.isArray(nodeIds)) throw new Error("nodeIds must be an array");
 
     const offset = (params.offset as { x: number; y: number }) ?? { x: 50, y: 50 };
-    const offsetX = offset.x;
-    const offsetY = offset.y;
-
-    // Capture edges between the selected nodes BEFORE any mutations
-    const edgesBetweenSelected = this.diagram.edges.filter(
-      (e) => nodeIds.includes(e.source) && nodeIds.includes(e.target),
-    );
-
-    const oldToNew = new Map<string, string>();
-    const duplicated: Array<{ originalId: string; newId: string }> = [];
-
-    for (const id of nodeIds) {
-      const node = this.diagram.getNodeById(id);
-      if (!node) throw new Error(`Node not found: ${id}`);
-      // Skip subflow nodes
-      if (node.type === "subflow") continue;
-
-      const nd = node.data as Record<string, unknown>;
-      const stereo = this.diagram.getStereotype(nd.stereotype as string);
-      if (!stereo) throw new Error(`Stereotype not found for node ${id}`);
-
-      const beforeCount = this.diagram.nodes.length;
-      const newPos = {
-        x: node.position.x + offsetX,
-        y: node.position.y + offsetY,
-      };
-
-      if (node.type === "join" || stereo.isJoin) {
-        this.diagram.addJoinNode(stereo, newPos.x, newPos.y, {
-          name: nd.name as string | undefined,
-          inputsCount: nd.inputsCount as number | undefined,
-          color: nd.color as string | undefined,
-          params: nd.params as Record<string, unknown> | undefined,
-        });
-      } else {
-        this.diagram.addModule(stereo, newPos.x, newPos.y, {
-          name: nd.name as string | undefined,
-          color: nd.color as string | undefined,
-          params: nd.params as Record<string, unknown> | undefined,
-        });
-      }
-
-      const newNode = this.diagram.nodes[beforeCount];
-      if (newNode) {
-        oldToNew.set(id, newNode.id);
-        duplicated.push({ originalId: id, newId: newNode.id });
-      }
-    }
-
-    // Re-create edges between duplicated nodes
-    for (const edge of edgesBetweenSelected) {
-      const newSource = oldToNew.get(edge.source);
-      const newTarget = oldToNew.get(edge.target);
-      if (newSource && newTarget) {
-        try {
-          this.diagram.addEdge(newSource, newTarget, edge.sourceHandle ?? undefined, edge.targetHandle ?? undefined);
-        } catch {
-          // Edge may already exist or be invalid — skip silently
-        }
-      }
-    }
+    const duplicated = this.diagram.duplicateNodes(nodeIds, offset);
 
     return { duplicated };
   }
@@ -620,23 +573,11 @@ export class BrowserRPCHandler {
     const x = position?.x ?? 0;
     const y = position?.y ?? 0;
 
-    const beforeCount = this.diagram.nodes.length;
-    this.diagram.addSubGraph(x, y);
-
-    const newSubflow = this.diagram.nodes[beforeCount];
-    if (!newSubflow) throw new Error("Failed to create subflow");
-
-    // If label is provided, update both name and label
-    if (params.label) {
-      this.diagram.updateModule(newSubflow.id, {
-        name: params.label as string,
-        label: params.label as string,
-      });
-    }
+    const subflow = this.diagram.addSubGraph(x, y, params.label as string | undefined);
 
     return {
-      nodeId: newSubflow.id,
-      name: (params.label as string) ?? ((newSubflow.data as Record<string, unknown>).name as string) ?? newSubflow.id,
+      nodeId: subflow.id,
+      name: (params.label as string) ?? ((subflow.data as Record<string, unknown>).name as string) ?? subflow.id,
     };
   }
 
@@ -958,7 +899,8 @@ export class BrowserRPCHandler {
     const warnings: string[] = [];
 
     // Check for exactly 1 Input node
-    const inputNodes = this.diagram.nodes.filter((n) => {
+    const topLevelNodes = this.diagram.nodes.filter((n) => n.parentId == null);
+    const inputNodes = topLevelNodes.filter((n) => {
       const stereo = this.diagram.getStereotype((n.data as Record<string, unknown>).stereotype as string);
       return stereo?.isInput;
     });
@@ -970,7 +912,7 @@ export class BrowserRPCHandler {
     }
 
     // Check for at least 1 loss node
-    const lossNodes = this.diagram.nodes.filter((n) => {
+    const lossNodes = topLevelNodes.filter((n) => {
       const stereo = this.diagram.getStereotype((n.data as Record<string, unknown>).stereotype as string);
       return stereo?.isLoss;
     });
@@ -982,12 +924,14 @@ export class BrowserRPCHandler {
     }
 
     // Detect orphan nodes (no incoming or outgoing connections, except Input/Loss)
-    for (const node of this.diagram.nodes) {
+    for (const node of topLevelNodes) {
       const stereo = this.diagram.getStereotype((node.data as Record<string, unknown>).stereotype as string);
       if (stereo?.isInput || stereo?.isLoss) continue;
 
-      const hasIncoming = this.diagram.edges.some((e) => e.target === node.id);
-      const hasOutgoing = this.diagram.edges.some((e) => e.source === node.id);
+      const hasIncoming = this.diagram.edges.some((e) => e.target === node.id &&
+        this.diagram.getNodeById(e.source)?.parentId == null);
+      const hasOutgoing = this.diagram.edges.some((e) => e.source === node.id &&
+        this.diagram.getNodeById(e.target)?.parentId == null);
 
       if (!hasIncoming && !hasOutgoing) {
         warnings.push(
@@ -1049,8 +993,7 @@ export class BrowserRPCHandler {
   // ── Lifecycle Handlers ──────────────────────────────────────────────
 
   private handleResetDiagram(): Record<string, unknown> {
-    this.diagram.nodes.length = 0;
-    this.diagram.edges.length = 0;
+    this.diagram.reset();
     return { success: true, message: "Diagram has been reset" };
   }
 

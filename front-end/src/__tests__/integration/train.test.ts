@@ -14,19 +14,19 @@
 import { describe, it, expect, afterAll, afterEach } from "vitest";
 import { readFileSync, writeFileSync, existsSync, statSync } from "node:fs";
 import { resolve, join } from "node:path";
-import { Diagram } from "../../Diagram.svelte";
-import { NNTree } from "../../conversion/nnTree";
 import { stubWindow, unstubWindow } from "../helpers";
 import {
   loadManifest,
   getTargetDiagrams,
-  DIAGRAMS_DIR,
   tempDir,
   conditionalCleanup,
   runConvert,
   runTraining,
   composeHydraConfig,
-  isPythonAvailable,
+  compileDiagramToFile,
+  requirePython,
+  CONVERTED_DIR,
+  uvRun,
   type Tier,
   type NamedEntry,
 } from "./helpers";
@@ -39,7 +39,7 @@ const manifest = loadManifest();
 const tier = (process.env.NNM_TIER || "all") as Tier;
 const shouldRun = tier === "all" || tier === "train";
 
-const PYTHON_AVAILABLE = isPythonAvailable();
+const PYTHON_AVAILABLE = requirePython();
 
 stubWindow();
 afterAll(() => unstubWindow());
@@ -48,19 +48,60 @@ afterAll(() => unstubWindow());
 // Helpers
 // ---------------------------------------------------------------------------
 
-function compileToTempFile(name: string, outDir: string): string {
-  const diagramPath = resolve(DIAGRAMS_DIR, `${name}.json`);
-  const content = readFileSync(diagramPath, "utf-8");
+/**
+ * Python script verifying the reload invariants on a trained output dir:
+ *  1. weights.safetensors is loadable via the safe loader;
+ *  2. its keys match the freshly-built model's state_dict;
+ *  3. eval() output is identical before and after reload on a fixed input.
+ */
+function generateReloadScript(convertedSrcPath: string): string {
+  return `
+import sys
+import json
+from hydra import compose, initialize_config_dir
+import torch
+from safetensors.torch import load_file
 
-  const diagram = new Diagram();
-  diagram.importFromJson(content);
+sys.path.insert(0, ${JSON.stringify(convertedSrcPath)})
+from net.base import Net
 
-  const nnTree = new NNTree(diagram);
-  const jsonStr = nnTree.toJson();
+cfg_dir = sys.argv[1]
+safe_weights = sys.argv[2]
+full_weights = sys.argv[3]
 
-  const jsonPath = join(outDir, `${name}.json`);
-  writeFileSync(jsonPath, jsonStr, "utf-8");
-  return jsonPath;
+with initialize_config_dir(config_dir=cfg_dir):
+    cfg = compose(config_name="base")
+
+# 1. Safe weights must load with the safetensors loader.
+safe_state = load_file(safe_weights)
+
+# 2. Key set must match a freshly instantiated model.
+net = Net(cfg)
+state_keys = set(net.state_dict().keys())
+safe_keys = set(safe_state.keys())
+key_match = state_keys == safe_keys
+
+# 3. Eval equivalence before/after reload on a fixed deterministic input.
+net.load_state_dict(safe_state)
+net.eval()
+torch.manual_seed(0)
+x = torch.randn(2, 1, 28, 28)
+with torch.no_grad():
+    out_before = net(x)
+
+reloaded = torch.load(full_weights, map_location="cpu", weights_only=False)
+reloaded.eval()
+with torch.no_grad():
+    out_after = reloaded(x)
+
+result = {
+    "safe_keys": len(safe_keys),
+    "key_match": bool(key_match),
+    "eval_equal": bool(torch.equal(out_before, out_after)),
+    "success": True,
+}
+print(json.dumps(result))
+`;
 }
 
 // ---------------------------------------------------------------------------
@@ -94,12 +135,13 @@ if (shouldRun) {
             // Tier 1: Compile diagram -> NNTree JSON -> convert.py
             const workDir = tempDir();
             tmpDirs.push(workDir);
-            const jsonPath = compileToTempFile(name, workDir);
+            const jsonPath = compileDiagramToFile(name, workDir);
 
             let cfgDir: string;
             try {
               cfgDir = runConvert(jsonPath, {
                 numClasses: entry.numClasses,
+                dataset: entry.dataset,
               });
             } catch (e: unknown) {
               // If convert.py fails, mark as skipped with explanation
@@ -127,10 +169,14 @@ if (shouldRun) {
             }
             expect(composed.stdout).toContain(`root: ${root}`);
             expect(composed.stdout).toContain("_target_: torch.nn.Linear");
-            expect(composed.stdout).toContain("_target_: dataset.mnist.MNISTDataset");
+            const expectedDataset =
+              entry.dataset ?? "dataset.mnist.MNISTDataset";
+            expect(composed.stdout).toContain(`_target_: ${expectedDataset}`);
 
+            // Transformer scope is not expanded in this milestone; the
+            // default matrix now intentionally includes the autoencoder.
             if (!process.env.NNM_DIAGRAM) {
-              expect(name).not.toMatch(/transformer|auto.?encoder/i);
+              expect(name).not.toMatch(/transformer/i);
             }
 
             // Tier 3: Train for 1 epoch
@@ -151,6 +197,74 @@ if (shouldRun) {
             expect(trainResult.stdout).toContain("Training...");
             expect(existsSync(trainResult.weightsPath)).toBe(true);
             expect(statSync(trainResult.weightsPath).mtimeMs).toBeGreaterThanOrEqual(startedAt);
+
+            // Both weight artifacts are produced by main.py: the pickled full
+            // model and the safetensors state dict.
+            const safeWeightsPath = join(trainResult.outputDir, "weights.safetensors");
+            expect(existsSync(safeWeightsPath)).toBe(true);
+          },
+        );
+
+        it(
+          "safe weights are loadable and eval output is reload-stable",
+          { timeout: 600_000 },
+          () => {
+            // Reuses the same compile+convert+train path, then validates the
+            // reload invariants on the artifacts produced by this run.
+            const workDir = tempDir();
+            tmpDirs.push(workDir);
+            const jsonPath = compileDiagramToFile(name, workDir);
+            const cfgDir = runConvert(jsonPath, {
+              numClasses: entry.numClasses,
+              dataset: entry.dataset,
+            });
+
+            const trainResult = runTraining(cfgDir, {
+              maxEpochs: 1,
+              fastDevRun: process.env.NNM_FAST_DEV_RUN === "true",
+              device: process.env.NNM_DEVICE || "cpu",
+            });
+            if (trainResult.exitCode !== 0) {
+              throw new Error(
+                `Training failed for ${name} (exit ${trainResult.exitCode}):\n` +
+                  `${trainResult.stderr}\n${trainResult.stdout}`,
+              );
+            }
+
+            const safeWeightsPath = join(trainResult.outputDir, "weights.safetensors");
+            expect(existsSync(safeWeightsPath)).toBe(true);
+            expect(existsSync(trainResult.weightsPath)).toBe(true);
+
+            const scriptPath = join(workDir, "reload.py");
+            writeFileSync(
+              scriptPath,
+              generateReloadScript(resolve(CONVERTED_DIR, "src")),
+              "utf-8",
+            );
+
+            const result = uvRun(
+              [
+                "python",
+                scriptPath,
+                cfgDir,
+                safeWeightsPath,
+                trainResult.weightsPath,
+              ],
+              { timeout: 300_000 },
+            );
+
+            if (result.exitCode !== 0) {
+              throw new Error(
+                `Reload validation failed for ${name} (exit ${result.exitCode}):\n` +
+                  `STDERR:\n${result.stderr}\nSTDOUT:\n${result.stdout}`,
+              );
+            }
+
+            const output = JSON.parse(result.stdout.trim());
+            expect(output.success).toBe(true);
+            expect(output.safe_keys).toBeGreaterThan(0);
+            expect(output.key_match).toBe(true);
+            expect(output.eval_equal).toBe(true);
           },
         );
       },

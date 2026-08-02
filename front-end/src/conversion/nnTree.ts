@@ -12,22 +12,77 @@
  */
 
 import type { DiagramCore } from "../core/DiagramCore";
-import { type Node } from "@xyflow/svelte";
+import { findDirectedCycle } from "../core/validation";
+import { type Edge, type Node } from "@xyflow/svelte";
+
+/** Order join inputs by numbered target handles, with legacy handles stable after them. */
+function orderJoinInputs(edges: Edge[], targetId: string): string[] {
+  const numbered: Array<{ index: number; order: number; source: string }> = [];
+  const legacy: Array<{ order: number; source: string }> = [];
+
+  edges.forEach((edge, order) => {
+    if (edge.target !== targetId) return;
+    const match = edge.targetHandle?.match(/^in-(\d+)$/);
+    if (match) {
+      numbered.push({ index: Number(match[1]), order, source: edge.source });
+    } else {
+      legacy.push({ order, source: edge.source });
+    }
+  });
+
+  numbered.sort((a, b) => a.index - b.index || a.order - b.order);
+  legacy.sort((a, b) => a.order - b.order);
+  return [...numbered.map((entry) => entry.source), ...legacy.map((entry) => entry.source)];
+}
 
 export class NNTree {
   public nodes: Map<string, NNTreeNode>;
   public root: string;
   public lossNode: ModuleData | null = null;
+  /** Visual IDs mapped to the runtime node that produces their value. */
+  private readonly runtimeProducerByVisualId = new Map<string, string>();
 
   constructor(diagram: DiagramCore) {
     this.nodes = new Map();
-    const inputNodes: Node[] = diagram.nodes.filter(n => n.data.stereotype === "Input");
+    const inputNodes: Node[] = diagram.nodes.filter(
+      n => n.parentId == null && n.data.stereotype === "Input",
+    );
     if (inputNodes.length !== 1) {
       throw new Error("Expected exactly one input node, but found " + inputNodes.length);
     }
+    // Defense in depth: the editor validation rejects cycle-forming edges, but
+    // an imported diagram can still contain a directed cycle. Reject it here
+    // independently of the traversal below. Subflow-internal edges are
+    // validated by compileSubflowGraph (Kahn's topological sort) so the
+    // subflow-specific error message is preserved.
+    this.assertTopLevelAcyclic(diagram);
     let new_root = this.processNode(inputNodes[0], diagram, new Set());
     if (new_root === undefined) throw new Error("root is undefined");
     this.root = new_root;
+    this.resolveTopLevelJoinInputs(diagram);
+  }
+
+  /**
+   * Throw when the top-level graph (all nodes, edges that are not internal to
+   * a single subflow) contains a directed cycle.
+   */
+  private assertTopLevelAcyclic(diagram: DiagramCore): void {
+    const parentByNodeId = new Map<string, string | null | undefined>();
+    for (const n of diagram.nodes) parentByNodeId.set(n.id, n.parentId);
+
+    const isInternalToSameSubflow = (e: { source: string; target: string }): boolean => {
+      const parent = parentByNodeId.get(e.source);
+      return parent != null && parent === parentByNodeId.get(e.target);
+    };
+
+    const topLevelEdges = diagram.edges.filter((e) => !isInternalToSameSubflow(e));
+    const cycle = findDirectedCycle(
+      diagram.nodes.map((n) => n.id),
+      topLevelEdges,
+    );
+    if (cycle) {
+      throw new Error(`Graph contains a directed cycle: ${cycle.join(" -> ")}`);
+    }
   }
 
   private getPythonClassName(diagram: DiagramCore, node: Node): string {
@@ -52,6 +107,29 @@ export class NNTree {
       pythonClassName: this.getPythonClassName(diagram, node),
       params: node.data.params,
     } as ModuleData;
+  }
+
+  /**
+   * Replace visual producers in top-level joins with the runtime node IDs
+   * emitted after sequential segments have been compacted.
+   */
+  private resolveTopLevelJoinInputs(diagram: DiagramCore): void {
+    for (const [id, treeNode] of this.nodes) {
+      const visualNode = diagram.getNodeById(id);
+      if (treeNode.data.type !== "join" || visualNode?.parentId != null) continue;
+
+      const inputs = orderJoinInputs(diagram.edges, id)
+        .filter((sourceId) => {
+          const source = diagram.getNodeById(sourceId);
+          const stereotype = source
+            ? diagram.getStereotype(source.data.stereotype as string)
+            : undefined;
+          return !stereotype?.isLoss;
+        })
+        .map((sourceId) => this.runtimeProducerByVisualId.get(sourceId) ?? sourceId);
+
+      treeNode.data = { ...treeNode.data, inputs };
+    }
   }
 
   private compileSubflowGraph(diagram: DiagramCore, subflowId: string): SubflowGraph {
@@ -95,11 +173,8 @@ export class NNTree {
 
     // Build input ordering for joins from edge targetHandles
     const targetInputs: Record<string, string[]> = {};
-    for (const e of internalEdges) {
-      const t = e.target;
-      const h = parseInt((e.targetHandle || "in-0").replace("in-", ""));
-      if (!targetInputs[t]) targetInputs[t] = [];
-      targetInputs[t][h] = e.source;
+    for (const n of internalNodes) {
+      targetInputs[n.id] = orderJoinInputs(internalEdges, n.id);
     }
 
     const nodesMap: Record<string, InternalNodeData> = {};
@@ -132,7 +207,7 @@ export class NNTree {
           taskType: this.getTaskType(diagram, n),
           params: nd.params,
           children,
-          ...(isJoinNode ? { inputs: targetInputs[id] || [] } : {}),
+          ...(isJoinNode ? { inputs: targetInputs[id] } : {}),
         };
       }
     }
@@ -162,11 +237,13 @@ export class NNTree {
         nodes: graph.nodes,
       } as SubflowData),
     );
+    this.runtimeProducerByVisualId.set(node.id, node.id);
     return node.id;
   }
 
   private createSequential(node: Node, diagram: DiagramCore, visited: Set<string>, childs: Node[]): string {
     let seq = [];
+    const sequenceVisualIds = [node.id];
     seq.push(this.nodeToModule(node, diagram))
     do {
       let child = childs[0];
@@ -195,6 +272,7 @@ export class NNTree {
         break
       }
       seq.push(this.nodeToModule(child, diagram))
+      sequenceVisualIds.push(child.id);
 
     } while (childs.length === 1);
 
@@ -208,6 +286,9 @@ export class NNTree {
       type: "sequential",
       layers: seq,
     }));
+    for (const visualId of sequenceVisualIds) {
+      this.runtimeProducerByVisualId.set(visualId, node.id);
+    }
     return node.id;
 
   }
@@ -225,15 +306,20 @@ export class NNTree {
       name: node.data.name,
       stereotype: node.data.stereotype,
       pythonClassName: this.getPythonClassName(diagram, node),
-      params: node.data.params
+      params: node.data.params,
+      inputs: orderJoinInputs(diagram.edges, node.id),
     } as JoinData));
+    this.runtimeProducerByVisualId.set(node.id, node.id);
     return node.id;
 
   }
 
   private processNode(node: Node, diagram: DiagramCore, visited: Set<string>): string | undefined {
     if (visited.has(node.id)) {
-      console.warn("Node with id " + node.id + "is visited, there is a loop");
+      // The node was already emitted into the tree. This is a legitimate DAG
+      // cross-edge — e.g. two branches reconverging on the same join — not a
+      // cycle: the constructor rejected any directed cycle before traversal,
+      // so a re-visit can only be a completed node reached again.
       return node.id;
     }
     visited.add(node.id);
@@ -258,6 +344,7 @@ export class NNTree {
           next_tree_nodes.push(nn_node);
       }
       this.nodes.set(node.id, new NNTreeNode(node.id, next_tree_nodes, this.nodeToModule(node, diagram)));
+      this.runtimeProducerByVisualId.set(node.id, node.id);
       return node.id;
     } else {
       this.lossNode = {
@@ -337,6 +424,7 @@ export interface JoinData {
   stereotype: string;
   pythonClassName?: string;
   params: any;
+  inputs: string[];
 }
 
 export interface ModuleData {

@@ -37,8 +37,75 @@ export interface GraphValidationResult {
   warnings: ValidationWarning[];
 }
 
+export interface DirectedEdge {
+  source: string;
+  target: string;
+}
+
 /**
- * Check if a connection is valid based on target handle availability.
+ * Detect a directed cycle in a graph of node IDs and directed edges using
+ * DFS three-coloring: WHITE (unvisited), GRAY (on the current DFS path),
+ * BLACK (fully completed).
+ *
+ * This distinguishes a genuine back-edge (a node on the current DFS path) —
+ * the only case that forms a directed cycle — from a legitimate cross-edge
+ * where a node that has already been completed is reached again, which is
+ * exactly what happens when two branches of a DAG reconverge on a join. A
+ * reconvergent DAG therefore reports no cycle.
+ *
+ * Returns the node IDs of the first detected cycle in path order (closing
+ * back onto itself), or null when the graph is acyclic.
+ */
+export function findDirectedCycle(
+  nodeIds: Iterable<string>,
+  edges: Iterable<DirectedEdge>,
+): string[] | null {
+  const ids = new Set(nodeIds);
+  const adjacency = new Map<string, string[]>();
+  for (const id of ids) adjacency.set(id, []);
+  for (const edge of edges) {
+    if (ids.has(edge.source) && ids.has(edge.target)) {
+      adjacency.get(edge.source)!.push(edge.target);
+    }
+  }
+
+  const WHITE = 0;
+  const GRAY = 1;
+  const BLACK = 2;
+  const color = new Map<string, number>();
+  for (const id of ids) color.set(id, WHITE);
+  const path: string[] = [];
+
+  const visit = (node: string): string[] | null => {
+    color.set(node, GRAY);
+    path.push(node);
+    for (const next of adjacency.get(node) ?? []) {
+      if (color.get(next) === GRAY) {
+        const start = path.indexOf(next);
+        return [...path.slice(start), next];
+      }
+      if (color.get(next) === WHITE) {
+        const cycle = visit(next);
+        if (cycle) return cycle;
+      }
+    }
+    path.pop();
+    color.set(node, BLACK);
+    return null;
+  };
+
+  for (const id of ids) {
+    if (color.get(id) === WHITE) {
+      const cycle = visit(id);
+      if (cycle) return cycle;
+    }
+  }
+  return null;
+}
+
+/**
+ * Check if a connection is valid based on target handle availability and
+ * directed acyclicity.
  * Extracted from utils.ts:checkValidConnection — operates on plain Edge[],
  * not a Diagram instance.
  */
@@ -52,6 +119,23 @@ export function checkValidConnection(
   // Self-loop check
   if (source === target) {
     return { valid: false, reason: "Cannot connect a node to itself" };
+  }
+
+  // Directed-cycle check: adding source → target creates a cycle exactly when
+  // the existing graph already contains a directed path from target to source.
+  // This must run before the handle-occupancy check so a back-edge targeting
+  // an occupied input is still reported as a cycle.
+  const nodeIds = new Set<string>([source, target]);
+  for (const e of edges) {
+    nodeIds.add(e.source);
+    nodeIds.add(e.target);
+  }
+  const cycle = findDirectedCycle(nodeIds, [...edges, { source, target }]);
+  if (cycle) {
+    return {
+      valid: false,
+      reason: `Connection would create a directed cycle: ${cycle.join(" -> ")}`,
+    };
   }
 
   // Target handle occupancy check

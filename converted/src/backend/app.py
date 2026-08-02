@@ -14,6 +14,7 @@ from typing import Any
 from fastapi import Depends, FastAPI, Header, HTTPException, Query, Request
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import FileResponse, StreamingResponse
+from starlette.background import BackgroundTask
 
 from backend.auth import (
     AuthError,
@@ -24,7 +25,7 @@ from backend.auth import (
     parse_duration,
 )
 from backend.dataset_registry import discover_datasets
-from backend.manager import JobManager
+from backend.manager import JobManager, PackageIntegrityError, _remove_file
 from backend.models import (
     JobStatus,
     JobSubmission,
@@ -42,6 +43,56 @@ DEFAULT_ALLOWED_ORIGINS = [
     "http://localhost:5173",
     "http://localhost:5174",
 ]
+
+
+class _CleanupFileResponse(FileResponse):
+    """FileResponse that always runs its background cleanup.
+
+    Starlette invokes the ``background`` callback only after a fully
+    successful transfer; on a client disconnect or a streaming error the
+    callback would be skipped, leaking the verified download snapshot. This
+    wrapper runs the callback in a ``finally`` so cleanup happens on every
+    outcome. The callback must be idempotent because the parent already runs
+    it once on the happy path.
+    """
+
+    async def __call__(self, scope, receive, send) -> None:
+        try:
+            await super().__call__(scope, receive, send)
+        finally:
+            if self.background is not None:
+                await self.background()
+
+
+def _verified_snapshot_response(snapshot: Path, filename: str, digest: str) -> FileResponse:
+    """Serve the verified immutable snapshot and delete it when the response ends.
+
+    Only the backend-private snapshot created and hashed by the manager is
+    served; the original artifact path is never reopened here, so bytes
+    replaced on disk after verification cannot be transferred. The snapshot is
+    removed after the response completes, errors, or is disconnected.
+
+    Args:
+        snapshot: Verified snapshot path created by ``package_download``.
+        filename: Original wheel name used for ``Content-Disposition``.
+        digest: SHA-256 of the snapshot, exposed via ``X-NNM-SHA256``.
+
+    Raises:
+        HTTPException: 404 when the snapshot can no longer be read.
+    """
+
+    try:
+        snapshot.stat()
+    except OSError:
+        _remove_file(snapshot)
+        raise HTTPException(status_code=404, detail="Model package is not available") from None
+    return _CleanupFileResponse(
+        snapshot,
+        media_type="application/octet-stream",
+        filename=filename,
+        headers={"X-NNM-SHA256": digest},
+        background=BackgroundTask(_remove_file, snapshot),
+    )
 
 
 def create_app(
@@ -75,6 +126,7 @@ def create_app(
         allow_credentials=False,
         allow_methods=["GET", "POST", "DELETE", "OPTIONS"],
         allow_headers=["Authorization", "Content-Type", "Last-Event-ID", "X-NNM-Admin-Token"],
+        expose_headers=["X-NNM-SHA256"],
     )
     app.state.manager = manager or JobManager.from_environment()
     app.state.auth = auth_service or _auth_from_environment(in_memory=injected_manager is not None)
@@ -244,15 +296,33 @@ def create_app(
         job_id: str,
         connection: dict[str, Any] = Depends(current_connection),
     ) -> FileResponse:
-        """Download the authenticated job's generated pip wheel."""
+        """Download the authenticated job's generated pip wheel.
+
+        The wheel is streamed into a private immutable snapshot and hashed
+        from that single opened source handle before any byte is served; the
+        snapshot digest must match the manifest, and only the verified
+        snapshot is transferred (never the mutable artifact path). A corrupted
+        or replaced wheel is rejected with ``409 Conflict`` and never
+        downloaded. On success the verified digest is exposed through the
+        ``X-NNM-SHA256`` response header and the snapshot is removed once the
+        response completes or fails.
+        """
 
         try:
-            path, filename = app.state.manager.package_path(job_id, owner_connection_id=connection["id"])
+            path, filename, digest = app.state.manager.package_download(
+                job_id,
+                owner_connection_id=connection["id"],
+            )
         except KeyError as exc:
             raise HTTPException(status_code=404, detail="Unknown job") from exc
         except FileNotFoundError as exc:
             raise HTTPException(status_code=404, detail="Model package is not available") from exc
-        return FileResponse(path, media_type="application/octet-stream", filename=filename)
+        except PackageIntegrityError as exc:
+            raise HTTPException(
+                status_code=409,
+                detail={"code": "package_integrity_error", "message": str(exc)},
+            ) from exc
+        return _verified_snapshot_response(path, filename, digest)
 
     @app.get("/jobs/{job_id}/events")
     def get_events(

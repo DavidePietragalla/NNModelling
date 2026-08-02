@@ -85,19 +85,150 @@ describe("authenticated training API", () => {
     expect(new Headers(init.headers).get("authorization")).toBe("Bearer very-secret-token");
   });
 
-  it("downloads an exported model wheel with the bearer token", async () => {
+  it("downloads and verifies an exported model wheel with the bearer token", async () => {
+    const expected = await sha256Hex("wheel");
     const fetchMock = vi.fn().mockResolvedValue(
-      new Response("wheel", { status: 200, headers: { "content-type": "application/octet-stream" } }),
+      new Response("wheel", {
+        status: 200,
+        headers: { "content-type": "application/octet-stream", "x-nnm-sha256": expected },
+      }),
     );
     vi.stubGlobal("fetch", fetchMock);
     const api = new TrainingApiClient("http://backend.lan:8000", "very-secret-token");
 
-    const wheel = await api.downloadModelPackage("job-1");
+    const wheel = await api.downloadModelPackage("job-1", expected);
 
     const [url, init] = fetchMock.mock.calls[0] as [string, RequestInit];
     expect(url).toBe("http://backend.lan:8000/jobs/job-1/package");
+    expect(url).not.toContain("very-secret-token");
     expect(new Headers(init.headers).get("authorization")).toBe("Bearer very-secret-token");
     expect(await wheel.text()).toBe("wheel");
+  });
+
+  it("rejects a package whose body digest does not match the manifest", async () => {
+    const expected = await sha256Hex("pristine-wheel");
+    vi.stubGlobal("fetch", vi.fn().mockResolvedValue(
+      new Response("corrupted-bytes", {
+        status: 200,
+        headers: { "content-type": "application/octet-stream", "x-nnm-sha256": expected },
+      }),
+    ));
+    const api = new TrainingApiClient("http://backend.lan:8000", "very-secret-token");
+
+    await expect(api.downloadModelPackage("job-1", expected)).rejects.toMatchObject<Partial<BackendApiError>>({
+      status: 502,
+      code: "package_corrupted",
+    });
+  });
+
+  it("rejects when the server header digest contradicts the manifest digest", async () => {
+    const expected = await sha256Hex("wheel");
+    const other = await sha256Hex("different-wheel");
+    vi.stubGlobal("fetch", vi.fn().mockResolvedValue(
+      new Response("wheel", {
+        status: 200,
+        headers: { "content-type": "application/octet-stream", "x-nnm-sha256": other },
+      }),
+    ));
+    const api = new TrainingApiClient("http://backend.lan:8000", "very-secret-token");
+
+    await expect(api.downloadModelPackage("job-1", expected)).rejects.toMatchObject<Partial<BackendApiError>>({
+      status: 502,
+      code: "package_digest_mismatch",
+    });
+  });
+
+  it("rejects when the server omits the integrity header", async () => {
+    const expected = await sha256Hex("wheel");
+    vi.stubGlobal("fetch", vi.fn().mockResolvedValue(
+      new Response("wheel", { status: 200, headers: { "content-type": "application/octet-stream" } }),
+    ));
+    const api = new TrainingApiClient("http://backend.lan:8000", "very-secret-token");
+
+    await expect(api.downloadModelPackage("job-1", expected)).rejects.toMatchObject<Partial<BackendApiError>>({
+      status: 502,
+      code: "package_digest_missing",
+    });
+  });
+
+  it("rejects when the server integrity header is malformed", async () => {
+    const expected = await sha256Hex("wheel");
+    vi.stubGlobal("fetch", vi.fn().mockResolvedValue(
+      new Response("wheel", {
+        status: 200,
+        headers: { "content-type": "application/octet-stream", "x-nnm-sha256": "not-a-sha256" },
+      }),
+    ));
+    const api = new TrainingApiClient("http://backend.lan:8000", "very-secret-token");
+
+    await expect(api.downloadModelPackage("job-1", expected)).rejects.toMatchObject<Partial<BackendApiError>>({
+      status: 502,
+      code: "package_digest_invalid",
+    });
+  });
+
+  it("rejects a malformed manifest digest before contacting the backend", async () => {
+    const fetchMock = vi.fn();
+    vi.stubGlobal("fetch", fetchMock);
+    const api = new TrainingApiClient("http://backend.lan:8000", "very-secret-token");
+
+    await expect(api.downloadModelPackage("job-1", "cazz")).rejects.toMatchObject<Partial<BackendApiError>>({
+      status: 400,
+      code: "invalid_expected_digest",
+    });
+    expect(fetchMock).not.toHaveBeenCalled();
+  });
+
+  it("refuses to download a package without a backend token", async () => {
+    const expected = await sha256Hex("wheel");
+    const fetchMock = vi.fn();
+    vi.stubGlobal("fetch", fetchMock);
+    const api = new TrainingApiClient("http://backend.lan:8000");
+
+    await expect(api.downloadModelPackage("job-1", expected)).rejects.toMatchObject<Partial<BackendApiError>>({
+      status: 401,
+      code: "missing_token",
+    });
+    expect(fetchMock).not.toHaveBeenCalled();
+  });
+
+  it("refuses the verified download before fetching when Web Crypto is unavailable", async () => {
+    const expected = await sha256Hex("wheel");
+    const fetchMock = vi.fn();
+    vi.stubGlobal("crypto", {});
+    vi.stubGlobal("fetch", fetchMock);
+    const api = new TrainingApiClient("http://backend.lan:8000", "very-secret-token");
+
+    const error = await api.downloadModelPackage("job-1", expected).catch((caught: unknown) => caught);
+    expect(error).toBeInstanceOf(BackendApiError);
+    const apiError = error as BackendApiError;
+    expect(apiError.status).toBe(400);
+    expect(apiError.code).toBe("package_verification_unavailable");
+    expect(apiError.message).toMatch(/HTTPS|localhost/);
+    expect(fetchMock).not.toHaveBeenCalled();
+  });
+
+  it("maps a rejecting Web Crypto digest to the same platform error after the download", async () => {
+    const expected = await sha256Hex("wheel");
+    const fetchMock = vi.fn().mockResolvedValue(
+      new Response("wheel", {
+        status: 200,
+        headers: { "content-type": "application/octet-stream", "x-nnm-sha256": expected },
+      }),
+    );
+    vi.stubGlobal("fetch", fetchMock);
+    const digestMock = vi.fn().mockRejectedValue(new Error("crypto disabled by browser policy"));
+    vi.stubGlobal("crypto", { subtle: { digest: digestMock } });
+    const api = new TrainingApiClient("http://backend.lan:8000", "very-secret-token");
+
+    const error = await api.downloadModelPackage("job-1", expected).catch((caught: unknown) => caught);
+    expect(error).toBeInstanceOf(BackendApiError);
+    const apiError = error as BackendApiError;
+    expect(apiError.status).toBe(400);
+    expect(apiError.code).toBe("package_verification_unavailable");
+    expect(apiError.message).toMatch(/HTTPS|localhost/);
+    expect(fetchMock).toHaveBeenCalledTimes(1);
+    expect(digestMock).toHaveBeenCalledWith("SHA-256", expect.any(Uint8Array));
   });
 });
 
@@ -119,3 +250,9 @@ describe("SSE parser", () => {
     ]);
   });
 });
+
+/** Real Web Crypto digest, so integrity expectations are deterministic. */
+async function sha256Hex(data: string): Promise<string> {
+  const digest = await crypto.subtle.digest("SHA-256", new TextEncoder().encode(data));
+  return Array.from(new Uint8Array(digest), (byte) => byte.toString(16).padStart(2, "0")).join("");
+}

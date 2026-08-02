@@ -20,14 +20,14 @@ their own package with clear boundaries.
    │                │                                                  │
    │        ┌───────▼──────────────────────────┐                      │
    │        │       Diagram.svelte.ts           │  Thin Svelte        │
-   │        │  ($state.raw reactive wrapper)    │  wrapper (~22 lines)│
+   │        │  ($state.raw reactive wrapper)    │  wrapper (thin)     │
    │        └───────────────┬──────────────────┘                      │
    │                        │                                          │
    │        ┌───────────────▼──────────────────┐                      │
    │        │       core/DiagramCore.ts         │  Pure TypeScript     │
    │        │  - Nodes & edges (plain arrays)  │  (Zero Svelte deps)  │
    │        │  - Business logic                 │                      │
-   │        │  - EventBus integration           │                      │
+   │        │  - onGraphChanged graph signal    │                      │
    │        │  - Undo/redo (snapshot-based)     │                      │
    │        └───────────────┬──────────────────┘                      │
    │                        │                                          │
@@ -79,7 +79,7 @@ The architecture follows three key principles:
 1. **Single source of truth** — All diagram state lives in the browser's
    ``DiagramCore``. The MCP server is a thin proxy that queries the browser
    via RPC; it holds no state of its own.
-2. **Pure TypeScript core** — ``DiagramCore``, ``EventBus``, ``StereotypeCore``,
+2. **Pure TypeScript core** — ``DiagramCore``, ``StereotypeCore``,
    and ``validation`` have zero Svelte or DOM dependencies. They can run in
    any JavaScript environment (browser, Node.js, tests).
 3. **Standard output** — The pipeline produces standard PyTorch code and
@@ -127,23 +127,24 @@ This is the heart of the frontend logic, written with zero Svelte dependencies.
     * ``toggleSubflow()``, ``undo()``, ``redo()``
     * Snapshot-based undo/redo with 50-entry stack
 
-``EventBus``
-    A typed event emitter with monotonic sequence numbers and a ring buffer
-    (max 1000 events). Every mutation emits typed domain events:
-
-    * ``node-added``, ``node-removed``, ``node-moved``
-    * ``edge-added``, ``edge-removed``
-    * ``subflow-toggled``, ``subflow-modified``
-    * ``parameters-changed``
-    * ``undo-performed``, ``redo-performed``
+``DiagramCore.onGraphChanged``
+    The single graph-change notification contract. ``onGraphChanged(handler)``
+    subscribes a synchronous callback that is invoked once after every
+    successful public mutation — add/update/delete/move operations, edge
+    changes, undo/redo, snapshot restore, import and reset. Rejected
+    connections and no-op operations do not notify, and the callback carries
+    no payload (there is no event replay or catch-all bus). The returned
+    function unsubscribes; unsubscribing is safe even from inside a handler.
+    ``Diagram.svelte.ts`` and ``FlowCanvas.svelte`` use this signal to force
+    Svelte reactivity, refresh type inference and re-fit the viewport after
+    RPC-driven mutations.
 
 ``StereotypeCore``
-    Loads stereotype definitions from JSON files. Uses a **dual loader**
-    pattern:
-
-    * In the browser: Vite's ``import.meta.glob`` to load from
-      ``Stereotypes/`` directory
-    * In Node.js (MCP server): ``fs.readdirSync`` to load the same JSON files
+    Loads stereotype definitions from JSON files in the browser via Vite's
+    ``import.meta.glob`` (``Stereotypes/`` directory). The MCP server does not
+    import the frontend loader: it keeps its own local ESM-safe projection of
+    the same JSON files, exposing only the fields the server needs
+    (``mcp-server/src/server.ts``).
 
 ``validation``
     Standalone connection validation logic that checks:
@@ -209,21 +210,19 @@ The MCP server is deliberately **thin** — it does NOT hold its own
 
 **Error handling:**
 
-The server defines 5 error classes:
+The server defines 4 error classes:
 
-+----------------------+---------------------------------------------+
-| Error                | Purpose                                     |
-+======================+=============================================+
-| ``PipelineError``    | Base class for pipeline errors              |
-+----------------------+---------------------------------------------+
-| ``ConvertError``     | convert.py failed                           |
-+----------------------+---------------------------------------------+
-| ``TrainError``       | main.py training failed                     |
-+----------------------+---------------------------------------------+
-| ``InferError``       | infer.py failed                             |
-+----------------------+---------------------------------------------+
-| ``TimeoutError``     | Python subprocess timed out                 |
-+----------------------+---------------------------------------------+
++---------------------------+-------------------------------------------------+
+| Error                     | Purpose                                         |
++===========================+=================================================+
+| ``MCPServerError``        | Base class carrying error code and details      |
++---------------------------+-------------------------------------------------+
+| ``ConversionFailedError`` | convert.py failed                               |
++---------------------------+-------------------------------------------------+
+| ``TrainingFailedError``   | main.py training failed                         |
++---------------------------+-------------------------------------------------+
+| ``InferenceFailedError``  | infer.py failed                                 |
++---------------------------+-------------------------------------------------+
 
 ### converted/ (Python Backend)
 
@@ -297,10 +296,11 @@ Each JSON defines:
 * **params** — configurable parameters with type, default, and position
 * **view** — visual properties (color, width, height)
 
-The ``StereotypeCore`` class provides two loading strategies:
-
-* ``loadFromDirectory()`` — uses Vite's ``import.meta.glob`` (browser)
-* ``loadFromDirectoryNode(path)`` — uses Node's ``fs`` module (MCP server)
+The ``StereotypeCore`` class loads stereotype JSON in the browser via
+``loadFromDirectory()`` (Vite's ``import.meta.glob``). The MCP server does not
+import the frontend loader: it keeps its own local ESM-safe projection of the
+same ``Stereotypes/`` JSON files, exposing only the fields the server needs
+(``mcp-server/src/server.ts``).
 
 Data Flow
 ---------
@@ -319,7 +319,7 @@ Here is how a node drag-and-drop operation flows through the system:
      1. Creates node object (id, type, position, stereotype, params)
      2. Pushes to nodes array
      3. Calls _captureUndoState() (snapshot-based)
-     4. Emits 'node-added' event via EventBus
+     4. Notifies graph-change subscribers synchronously via onGraphChanged()
        │
        ▼
    Diagram.svelte.ts ($state.raw)
