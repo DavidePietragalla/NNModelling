@@ -35,6 +35,19 @@ from backend.models import (
     PairingStatusResponse,
     SessionInfo,
 )
+from backend.project_schema import (
+    CreateProjectRequest,
+    DatasetCatalogResponse,
+    OpenProjectRequest,
+    ProjectSummary,
+    RecentProjectsResponse,
+    StereotypeCatalogResponse,
+    WandbKeyInput,
+    WandbKeyStatus,
+    WandbSettingsResponse,
+    WandbUpdate,
+)
+from backend.projects import ProjectError, ProjectManager
 
 
 DEFAULT_ALLOWED_ORIGINS = [
@@ -101,6 +114,7 @@ def create_app(
     auth_service: AuthService | None = None,
     admin_token: str | None = None,
     allowed_origins: list[str] | None = None,
+    project_manager: ProjectManager | None = None,
 ) -> FastAPI:
     """Create the API application with injectable services for tests."""
 
@@ -131,6 +145,7 @@ def create_app(
     app.state.manager = manager or JobManager.from_environment()
     app.state.auth = auth_service or _auth_from_environment(in_memory=injected_manager is not None)
     app.state.admin_token = admin_token if admin_token is not None else _read_admin_token()
+    app.state.projects = project_manager or ProjectManager.from_environment()
 
     async def bearer_token(authorization: str | None = Header(default=None)) -> str:
         if authorization is None or not authorization.startswith("Bearer "):
@@ -229,6 +244,170 @@ def create_app(
         _connection: dict[str, Any] = Depends(current_connection),
     ) -> list[dict[str, Any]]:
         return [dataset.model_dump(mode="json") for dataset in discover_datasets()]
+
+    # -- Project workspace APIs -------------------------------------------------
+    # Project calls use the companion origin; every endpoint requires the same
+    # pairing authentication as the training endpoints. Project IDs resolve
+    # only through the companion-owned recent-project registry.
+
+    @app.post("/projects", response_model=ProjectSummary, status_code=201)
+    async def create_project(
+        body: CreateProjectRequest,
+        _connection: dict[str, Any] = Depends(current_connection),
+    ) -> ProjectSummary:
+        try:
+            return app.state.projects.create_project(body.name, body.root)
+        except ProjectError as exc:
+            raise _project_http_error(exc) from exc
+
+    @app.post("/projects/open", response_model=ProjectSummary)
+    async def open_project(
+        body: OpenProjectRequest,
+        _connection: dict[str, Any] = Depends(current_connection),
+    ) -> ProjectSummary:
+        try:
+            return app.state.projects.open_project(body.root)
+        except ProjectError as exc:
+            raise _project_http_error(exc) from exc
+
+    @app.get("/projects", response_model=RecentProjectsResponse)
+    async def list_projects(
+        _connection: dict[str, Any] = Depends(current_connection),
+    ) -> RecentProjectsResponse:
+        return app.state.projects.list_projects()
+
+    @app.get("/projects/active", response_model=ProjectSummary)
+    async def active_project(
+        _connection: dict[str, Any] = Depends(current_connection),
+    ) -> ProjectSummary:
+        summary = app.state.projects.active_project()
+        if summary is None:
+            raise HTTPException(
+                status_code=404,
+                detail={"code": "no_active_project", "message": "no project is currently active"},
+            )
+        return summary
+
+    @app.get("/projects/{project_id}", response_model=ProjectSummary)
+    async def get_project(
+        project_id: str,
+        _connection: dict[str, Any] = Depends(current_connection),
+    ) -> ProjectSummary:
+        try:
+            return app.state.projects.get_project(project_id)
+        except ProjectError as exc:
+            raise _project_http_error(exc) from exc
+
+    @app.post("/projects/{project_id}/sync", response_model=ProjectSummary)
+    async def sync_project(
+        project_id: str,
+        _connection: dict[str, Any] = Depends(current_connection),
+    ) -> ProjectSummary:
+        try:
+            return app.state.projects.sync_project(project_id)
+        except ProjectError as exc:
+            raise _project_http_error(exc) from exc
+
+    @app.delete("/projects/{project_id}", response_model=ProjectSummary)
+    async def forget_project(
+        project_id: str,
+        _connection: dict[str, Any] = Depends(current_connection),
+    ) -> ProjectSummary:
+        try:
+            summary = app.state.projects.get_project(project_id)
+            app.state.projects.forget_project(project_id)
+            return summary
+        except ProjectError as exc:
+            raise _project_http_error(exc) from exc
+
+    @app.get("/projects/{project_id}/graph", response_model=dict[str, Any])
+    async def read_graph(
+        project_id: str,
+        _connection: dict[str, Any] = Depends(current_connection),
+    ) -> dict[str, Any]:
+        try:
+            return app.state.projects.read_graph(project_id)
+        except ProjectError as exc:
+            raise _project_http_error(exc) from exc
+
+    @app.put("/projects/{project_id}/graph", response_model=dict[str, Any])
+    async def write_graph(
+        project_id: str,
+        body: dict[str, Any],
+        _connection: dict[str, Any] = Depends(current_connection),
+    ) -> dict[str, Any]:
+        try:
+            app.state.projects.write_graph(project_id, body)
+            return app.state.projects.read_graph(project_id)
+        except ProjectError as exc:
+            raise _project_http_error(exc) from exc
+
+    @app.get("/projects/{project_id}/stereotypes", response_model=StereotypeCatalogResponse)
+    async def project_stereotypes(
+        project_id: str,
+        _connection: dict[str, Any] = Depends(current_connection),
+    ) -> StereotypeCatalogResponse:
+        try:
+            return app.state.projects.project_stereotypes(project_id)
+        except ProjectError as exc:
+            raise _project_http_error(exc) from exc
+
+    @app.get("/projects/{project_id}/datasets", response_model=DatasetCatalogResponse)
+    async def project_datasets(
+        project_id: str,
+        _connection: dict[str, Any] = Depends(current_connection),
+    ) -> DatasetCatalogResponse:
+        try:
+            return app.state.projects.project_datasets(project_id)
+        except ProjectError as exc:
+            raise _project_http_error(exc) from exc
+
+    @app.get("/projects/{project_id}/wandb", response_model=WandbSettingsResponse)
+    async def read_wandb(
+        project_id: str,
+        _connection: dict[str, Any] = Depends(current_connection),
+    ) -> WandbSettingsResponse:
+        try:
+            settings, configured = app.state.projects.read_wandb(project_id)
+            return WandbSettingsResponse(**settings.model_dump(), api_key_configured=configured)
+        except ProjectError as exc:
+            raise _project_http_error(exc) from exc
+
+    @app.put("/projects/{project_id}/wandb", response_model=WandbSettingsResponse)
+    async def update_wandb(
+        project_id: str,
+        body: WandbUpdate,
+        _connection: dict[str, Any] = Depends(current_connection),
+    ) -> WandbSettingsResponse:
+        try:
+            settings = app.state.projects.update_wandb(project_id, body)
+            configured = app.state.projects.wandb_key_configured(project_id)
+            return WandbSettingsResponse(**settings.model_dump(), api_key_configured=configured)
+        except ProjectError as exc:
+            raise _project_http_error(exc) from exc
+
+    @app.put("/projects/{project_id}/wandb-key", response_model=WandbKeyStatus)
+    async def set_wandb_key(
+        project_id: str,
+        body: WandbKeyInput,
+        _connection: dict[str, Any] = Depends(current_connection),
+    ) -> WandbKeyStatus:
+        try:
+            app.state.projects.set_wandb_key(project_id, body.api_key)
+            return WandbKeyStatus(configured=True)
+        except ProjectError as exc:
+            raise _project_http_error(exc) from exc
+
+    @app.delete("/projects/{project_id}/wandb-key", response_model=WandbKeyStatus)
+    async def delete_wandb_key(
+        project_id: str,
+        _connection: dict[str, Any] = Depends(current_connection),
+    ) -> WandbKeyStatus:
+        try:
+            app.state.projects.delete_wandb_key(project_id)
+            return WandbKeyStatus(configured=False)
+        except ProjectError as exc:
+            raise _project_http_error(exc) from exc
 
     @app.get("/compute-units")
     async def compute_units(
@@ -522,6 +701,25 @@ def _client_host(request: Request) -> str:
 
 def _auth_http_error(exc: AuthError, *, not_found_codes: set[str] | None = None) -> HTTPException:
     status_code = 404 if not_found_codes and exc.code in not_found_codes else 401
+    return HTTPException(status_code=status_code, detail={"code": exc.code, "message": str(exc)})
+
+
+# Project lifecycle error codes mapped to HTTP statuses. Unknown projects and
+# missing files are 404; conflicts with the on-disk state are 409; every
+# remaining validation failure is 422 with an actionable message.
+_PROJECT_ERROR_STATUS = {
+    "unknown_project": 404,
+    "project_not_found": 404,
+    "graph_missing": 404,
+    "metadata_missing": 404,
+    "project_exists": 409,
+    "incompatible_root": 409,
+    "not_a_project": 409,
+}
+
+
+def _project_http_error(exc: ProjectError) -> HTTPException:
+    status_code = _PROJECT_ERROR_STATUS.get(exc.code, 422)
     return HTTPException(status_code=status_code, detail={"code": exc.code, "message": str(exc)})
 
 
