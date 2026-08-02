@@ -9,24 +9,31 @@ A visual editor and DSL for designing neural networks. Create diagrams in the br
 
 The editor is served locally by the companion together with a local training
 backend — it is no longer hosted on GitHub Pages (the Pages site now publishes
-only installation instructions). Prerequisites: Git, Python 3.12+ with
-[`uv`](https://docs.astral.sh/uv/), Valkey 8, and Node.js/pnpm (only to build
-the editor once).
+only installation instructions and the installer script). The installer checks
+for, but does not install, these prerequisites: Git, Python 3.12+ with
+[`uv`](https://docs.astral.sh/uv/), Node.js 18+ with pnpm 10+, and Valkey 8
+(either a running instance or the `valkey-server` binary).
 
 ```bash
-# From the repository root — one command:
-git clone <repository-url> NNModelling && cd NNModelling
-pnpm install && pnpm --dir front-end build   # build the editor once
-just --justfile converted/backend/justfile valkey   # start Valkey
-PYTHONPATH=converted/src uv run --project converted python -m backend.cli
+# One command — fetches, builds, and starts:
+curl -fsSL https://lucasforza.github.io/NNModelling/install.sh | bash
 ```
 
-Open <http://127.0.0.1:8000>. The command serves the built editor and starts
-the existing training backend on the same origin; it fails with build or
-Valkey instructions instead of serving an empty UI. The Training Sidebar keeps
-its URL/pairing workflow, so you may connect it either to this localhost
-backend or to an independently managed remote backend URL. The companion never
-proxies or routes remote jobs.
+The installer clones the repository (or updates an existing checkout) into
+`$HOME/.local/share/nnmodelling`, installs the pnpm dependencies, builds the
+editor, reuses a healthy Valkey instance or starts a repository-local
+`valkey-server` process, and then starts the companion at
+<http://127.0.0.1:8000>. It fails with instructions when a prerequisite is
+missing or the destination is not an NNModelling checkout, never prints
+secrets, and stops only the Valkey process it started when the companion
+exits. Configure with `NNM_DEST_DIR`, `NNM_REMOTE_REPO`, `NNM_BRANCH`,
+`NNM_VALKEY_URL`/`NNM_VALKEY_PORT`, or `NNM_BACKEND_HOST`/`NNM_BACKEND_PORT`.
+
+Open <http://127.0.0.1:8000>. The Training Sidebar keeps its URL/pairing
+workflow, so you may connect it either to this localhost backend or to an
+independently managed remote backend URL. The companion never proxies or
+routes remote jobs. Developers can skip the installer and run the same steps
+by hand instead (see the next section).
 
 ```
 Stereotypes/ (JSON) → Svelte Flow Editor → NNTree (JSON) → convert.py → Hydra YAML → main.py → Training

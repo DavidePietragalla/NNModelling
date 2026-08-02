@@ -75,22 +75,31 @@
       <h1>Install NNModelling</h1>
       <p class="lede">
         NNModelling is a visual editor and DSL for designing neural networks,
-        compiled to PyTorch/Lightning training pipelines. This page installs the
-        repository and starts the editor together with a local training backend —
+        compiled to PyTorch/Lightning training pipelines. One command fetches,
+        builds, and starts the editor together with a local training backend —
         the editor is served from your own machine, not from this site.
       </p>
 
       <h2>One command</h2>
-      <p>From the repository root, after cloning:</p>
-      <pre><span class="cmd">$</span> cd NNModelling &amp;&amp; PYTHONPATH=converted/src uv run --project converted python -m backend.cli</pre>
+      <pre><span class="cmd">$</span> curl -fsSL https://lucasforza.github.io/NNModelling/install.sh | bash</pre>
+      <p>The installer:</p>
+      <ol>
+        <li>clones the NNModelling repository (or updates an existing checkout) into <code>$HOME/.local/share/nnmodelling</code>,</li>
+        <li>installs the pnpm dependencies and builds the editor,</li>
+        <li>ensures a local Valkey is running — it reuses a healthy instance, or starts a repository-local process when the <code>valkey-server</code> binary is available,</li>
+        <li>starts the companion: the editor and training backend on the same origin at <code>http://127.0.0.1:8000</code>.</li>
+      </ol>
       <p>
-        This serves the built editor at
-        <code>http://127.0.0.1:8000</code> and starts the existing training
-        backend on the same origin. Open the URL, pair the Training Sidebar with
+        Open <code>http://127.0.0.1:8000</code>, pair the Training Sidebar with
         the default <code>http://127.0.0.1:8000</code> URL, and train locally.
+        On the first start the companion provisions the local administrator
+        token automatically (mode <code>0600</code>), so no separate setup step
+        is needed. When the companion exits, the installer stops only the Valkey
+        process it started.
       </p>
 
-      <h2>Prerequisites</h2>
+      <h2>Prerequisites (checked, not installed)</h2>
+      <p>The script checks for these tools and fails with instructions when one is missing — it never installs them for you:</p>
       <ul>
         <li><strong>Git</strong> — to clone the repository.</li>
         <li>
@@ -98,23 +107,36 @@
           on <code>uv</code>; the environment is created automatically.
         </li>
         <li>
-          <strong>Valkey 8</strong> — the backend stores sessions, jobs, and
-          events in Valkey. Start it with
-          <code>just --justfile converted/backend/justfile valkey</code> or the
-          bundled Docker deployment.
+          <strong>Node.js 18+ and <code>pnpm</code> 10+</strong> — to install
+          dependencies and build the editor.
         </li>
         <li>
-          <strong>Node.js and pnpm</strong> — only to build the editor once:
-          <code>pnpm install &amp;&amp; pnpm --dir front-end build</code>. A built
-          <code>front-end/dist</code> is required; the command fails with build
-          instructions instead of serving an empty UI.
+          <strong>Valkey 8</strong> — either an already running instance, or the
+          <code>valkey-server</code> binary for the installer to start a
+          repository-local process. Alternatively run the bundled Docker
+          deployment (<code>just --justfile converted/backend/justfile valkey</code>
+          or <code>docker-up</code>) before the command.
         </li>
       </ul>
 
+      <h2>Options</h2>
+      <p>Set these environment variables before the command:</p>
+      <ul>
+        <li><code>NNM_DEST_DIR</code> — checkout destination (default <code>$HOME/.local/share/nnmodelling</code>).</li>
+        <li><code>NNM_REMOTE_REPO</code> — repository URL to clone/update.</li>
+        <li><code>NNM_BRANCH</code> — branch to check out (default <code>master</code>).</li>
+        <li><code>NNM_VALKEY_URL</code> / <code>NNM_VALKEY_PORT</code> — Valkey connection (default <code>valkey://127.0.0.1:6379/0</code> / <code>6379</code>).</li>
+        <li><code>NNM_BACKEND_HOST</code> / <code>NNM_BACKEND_PORT</code> — companion bind settings (default <code>127.0.0.1:8000</code>).</li>
+      </ul>
+      <p>For example:</p>
+      <pre><span class="cmd">$</span> NNM_DEST_DIR=~/nnmodelling curl -fsSL https://lucasforza.github.io/NNModelling/install.sh | bash</pre>
+
       <div class="note">
-        The companion never proxies or routes remote jobs. The Training Sidebar
-        keeps its current URL and pairing workflow, so you may equally connect it
-        to an independently managed remote backend instead of the localhost one.
+        The installer never overwrites a destination it does not own (a non-empty
+        directory that is not an NNModelling checkout), never prints secrets, and
+        the companion never proxies or routes remote jobs. The Training Sidebar
+        keeps its URL and pairing workflow, so you may equally connect it to an
+        independently managed remote backend instead of the localhost one.
       </div>
 
       <h2>Next steps</h2>
@@ -133,8 +155,9 @@
       </ul>
 
       <footer>
-        This site publishes installation instructions only and never hosts the
-        editor itself. The editor runs locally from your clone.
+        This site publishes installation instructions and the installer script
+        only; it never hosts the editor itself. The editor runs locally from
+        your clone.
       </footer>
     </main>
   </body>

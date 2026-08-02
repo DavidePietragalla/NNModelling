@@ -248,10 +248,12 @@ URL/pairing UI for choosing localhost or a remote backend.
 - `converted/src/backend/static.py`
 - `converted/src/backend/app.py`
 - `converted/src/tests/test_companion_cli.py`
+- `converted/src/tests/test_install_script.py`
 - `converted/pyproject.toml`
 - `README.md`
 - `.github/workflows/deploy-pages.yml`
 - `install/index.html`
+- `install/install.sh`
 - `docs2/source/project_workspace.rst`
 - `docs2/source/index.rst`
 - `docs2/source/user_guide.rst`
@@ -314,7 +316,7 @@ Documentation/distribution:
 
 ```bash
 pnpm run docs
-uv run --project converted python -m backend.cli --help
+uv run --project converted python converted/src/backend/cli.py --help
 ```
 
 Final integration (when infrastructure is available):

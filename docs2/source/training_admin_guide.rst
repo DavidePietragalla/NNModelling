@@ -56,9 +56,21 @@ backend justfile.
 Local companion: editor + backend in one command
 ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
 
-For a single-user workstation, the companion serves the built editor and starts
-the same backend on localhost with one command. Build the editor once, keep
-Valkey running (below), then:
+For a single-user workstation, the bundled installer fetches, builds, and
+starts the companion in one command:
+
+.. code-block:: bash
+
+   curl -fsSL https://lucasforza.github.io/NNModelling/install.sh | bash
+
+It checks for (never installs) Git, Python 3.12+ with ``uv``, Node.js 18+ with
+pnpm, and Valkey 8; it reuses a healthy Valkey instance or starts a
+repository-local ``valkey-server`` process (stopping only that process when the
+companion exits), refuses to overwrite a destination that is not an NNModelling
+checkout, and never prints secrets. Set ``NNM_DEST_DIR``/``NNM_BRANCH``/
+``NNM_REMOTE_REPO`` to control the checkout.
+
+On an existing checkout, run the same steps by hand:
 
 .. code-block:: bash
 

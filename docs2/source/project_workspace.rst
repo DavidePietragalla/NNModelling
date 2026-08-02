@@ -92,14 +92,30 @@ Ownership, cancellation, integrity, Slurm, and SSE contracts are unchanged.
 Start locally
 -------------
 
-One command serves the built editor and starts the existing training backend on
-localhost:
+One command installs and starts NNModelling — it fetches the repository (or
+updates an existing checkout), installs the pnpm dependencies, builds the
+editor, ensures a local Valkey is running, and then starts the companion:
 
 .. code-block:: bash
 
-   # from the repository root
-   pnpm install && pnpm --dir front-end build        # build the editor once
-   just --justfile converted/backend/justfile valkey  # start Valkey
+   curl -fsSL https://lucasforza.github.io/NNModelling/install.sh | bash
+
+The installer checks for (it never installs) Git, Python 3.12+ with ``uv``,
+Node.js 18+ with pnpm, and Valkey 8. It reuses a healthy Valkey instance or
+starts a repository-local ``valkey-server`` process, stops only that process
+when the companion exits, refuses to overwrite a destination that is not an
+NNModelling checkout, and never prints secrets. Configure the checkout with
+``NNM_DEST_DIR`` (default ``$HOME/.local/share/nnmodelling``), ``NNM_BRANCH``,
+and ``NNM_REMOTE_REPO``, and the companion bind settings with
+``NNM_BACKEND_HOST``/``NNM_BACKEND_PORT`` or the Valkey connection with
+``NNM_VALKEY_URL``/``NNM_VALKEY_PORT``.
+
+Developers who already have a checkout run the same steps by hand instead:
+
+.. code-block:: bash
+
+   pnpm install && pnpm --dir front-end build
+   just --justfile converted/backend/justfile valkey   # optional: Valkey running
    PYTHONPATH=converted/src uv run --project converted python -m backend.cli
 
 Open ``http://127.0.0.1:8000``. The command fails actionably when the frontend
