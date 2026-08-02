@@ -104,9 +104,11 @@ localhost:
 
 Open ``http://127.0.0.1:8000``. The command fails actionably when the frontend
 assets are missing (with a build instruction) or Valkey is unreachable; it never
-serves an empty UI. The editor calls project APIs on the same origin under the
-``/api`` prefix, and the Training Sidebar pairs with the same process at its
-default ``http://127.0.0.1:8000`` URL.
+serves an empty UI. On first start it provisions the local administrator token
+automatically (mode ``0600``, honoring ``NNM_ADMIN_TOKEN_FILE``), so pairing
+needs no separate ``admin-init`` step. The editor calls project APIs on the
+same origin under the ``/api`` prefix, and the Training Sidebar pairs with the
+same process at its default ``http://127.0.0.1:8000`` URL.
 
 Localhost or a remote backend
 -----------------------------

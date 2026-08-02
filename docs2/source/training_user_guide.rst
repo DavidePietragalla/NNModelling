@@ -20,7 +20,9 @@ backend on localhost:
 
 Open ``http://127.0.0.1:8000``. The Training Sidebar already defaults to the
 ``http://127.0.0.1:8000`` URL, so pairing with this process is a single
-approval. No remote server or cluster is involved.
+approval. No separate ``admin-init`` command is needed: the companion
+provisions the local administrator token automatically on first start. No
+remote server or cluster is involved.
 
 Remote backend
 --------------

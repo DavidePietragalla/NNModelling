@@ -9,6 +9,7 @@ in-memory services only — no built frontend and no real Valkey are required.
 from __future__ import annotations
 
 import asyncio
+import stat
 from pathlib import Path
 from typing import Any
 
@@ -216,22 +217,111 @@ def test_cli_fails_actionably_when_valkey_is_unreachable(
     assert "Valkey" in capsys.readouterr().err
 
 
-def test_cli_fails_actionably_when_pairing_administration_is_unavailable(
+def test_cli_provisions_an_administrator_token_before_starting(
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,
     capsys: pytest.CaptureFixture,
 ) -> None:
-    """A local server without an administrator token cannot approve pairing."""
+    """The local companion must be pairable without a separate admin-init step.
+
+    Reviewer regression (9392bbc): a local server without an administrator
+    token cannot approve pairing. The companion provisions the token itself
+    before the app is constructed, keeps it private (mode 0600), and never
+    prints its value; startup therefore no longer reaches an unpairable state.
+    """
     dist = make_fake_dist(tmp_path)
-    missing_token = tmp_path / "missing-admin.token"
-    monkeypatch.setenv("NNM_ADMIN_TOKEN_FILE", str(missing_token))
+    token_path = tmp_path / "state" / "admin.token"
+    monkeypatch.setenv("NNM_ADMIN_TOKEN_FILE", str(token_path))
+    monkeypatch.setattr("backend.cli.valkey_reachable", lambda *a, **k: True)
+    captured: dict[str, Any] = {}
+    monkeypatch.setattr("backend.cli.uvicorn.run", lambda app, **kwargs: captured.update(app=app))
+
+    code = main(["--dist", str(dist)])
+
+    assert code == 0
+    assert token_path.is_file()
+    assert stat.S_IMODE(token_path.stat().st_mode) == 0o600
+    token = token_path.read_text(encoding="utf-8").strip()
+    assert len(token) >= 43  # secrets.token_urlsafe(32)
+    # The running app must be pairable with the very token just provisioned.
+    assert captured["app"].state.admin_token == token
+    output = capsys.readouterr().out + capsys.readouterr().err
+    assert token not in output
+
+
+def test_cli_reuses_an_existing_administrator_token(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    dist = make_fake_dist(tmp_path)
+    token_path = tmp_path / "admin.token"
+    token_path.write_text("existing-token-value\n", encoding="utf-8")
+    token_path.chmod(0o600)
+    monkeypatch.setenv("NNM_ADMIN_TOKEN_FILE", str(token_path))
+    monkeypatch.setattr("backend.cli.valkey_reachable", lambda *a, **k: True)
+    monkeypatch.setattr("backend.cli.uvicorn.run", lambda *a, **k: None)
+
+    code = main(["--dist", str(dist)])
+
+    assert code == 0
+    assert token_path.read_text(encoding="utf-8").strip() == "existing-token-value"
+
+
+def test_cli_fails_actionably_when_token_initialization_fails(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    capsys: pytest.CaptureFixture,
+) -> None:
+    """An empty token file is corrupt: fail with an actionable message."""
+    dist = make_fake_dist(tmp_path)
+    token_path = tmp_path / "empty.token"
+    token_path.write_text("", encoding="utf-8")
+    monkeypatch.setenv("NNM_ADMIN_TOKEN_FILE", str(token_path))
     monkeypatch.setattr("backend.cli.valkey_reachable", lambda *a, **k: True)
     monkeypatch.setattr("backend.cli.uvicorn.run", lambda *a, **k: None)
 
     code = main(["--dist", str(dist)])
 
     assert code == 2
-    assert "admin-init" in capsys.readouterr().err
+    assert "administrator token" in capsys.readouterr().err
+
+
+def test_cli_fails_actionably_when_token_path_is_not_writable(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    capsys: pytest.CaptureFixture,
+) -> None:
+    """A token path below a regular file fails with an actionable message."""
+    dist = make_fake_dist(tmp_path)
+    blocker = tmp_path / "blocker"
+    blocker.write_text("not a directory", encoding="utf-8")
+    monkeypatch.setenv("NNM_ADMIN_TOKEN_FILE", str(blocker / "admin.token"))
+    monkeypatch.setattr("backend.cli.valkey_reachable", lambda *a, **k: True)
+    monkeypatch.setattr("backend.cli.uvicorn.run", lambda *a, **k: None)
+
+    code = main(["--dist", str(dist)])
+
+    assert code == 2
+    assert "administrator token" in capsys.readouterr().err
+
+
+def test_cli_fails_actionably_when_token_file_is_corrupt(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    capsys: pytest.CaptureFixture,
+) -> None:
+    """A non-UTF8 token file fails with an actionable message."""
+    dist = make_fake_dist(tmp_path)
+    token_path = tmp_path / "corrupt.token"
+    token_path.write_bytes(b"\xff\xfe\x00not-utf8")
+    monkeypatch.setenv("NNM_ADMIN_TOKEN_FILE", str(token_path))
+    monkeypatch.setattr("backend.cli.valkey_reachable", lambda *a, **k: True)
+    monkeypatch.setattr("backend.cli.uvicorn.run", lambda *a, **k: None)
+
+    code = main(["--dist", str(dist)])
+
+    assert code == 2
+    assert "administrator token" in capsys.readouterr().err
 
 
 def test_cli_valkey_reachable_treats_ping_failure_as_false(

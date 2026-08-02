@@ -32,6 +32,10 @@ import uvicorn  # noqa: E402
 import valkey  # noqa: E402
 
 from backend import app as backend_app  # noqa: E402
+from backend.admin_cli import (  # noqa: E402
+    configured_admin_token_path,
+    initialize_admin_token,
+)
 from backend.static import SPAStaticFiles, default_frontend_dist_dir  # noqa: E402
 
 DEFAULT_HOST = "127.0.0.1"
@@ -127,6 +131,30 @@ def valkey_reachable(url: str | None = None, *, timeout: float = 2.0) -> bool:
             pass
 
 
+def _ensure_admin_token() -> None:
+    """Provision or reuse the local administrator capability before startup.
+
+    The companion must be pairable immediately after it starts: the
+    administrator token is created (or reused and tightened to mode ``0600``)
+    at the path selected by ``NNM_ADMIN_TOKEN_FILE``, so the running app's own
+    token reader finds it. The token value is never printed — only its path.
+
+    Raises:
+        CLIError: When the token cannot be created or read because of a
+            permission, empty, or corrupt token-file error.
+    """
+    token_path = configured_admin_token_path()
+    try:
+        initialize_admin_token(token_path)
+    except (OSError, RuntimeError, UnicodeError) as exc:
+        raise CLIError(
+            f"cannot provision the administrator token at {token_path}: {exc}. "
+            "Fix the path permissions or remove the empty/corrupt token file "
+            "and retry."
+        ) from exc
+    print(f"Administrator token ready at {token_path}", file=sys.stderr)
+
+
 def main(argv: list[str] | None = None) -> int:
     """Run the companion: serve the editor and start the local backend.
 
@@ -144,6 +172,7 @@ def main(argv: list[str] | None = None) -> int:
                 "`just --justfile converted/backend/justfile valkey` or "
                 "`just --justfile converted/backend/justfile docker-up`."
             )
+        _ensure_admin_token()
     except CLIError as exc:
         print(f"nnm: error: {exc}", file=sys.stderr)
         return 2

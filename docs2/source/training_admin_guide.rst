@@ -67,10 +67,13 @@ Valkey running (below), then:
 
 Open ``http://127.0.0.1:8000``. The command fails actionably when
 ``front-end/dist`` is missing (with a build instruction) or Valkey is
-unreachable; it never serves an empty UI. The editor's project calls resolve
-under the ``/api`` prefix on the same origin, while the root training routes
-(``/health``, ``/pairing``, ``/jobs``) remain available to the Training
-Sidebar. For LAN clients, bind with ``--host 0.0.0.0`` and set
+unreachable; it never serves an empty UI. On first start it provisions the
+local administrator token automatically (mode ``0600``, honoring
+``NNM_ADMIN_TOKEN_FILE``), so the ``backend`` recipe's separate ``admin-init``
+step is not needed when using the companion command. The editor's project
+calls resolve under the ``/api`` prefix on the same origin, while the root
+training routes (``/health``, ``/pairing``, ``/jobs``) remain available to the
+Training Sidebar. For LAN clients, bind with ``--host 0.0.0.0`` and set
 ``NNM_ALLOWED_ORIGINS`` exactly as described under *Start FastAPI* below.
 
 The companion does not proxy remote jobs: remote/Slurm training still connects
